@@ -1,0 +1,14 @@
+/* client/src/styles/service-select.css */
+.services { padding: 20px; }
+.services h2 { margin: 0 0 14px; }
+.service-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; max-width: 560px; }
+.service-item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid #d9dfeb;
+  background: #fff;
+  border-radius: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+.service-item:hover { border-color: #2563eb; }

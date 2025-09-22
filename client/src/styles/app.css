@@ -1,0 +1,66 @@
+/* Header simple y limpio */
+.appbar{
+  background:#0b1220;
+  color:#fff;
+  padding:12px 16px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+.appbar .brand{
+  font-weight:800;
+  font-size:20px;
+  color:#fff;
+  text-decoration:none;
+}
+.appbar-right{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+.pill{
+  border:1px solid rgba(255,255,255,.45);
+  background:transparent;
+  color:rgb(255, 255, 255);
+  padding:6px 12px;
+  border-radius:999px;
+  cursor:pointer;
+  text-decoration:none;
+  
+}
+.pill:hover{ border-color:#ffffff; }
+
+.user{ opacity:.9; }
+
+/* Contenedor principal */
+.appmain{
+  padding:16px;
+  
+}
+
+/* Ayudas generales que ya usa tu proyecto */
+.state{
+  background:#f4f7ff;
+  border:1px solid #dbe3ff;
+  padding:12px;
+  border-radius:10px;
+}
+.state.error{
+  background:#fff4f4;
+  border-color:#ffd1d1;
+}
+
+.btn{
+  border:1px solid #1d4ed8;
+  background:#2563eb;
+  color:#fff;
+  padding:8px 14px;
+  border-radius:10px;
+  cursor:pointer;
+}
+.input{
+  width:100%;
+  padding:10px 12px;
+  border:1px solid #d9dfeb;
+  border-radius:10px;
+}

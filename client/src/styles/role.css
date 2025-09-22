@@ -1,0 +1,63 @@
+/* ====== Pantalla “Elegí tu rol” ====== */
+:root{
+  --radius: 14px;
+  --control-h: 44px;
+  --card: #ffffff;
+  --text: #0b1220;
+  --muted: #596175;
+  --border: #d9dfeb;
+  --focus: #8fd3ff;
+  --primary: #2563eb;
+  --primary-600: #1d4ed8;
+}
+
+.role{
+  padding: 24px;
+  color: var(--text);
+}
+.role h2{
+  margin: 0 0 12px;
+  font-size: clamp(22px, 2.4vw, 28px);
+}
+
+.role-grid{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+/* Botones grandes y accesibles */
+.role-btn{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--control-h);
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform .06s ease, border-color .15s ease, filter .15s ease;
+  text-align: center;
+}
+.role-btn:hover{ filter: brightness(0.98); }
+.role-btn:active{ transform: translateY(1px); }
+.role-btn:focus-visible{
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.role-btn[disabled]{
+  background: #f3f5fa;
+  color: #8b91a3;
+  cursor: not-allowed;
+}
+
+/* Variante principal (si querés destacarla) */
+.role-btn.primary{
+  border-color: color-mix(in srgb, var(--primary-600) 60%, #0000);
+  background: linear-gradient(180deg, var(--primary) 0%, var(--primary-600) 100%);
+  color: #ffffff;
+}

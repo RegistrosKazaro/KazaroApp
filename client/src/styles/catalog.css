@@ -1,0 +1,408 @@
+/* ====== Catálogo de productos (accesible) ====== */
+/* Reutiliza variables del login si existen, con fallbacks seguros */
+:root{
+  --radius: 14px;
+  --radius-sm: 10px;
+  --control-h: 44px;
+
+  /* Fallbacks por si tu tema no las define */
+  --bg: #0b1220;
+  --card: #ffffff;
+  --text: #0b1220;
+  --muted: #596175;
+  --border: #d9dfeb;
+  --input-bg: #ffffff;
+
+  --primary: #2563eb;
+  --primary-600: #1d4ed8;
+  --focus: #8fd3ff;
+}
+
+/* Contenedor */
+.catalog{
+  padding: 20px;
+  color: var(--text);
+}
+
+/* Título */
+.catalog h2{
+  margin: 0 0 12px;
+  font-size: clamp(22px, 2.4vw, 28px);
+}
+
+/* ===== Toolbar: categoría + servicio (si supervisor) + buscador ===== */
+.catalog-toolbar{
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(220px, 340px) 1fr;
+  gap: 12px;
+  align-items: center;
+  margin: 12px 0 18px;
+}
+@media (max-width: 920px){
+  .catalog-toolbar{
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@media (max-width: 680px){
+  .catalog-toolbar{
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Inputs base (coherentes con login) */
+.select,
+.input{
+  width: 100%;
+  min-height: var(--control-h);
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid black;
+  background: var(--input-bg);
+  color: black;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s, background .15s;
+  font-size: 16px;
+  line-height: 1.2;
+}
+.input::placeholder{ color: var(--muted); }
+
+.select:focus-visible,
+.input:focus-visible{
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 35%, transparent);
+}
+
+/* Buscador con icono */
+.input.search{
+  background-image:
+    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="%23596175" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>');
+  background-repeat: no-repeat;
+  background-position: 10px 50%;
+  background-size: 18px;
+  padding-left: 38px;
+  background-color: white;
+  border: 1px solid black;
+}
+
+/* ===== Grilla ===== */
+.product-grid{
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+/* ===== Tarjeta ===== */
+.product-card{
+  background: white ;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: grid;
+  gap: 10px;
+  transition: transform .06s ease, border-color .15s ease, background .15s ease;
+  border: 0.5px solid black;
+  
+}
+.product-card:hover{
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--border) 60%, var(--focus) 40%);
+}
+
+/* Título / código / precio */
+.product-title{
+  color: #0b1220;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: .2px;
+}
+.product-code{
+  font-size: 12px;
+  color: var(--muted);
+}
+.product-price{
+  color: #0b1220;
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: .2px;
+}
+
+/* Acciones */
+.product-card .actions{
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+/* Cantidad */
+.qty-input{
+  width: 84px;
+  min-height: var(--control-h);
+  text-align: center;
+  border-radius: var(--radius-sm);
+  border: 1px solid black;
+  background: var(--input-bg);
+  color: black;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+  font-weight: 700;
+}
+.qty-input:focus-visible{
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 35%, transparent);
+}
+
+/* Botón “Agregar” (respeta estética del login) */
+.btn{
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: .5rem;
+  min-height: var(--control-h);
+  padding: 0 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--primary-600) 60%, #0000);
+  background: linear-gradient(180deg, var(--primary) 0%, var(--primary-600) 100%);
+  color: #ffffff;
+  font-weight: 800;
+  cursor: pointer;
+  transition: filter .15s ease, transform .06s ease;
+}
+.btn:hover{ filter: brightness(1.05); }
+.btn:active{ transform: translateY(1px); }
+.btn:focus-visible{
+  outline: 3px solid color-mix(in srgb, var(--primary) 55%, transparent);
+  outline-offset: 2px;
+}
+.btn[disabled]{
+  opacity: .6;
+  cursor: not-allowed;
+}
+
+/* Icono carrito */
+.btn-add::before{
+  content: "";
+  inline-size: 16px;
+  block-size: 16px;
+  background: currentColor;
+  -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 3h2l2.2 10a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.6L21 8H7"/><circle cx="9" cy="20" r="1.5"/><circle cx="17" cy="20" r="1.5"/></svg>') no-repeat center / contain;
+          mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 3h2l2.2 10a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.6L21 8H7"/><circle cx="9" cy="20" r="1.5"/><circle cx="17" cy="20" r="1.5"/></svg>') no-repeat center / contain;
+}
+
+/* Estados */
+.catalog .state{
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: white;
+  color: black;
+}
+.catalog .state.error{
+  border-color: #ff7b86;
+  background: #ffe9ec;
+}
+
+/* Paginación */
+.pager{
+  margin: 16px 0 8px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+}
+.pager-info{
+  color: black;
+  font-weight: 600;
+}
+.pager-btn{
+  min-width: 44px;
+  min-height: 44px;
+  border: 2px solid black;
+  border-radius: 10px;
+  background: white;
+  color: black;
+  cursor: pointer;
+}
+.pager-btn:disabled{
+  opacity: .5; cursor: not-allowed;
+}
+.pager-btn:focus-visible{
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Prefiere menos movimiento */
+@media (prefers-reduced-motion: reduce){
+  *{ transition: none !important; animation: none !important; }
+}
+/* =========================================================
+   Carrito responsive (tabla -> tarjetas) SIN tocar JSX
+   Se aplica solo en móviles; desktop queda igual.
+   ========================================================= */
+@media (max-width: 520px){
+  /* La tabla se apila como tarjetas */
+  .sup-table,
+  .sup-table thead,
+  .sup-table tbody,
+  .sup-table tr,
+  .sup-table th,
+  .sup-table td{
+    display: block;
+    width: 100%;
+  }
+
+  .sup-table{
+    border: 0;
+  }
+
+  .sup-table thead{ 
+    display: none;
+  }
+
+  .sup-table tr{
+    background: white;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 12px;
+    box-shadow: 0 2px 6px rgba(0,0,0,.06);
+    color: black;
+    font-weight: 500;
+  }
+
+  /* Cada celda muestra una "etiqueta" a la izquierda
+     (como si fuera el TH) usando nth-child */
+  .sup-table td{
+    border: 0;
+    padding: 6px 0;
+    display: grid;
+    grid-template-columns: auto 1fr; /* etiqueta + valor */
+    align-items: center;
+    gap: 8px;
+  }
+
+  .sup-table td:nth-child(1)::before{ content: "Producto";  }
+  .sup-table td:nth-child(2)::before{ content: "Precio";    }
+  .sup-table td:nth-child(3)::before{ content: "Cantidad";  }
+  .sup-table td:nth-child(4)::before{ content: "Subtotal";  }
+  .sup-table td:nth-child(5)::before{ content: "Acciones";  }
+
+  .sup-table td::before{
+    font-size: 12px;
+    color: black;
+    margin-right: 8px;
+  }
+
+  /* Inputs de cantidad más compactos para que entren */
+  .qty-input{
+    width: 72px;
+    min-width: 72px;
+    text-align: center;
+    min-height: 40px;
+  }
+
+  /* Botón Quitar a ancho completo en mobile */
+  
+  .sup-table td:last-child .btn{
+    width: 100%;
+    min-height: 40px;
+    padding: 0 12px;
+    border-radius: 999px;
+    background: #2563eb;
+    color: #ffffff;
+    border: 1px solid #ffffff;
+    font-weight: 600;
+  }
+  .sup-table td:last-child .btn:hover{
+    background: #ffffff;
+  }
+
+  /* En pantallas MUY chicas, hacemos el botón más compacto */
+  @media (max-width: 360px){
+    .sup-table td{
+      grid-template-columns: 1fr; /* etiqueta arriba, valor abajo */
+      gap: 4px;
+    }
+    .sup-table td:last-child .btn{
+      min-height: 40px;
+      padding: 0 10px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  }
+}
+/* ============================================
+   Carrito (SUP-TABLE) — Legibilidad en DESKTOP
+   ============================================ */
+@media (min-width: 521px){
+  /* Contenedor tabla */
+  .catalog .sup-table{
+    color: var(--cart-text, #0b1220);
+    background: var(--cart-bg, #ffffff);
+    border-color: var(--border, #e5e7eb);
+  }
+
+  /* Celdas y encabezados */
+  .catalog .sup-table th,
+  .catalog .sup-table td{
+    color: inherit;                 /* hereda #0b1220 */
+    background: transparent;
+  }
+
+  /* Encabezados con leve fondo para contraste */
+  .catalog .sup-table thead th{
+    font-weight: 600;
+    color: var(--cart-th, #111827);
+    background: var(--cart-th-bg, #f9fafb);
+    border-bottom: 1px solid var(--border, #e5e7eb);
+  }
+
+  /* Números (precio / subtotal) */
+  .catalog .sup-table .mono{
+    color: black;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Input cantidad */
+  .catalog .qty-input{
+    color: var(--cart-text, #0b1220);
+    background: var(--input-bg, #ffffff);
+    border-color: var(--border, #e5e7eb);
+  }
+
+  /* Botón Quitar en desktop (si usás el mismo .btn rojo de mobile) */
+  .catalog .sup-table td:last-child .btn{
+    background: #ffe8e8;
+    color: #b91c1c;
+    border: 1px solid #ffc6c6;
+  }
+
+  /* Links dentro del resumen/tabla */
+  .catalog a{
+    color: var(--link, #1d4ed8);
+    font-weight: 500;
+  }
+}
+
+/* Dark mode: mantiene buen contraste también */
+@media (prefers-color-scheme: dark){
+  .catalog .sup-table{
+    --cart-text: #000000;
+    --cart-bg:   #ffffff;
+    --cart-th:   #e5e7eb;
+    --cart-th-bg:#0b1422;
+    --cart-mono: #e5e7eb;
+    --link:      #93c5fd;
+    border-color:#233049;
+  }
+  .catalog .qty-input{
+    background:#ffffff;
+    border-color:1px solid #233049;
+    color:#000000;
+  }
+  .catalog .sup-table td:last-child .btn{
+    background:#2563eb;
+    color:#ffffff;
+    border-color:#ffffff9d;
+  }
+}

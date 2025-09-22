@@ -1,0 +1,101 @@
+/* Topbar */
+.topbar{
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--card-bg, #fff);
+ 
+}
+
+.brand{
+  display: inline-flex;
+  align-items: center;
+  gap: px;
+  font-weight: 800;
+  text-decoration: none;
+  color: #ffffff;
+  letter-spacing: .3px;
+  font-size: 24px;
+}
+.brand-dot{
+  color: var(--primary, #2563eb);
+  font-size: 18px;
+  transform: translateY(-1px);
+  margin-right: 12px;
+}
+
+/* Right side */
+.right{
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.user{
+  color: white;
+  font-size: 14px;
+}
+
+/* Ghost button (Login / Carrito) */
+.ghost{
+  text-decoration: none;
+  border: 1px solid var(--border, #e5e7eb);
+  padding: 6px 10px;
+  border-radius: 10px;
+  color: white;
+}
+.ghost:focus-visible{ outline: 3px solid rgba(96,165,250,.6); }
+
+/* Logout */
+.btn-out{
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border, #e5e7eb);
+  background: transparent;
+  color: white;
+  cursor: pointer;
+}
+.btn-out:focus-visible{ outline: 3px solid rgba(96,165,250,.6); }
+
+/* --- Ajustes cuando el header es transparente (en /login) --- */
+.topbar--transparent .brand,
+.topbar--transparent .ghost,
+.topbar--transparent .user,
+.topbar--transparent .btn-out{
+  color: #e5e7eb;
+  border-color: rgba(255,255,255,.18);
+}
+.topbar--transparent .brand-dot{
+  color: #0e4787;
+}
+
+/* ==== ServiceMenu (delegable) ==== */
+.service-menu .select {
+  padding: 6px 8px;
+  border: 1px solid var(--line, #ddd);
+  border-radius: 6px;
+  margin-right: 8px;
+  max-width: 280px;
+}
+@media (max-width: 640px) {
+  .service-menu .select {
+    max-width: 180px;
+  }
+}
+
+.service-menu .select {
+  padding: 6px 8px;
+  border: 1px solid var(--line, #ddd);
+  border-radius: 6px;
+  margin-right: 8px;
+  max-width: 280px;
+}
+@media (max-width: 640px) {
+  .service-menu .select {
+    max-width: 180px;
+  }
+}
