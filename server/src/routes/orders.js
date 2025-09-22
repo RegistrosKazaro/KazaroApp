@@ -55,9 +55,9 @@ router.post("/", requireAuth, async (req, res) => {
         const pdf = await generateRemitoPDF({ remito, items: orderItems });
 
         // mover a /public/remitos
-        const publicDir = path.resolve(process.cwd(), "public", "remitos");
+        const PUBLIC_DIR = process.env.PUBLIC_DIR || path.resolve(process.cwd(), "public");
         fs.mkdirSync(publicDir, { recursive: true });
-        const publicPath = path.join(publicDir, pdf.fileName);
+        const publicDir = path.resolve(PUBLIC_DIR, "remitos");
         fs.copyFileSync(pdf.filePath, publicPath);
 
         const base = env.APP_BASE_URL || `http://localhost:${env.PORT || 4000}`;

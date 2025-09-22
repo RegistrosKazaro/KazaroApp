@@ -4,14 +4,14 @@ const COOKIE_NAME = "session";
 const SESSION_SECRET = process.env.SESSION_SECRET || "dev-secret-change-me";
 
 export function issueSession(res, payload) {
-  const token = jwt.sign(payload, SESSION_SECRET, { expiresIn: "7d" });
-  res.cookie(COOKIE_NAME, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: false,
-    path: "/",
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  });
+  const isProd = process.env.NODE_ENV === "production";
+res.cookie(COOKIE_NAME, token, {
+  httpOnly: true,
+  sameSite: isProd ? "none" : "lax",
+  secure: isProd ? true : false,
+  path: "/",
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+});
 }
 
 export function clearSession(res) {

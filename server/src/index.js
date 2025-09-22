@@ -23,7 +23,7 @@ import { DB_RESOLVED_PATH, db } from "./db.js";
 
 // Mail utils (para verificar SMTP y test opcional)
 import { verifyMailTransport, sendMail } from "./utils/mailer.js";
-
+const PUBLIC_DIR = process.env.PUBLIC_DIR || path.resolve(process.cwd(), "public");
 const app = express();
 
 // __dirname / __filename para ESM
@@ -55,7 +55,8 @@ app.use((req, res, next) => {
 
 /* ==================== Estáticos (PDFs en /public) ==================== */
 // Sirve /public en raíz. Ej: /remitos/archivo.pdf -> public/remitos/archivo.pdf
-app.use(express.static(path.resolve(process.cwd(), "public")));
+app.use(express.static(PUBLIC_DIR));
+
 
 /* ======================= Middlewares base ======================= */
 app.use(cookieParser());
