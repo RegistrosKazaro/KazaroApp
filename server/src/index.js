@@ -17,6 +17,19 @@ import devRoutes from "./routes/dev.js";
 import { DB_RESOLVED_PATH, db } from "./db.js";
 import { verifyMailTransport } from "./utils/mailer.js";
 import fs from "fs";
+const dbFile = process.env.DB_PATH || "./Kazaro.db";
+try {
+  const st = fs.statSync(dbFile);
+  console.log("[db] archivo existe:", dbFile, "size:", st.size, "bytes");
+} catch (e) {
+  console.log("[db] archivo NO existe:", dbFile, e?.message);
+}
+try {
+  const rows = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all();
+  console.log("[db] tablas:", rows.map(r => r.name));
+} catch (e) {
+  console.log("[db] error listando tablas:", e?.message);
+}
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
