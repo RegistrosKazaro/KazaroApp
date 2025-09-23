@@ -1,0 +1,12 @@
+# Node
+node_modules
+npm-debug.log*
+
+# Build
+dist
+build
+
+# SQLite
+*.db-shm
+*.db-wal
+*.sqbpro
