@@ -15,12 +15,14 @@ import servicesRoutes from "./routes/services.js";
 import meRoutes from "./routes/me.js";
 import devRoutes from "./routes/dev.js";
 import { DB_RESOLVED_PATH, db } from "./db.js";
-import { verifyMailTransport, sendMail } from "./utils/mailer.js";
+import { verifyMailTransport } from "./utils/mailer.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const PUBLIC_DIR = process.env.PUBLIC_DIR || path.resolve(process.cwd(), "public");
 const app = express();
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+
 const ALLOWED = new Set([
   env.APP_URL || "http://localhost:5173",
   "http://127.0.0.1:5173",
@@ -28,8 +30,8 @@ const ALLOWED = new Set([
 
 app.use(cors({
   origin(origin, cb) {
-    if (!origin) return cb(null, true);
-    return cb(null, ALLOWED.has(origin));
+    if (!origin) return cb(null, true);            // curl / Postman
+    return cb(null, ALLOWED.has(origin));          // solo front permitido
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -41,11 +43,16 @@ app.use((req, res, next) => {
   next();
 });
 
+// === estáticos (antes de rutas y 404) ===
 app.use(express.static(PUBLIC_DIR));
+app.use("/remitos", express.static(path.join(PUBLIC_DIR, "remitos")));
+
 app.use(cookieParser());
 app.use(express.json());
 app.use(morgan("dev"));
 app.use(cookies);
+
+// === rutas API ===
 app.use("/auth", authRoutes);
 app.use("/me", meRoutes);
 app.use("/catalog", catalogRoutes);
@@ -58,32 +65,17 @@ app.get("/auth/my-services", (req, res, next) => {
 });
 app.use("/dev", devRoutes);
 
-app.get("/mail-test", async (_req, res) => {
-  try {
-    const ok = await verifyMailTransport();
-    if (!ok) return res.status(500).json({ ok: false, error: "SMTP verify failed" });
-
-    const to = env.MAIL_TO || "nicolas.barcena@kazaro.com.ar";
-    const info = await sendMail({
-      to,
-      subject: "TEST SMTP Kazaro",
-      html: `<p>Prueba de SMTP OK.</p><p>Remitente: ${env.MAIL_FROM || env.SMTP_USER}</p>`,
-    });
-    return res.json({ ok: true, messageId: info.messageId });
-  } catch (e) {
-    console.error("[/mail-test] error:", e);
-    return res.status(500).json({ ok: false, error: String(e?.message || e) });
-  }
-});
-
+// health
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
+// 404 al final
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));
 
 const PORT = Number(env.PORT || process.env.PORT || 4000);
 
 app.listen(PORT, async () => {
   console.log(`[server] http://localhost:${PORT} (${env.NODE_ENV || "development"})`);
+  console.log("[static] PUBLIC_DIR:", PUBLIC_DIR);
 
   console.log("[db] usando:", DB_RESOLVED_PATH);
   try {

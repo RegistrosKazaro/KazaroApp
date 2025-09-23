@@ -15,6 +15,13 @@ import fs from "fs";
 
 const router = Router();
 
+const PUBLIC_DIR = process.env.PUBLIC_DIR || path.resolve(process.cwd(), "public");
+const REMITOS_DIR = path.resolve(PUBLIC_DIR, "remitos");
+
+function ensureDir(dir) {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+}
+
 router.post("/", requireAuth, async (req, res) => {
   try {
     const user = req.user;
@@ -39,7 +46,7 @@ router.post("/", requireAuth, async (req, res) => {
       servicioId: servicioId ?? null,
     });
 
-    // 2) datos del remito
+    // 2) datos para el remito
     const { cab, items: orderItems } = getFullOrder(pedidoId);
     const empleado = getEmployeeDisplayName(user.id);
     const fechaIso = cab?.Fecha || new Date().toISOString();
@@ -48,16 +55,15 @@ router.post("/", requireAuth, async (req, res) => {
 
     const remito = { numero, fecha: fechaIso, total, empleado, rol, servicio };
 
-    // 3) PDF + mail (async, sin bloquear respuesta)
+    // 3) PDF + mail (async, no bloquea la respuesta)
     (async () => {
       try {
-        // >>> PASAMOS items CON "codigo" (viene de DB)
-        const pdf = await generateRemitoPDF({ remito, items: orderItems });
+        // genera en ./tmp
+        const pdf = await generateRemitoPDF({ remito, items: orderItems }); // { filePath, fileName }
 
-        // mover a /public/remitos
-        const PUBLIC_DIR = process.env.PUBLIC_DIR || path.resolve(process.cwd(), "public");
-        fs.mkdirSync(publicDir, { recursive: true });
-        const publicDir = path.resolve(PUBLIC_DIR, "remitos");
+        // copia a ./public/remitos y arma path público
+        ensureDir(REMITOS_DIR);
+        const publicPath = path.join(REMITOS_DIR, pdf.fileName);
         fs.copyFileSync(pdf.filePath, publicPath);
 
         const base = env.APP_BASE_URL || `http://localhost:${env.PORT || 4000}`;
@@ -68,29 +74,24 @@ router.post("/", requireAuth, async (req, res) => {
         const userEmail = getEmployeeEmail(user.id);
         const BCC_USER = userEmail && /\S+@\S+\.\S+/.test(userEmail) ? userEmail : undefined;
 
-        // asunto segun pedido / servicio
         const serviceName = remito?.servicio?.name && String(remito.servicio.name).trim();
         const who = (empleado && String(empleado).trim()) || (user?.username ?? "Usuario");
-        const subject = `NUEVO PEDIDO INUSMO - ${serviceName ? serviceName : `ADMINISTRATIVO - ${who}`}`;
+        const subject = `NUEVO PEDIDO INSUMO - ${serviceName ? serviceName : `ADMINISTRATIVO - ${who}`}`;
 
-        // cuerpo
         const currency = new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" });
-
         const html = `
           <p>Hola,</p>
           <p>Se generó el <strong>Remito Nº ${numero}</strong> correspondiente al pedido de <strong>${empleado}</strong>.</p>
           ${servicio ? `<p><strong>Servicio:</strong> ${servicio.name} (ID: ${servicio.id})</p>` : ""}
           <p><strong>Total:</strong> ${currency.format(total || 0)}</p>
-          <p>Podés descargar el PDF desde: <a href="${pdfUrl}">${pdfUrl}</a></p>
+          <p>Descarga del PDF: <a href="${pdfUrl}">${pdfUrl}</a></p>
           <hr/>
           <p><strong>Detalle del pedido:</strong></p>
           <ul>
-            ${orderItems
-              .map(it => {
-                const cod = it.codigo ? ` (Código: ${String(it.codigo).trim()})` : "";
-                return `<li>${it.nombre}${cod} — Cant: ${it.cantidad} — ${currency.format(it.precio || 0)} — Subtotal: ${currency.format(it.subtotal || 0)}</li>`;
-              })
-              .join("")}
+            ${orderItems.map(it => {
+              const cod = it.codigo ? ` (Código: ${String(it.codigo).trim()})` : "";
+              return `<li>${it.nombre}${cod} — Cant: ${it.cantidad} — ${currency.format(it.precio || 0)} — Subtotal: ${currency.format(it.subtotal || 0)}</li>`;
+            }).join("")}
           </ul>
           <p>— Kazaro</p>
         `;
@@ -101,18 +102,22 @@ router.post("/", requireAuth, async (req, res) => {
           subject,
           html,
           attachments: [
-            { filename: pdf.fileName, path: publicPath, contentType: "application/pdf" }
+            { filename: pdf.fileName, path: publicPath, contentType: "application/pdf" },
           ],
         });
+
+        console.log("[orders] Remito generado y mail enviado:", pdf.fileName);
       } catch (err) {
         console.error("[orders] error generando/enviando remito:", err);
       }
     })();
 
-    // 4) respuesta inmediata
+    // 4) respuesta inmediata (coherente con el archivo real)
     const base = env.APP_BASE_URL || `http://localhost:${env.PORT || 4000}`;
-    const safeFileName = `remito-${numero}-${new Date(fechaIso).toISOString().slice(0,19).replace(/[:T]/g,"-")}.pdf`;
-    return res.json({ ok: true, pedidoId, remito: { ...remito, pdfUrl: `${base}/remitos/${safeFileName}` } });
+    const pdfUrl = `${base}/remitos/remito-${numero}-${new Date(fechaIso).toISOString().slice(0,19).replace(/[:T]/g,"-")}.pdf`;
+    // Nota: esta URL intenta coincidir con generateRemitoPDF; igualmente el mail incluye la URL exacta
+
+    return res.json({ ok: true, pedidoId, remito: { ...remito, pdfUrl } });
   } catch (e) {
     console.error("[orders] POST /orders error:", e);
     return res.status(500).json({ error: "No se pudo crear el pedido." });

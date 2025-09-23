@@ -3,61 +3,42 @@ import PDFDocument from "pdfkit";
 import fs from "fs";
 import path from "path";
 
+/** ====== Utilidades ====== */
 function money(n) {
+  const v = Number(n || 0);
   try {
-    return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" })
-      .format(Number(n || 0));
+    return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(v);
   } catch {
-    const v = Number(n || 0);
     return `$ ${v.toFixed(2)}`;
   }
 }
 function safeFileName(s) {
-  return String(s).replace(/[^a-z0-9_-]/gi, "-");
+  return String(s || "").replace(/[^a-z0-9_-]/gi, "-");
+}
+function toNum(n, def = 0) {
+  const v = Number(n);
+  return Number.isFinite(v) ? v : def;
 }
 
 /**
- * @param {{ remito: {numero, fecha, total, empleado, rol, servicio?:{id,name}}, items: Array<{nombre, cantidad, precio, subtotal, codigo?:string}> }}
+ * Estructura esperada:
+ *  remito: { numero, fecha, total, empleado, rol, servicio?:{id,name} }
+ *  items:  [{ nombre, codigo?, cantidad, precio, subtotal }, ...]
+ *
+ * Retorna: { filePath, fileName }
  */
 export async function generateRemitoPDF({ remito, items = [] }) {
-
-  const page = { width: 595.28, height: 841.89 };
-  const margin = 44;
-  const W = page.width - margin * 2;
-
-  const C = {
-    text:   "#0b1220",
-    muted:  "#596175",
-    border: "#d9dfeb",
-    card:   "#f6f8ff",
-    head:   "#eff2ff",
-    accent: "#2563eb",
-    accentDark: "#1d4ed8",
-    white:  "#ffffff"
-  };
-
-  const S = {
-    h1: 22,
-    h2: 12.5,
-    text: 11.5,
-    small: 9.5,
-    tableHead: 11.5,
-    table: 11,
-    rowH: 30,          // <<<<< un poco más alto para alojar la línea del código
-    bandH: 56,
-    gap: 16,
-    chipH: 26,
-  };
-
+  // --- Archivo de salida ---
   const ts = new Date(remito?.fecha || Date.now()).toISOString().slice(0,19).replace(/[:T]/g,"-");
   const fileName = `remito-${safeFileName(remito?.numero || "00000000")}-${ts}.pdf`;
   const outDir = path.resolve(process.cwd(), "tmp");
   fs.mkdirSync(outDir, { recursive: true });
   const filePath = path.join(outDir, fileName);
 
+  // --- Documento ---
   const doc = new PDFDocument({
-    size: [page.width, page.height],
-    margins: { top: margin, right: margin, bottom: margin, left: margin },
+    size: "A4",
+    margins: { top: 36, right: 36, bottom: 48, left: 36 },
     info: {
       Title: `Remito ${remito?.numero || ""}`,
       Author: "Kazaro",
@@ -67,151 +48,190 @@ export async function generateRemitoPDF({ remito, items = [] }) {
   const stream = fs.createWriteStream(filePath);
   doc.pipe(stream);
 
-  let y = margin;
-
-  // banda superior
-  doc.save().roundedRect(margin, y, W, S.bandH, 12).fill(C.head).restore();
-  doc.font("Helvetica-Bold").fontSize(S.h1).fillColor(C.text)
-    .text("REMITO", margin, y + 12, { width: W, align: "center" });
-  y += S.bandH + 8;
-
-  // badge
-  const badgePadX = 14;
-  const badgePadY = 6;
-  const badgeText = `Nº ${remito?.numero || ""} · ${new Date(remito?.fecha || Date.now()).toLocaleString("es-AR")}`;
-  doc.font("Helvetica-Bold").fontSize(S.h2);
-  const badgeTextW = doc.widthOfString(badgeText);
-  const badgeW = Math.min(W, badgeTextW + badgePadX * 2);
-  const badgeH = S.chipH;
-  const badgeX = margin + (W - badgeW) / 2;
-  doc.save().roundedRect(badgeX, y, badgeW, badgeH, 999).fill(C.accent).restore();
-  doc.fillColor(C.white)
-    .text(badgeText, badgeX + badgePadX, y + (badgeH - S.h2) / 2 - 1, { width: badgeW - badgePadX * 2, align: "center" });
-  y += badgeH + S.gap;
-
-  // ficha Empleado / Rol / Servicio
-  const cardPad = 14;
-  const colGap = 12;
-  const cols = 3;
-  const colW = Math.floor((W - cardPad*2 - colGap*(cols-1)) / cols);
-
-  const blocks = [
-    { label: "Empleado", value: remito?.empleado || "-" },
-    { label: "Rol",      value: remito?.rol || "-" },
-    { label: "Servicio", value: remito?.servicio ? `${remito.servicio.name} (ID: ${remito.servicio.id})` : "-" },
-  ];
-
-  doc.fontSize(S.small).font("Helvetica");
-  const labelH = doc.heightOfString("Xg", { width: colW });
-  doc.fontSize(S.text);
-  const valueHeights = blocks.map(b => doc.heightOfString(String(b.value), { width: colW }));
-  const innerH = Math.max(...valueHeights) + labelH + 8 + 6;
-  const cardH = innerH + cardPad*2;
-
-  doc.save()
-    .roundedRect(margin, y, W, cardH, 12)
-    .fill(C.white)
-    .lineWidth(0.8)
-    .strokeColor(C.border)
-    .stroke()
-    .restore();
-
-  let x = margin + cardPad;
-  const labelStyle = () => doc.font("Helvetica").fontSize(S.small).fillColor(C.muted);
-  const valueStyle = () => doc.font("Helvetica-Bold").fontSize(S.text).fillColor(C.text);
-
-  for (let i = 0; i < blocks.length; i++) {
-    const b = blocks[i];
-    labelStyle(); doc.text(b.label, x, y + cardPad, { width: colW });
-    valueStyle(); doc.text(String(b.value), x, y + cardPad + labelH + 6, { width: colW, align: "left", ellipsis: true });
-    x += colW + colGap;
-  }
-
-  y += cardH + S.gap;
-
-  // columnas
-  const col = {
-    nombre: { x: margin + 12,                 w: Math.floor(W * 0.50) - 12 },
-    cant:   { x: margin + Math.floor(W*0.50), w: Math.floor(W * 0.16) },
-    precio: { x: margin + Math.floor(W*0.66), w: Math.floor(W * 0.17) },
-    sub:    { x: margin + Math.floor(W*0.83), w: Math.floor(W * 0.17) - 12 },
+  // Paleta y tamaños
+  const C = {
+    text:   "#0b1220",
+    muted:  "#596175",
+    border: "#d9dfeb",
+    head:   "#eff2ff",
+    accent: "#2563eb",
+    white:  "#ffffff",
+  };
+  const S = {
+    h1: 20,
+    h2: 12.5,
+    text: 11,
+    small: 9.5,
+    rowH: 22,
   };
 
-  // encabezado tabla
-  const headH = S.tableHead + 12;
-  doc.save().roundedRect(margin, y, W, headH, 10).fill(C.card).restore();
-  doc.font("Helvetica-Bold").fontSize(S.tableHead).fillColor(C.text);
-  const hy = y + (headH - S.tableHead)/2 - 1;
-  doc.text("Producto", col.nombre.x, hy, { width: col.nombre.w });
-  doc.text("Cantidad", col.cant.x,   hy, { width: col.cant.w,   align: "right" });
-  doc.text("Precio",   col.precio.x, hy, { width: col.precio.w, align: "right" });
-  doc.text("Subtotal", col.sub.x,    hy, { width: col.sub.w,    align: "right" });
-  y += headH;
+  // Helpers de layout
+  const pageW = doc.page.width, pageH = doc.page.height;
+  const margin = doc.page.margins.left;
+  const W = pageW - margin * 2;
+  const BOTTOM = pageH - doc.page.margins.bottom;
 
-  // filas
-  doc.font("Helvetica").fontSize(S.table);
-  let zebra = false;
-  const tableY0 = y;
+  let y = margin;
 
-  for (const it of items) {
-    if (zebra) {
-      doc.save().rect(margin, y, W, S.rowH).fillOpacity(0.05).fill(C.accent).fillOpacity(1).restore();
+  function line(yPos, color=C.border) {
+    doc
+      .moveTo(margin, yPos)
+      .lineTo(margin + W, yPos)
+      .lineWidth(0.7)
+      .strokeColor(color)
+      .stroke();
+  }
+  function addPageIfNeeded(extra = 0) {
+    if (y + extra > BOTTOM) {
+      doc.addPage();
+      y = doc.page.margins.top;
     }
-    zebra = !zebra;
-
-    const ty = y + 5; // más aire
-    // Nombre
-    doc.fillColor(C.text).text(String(it.nombre || "-"), col.nombre.x, ty, {
-      width: col.nombre.w,
-      ellipsis: true
-    });
-
-    // Código (si hay): debajo del nombre, chico y gris
-    if (it.codigo) {
-      doc.fontSize(S.small).fillColor(C.muted)
-        .text(`Código: ${String(it.codigo)}`, col.nombre.x, ty + 12, {
-          width: col.nombre.w,
-          ellipsis: true
-        })
-        .fontSize(S.table) // volver a tamaño normal
-        .fillColor(C.text);
-    }
-
-    // numéricos
-    const rightY = y + (S.rowH - S.table)/2 - 1;
-    doc.text(String(it.cantidad ?? 0), col.cant.x, rightY, { width: col.cant.w, align: "right" });
-    doc.text(money(it.precio ?? 0),    col.precio.x, rightY, { width: col.precio.w, align: "right" });
-    doc.text(money(it.subtotal ?? 0),  col.sub.x, rightY, { width: col.sub.w, align: "right" });
-
-    y += S.rowH;
   }
 
-  // borde de la tabla
-  doc.save().roundedRect(margin, tableY0 - headH, W, (y - tableY0) + headH, 10)
-    .lineWidth(0.7).strokeColor(C.border).stroke().restore();
+  /** ====== Encabezado ====== */
+  doc
+    .fillColor(C.accent)
+    .fontSize(S.h1)
+    .text("KAZARO", margin, y, { width: W, align: "left" });
+  doc
+    .fillColor(C.text)
+    .fontSize(S.h1)
+    .text("REMITO", margin, y, { width: W, align: "right" });
+  y += 28;
+  line(y); y += 10;
 
-  y += S.gap;
+  // Datos del remito
+  doc.fontSize(S.text).fillColor(C.text);
+  const leftColX = margin;
+  const rightColX = margin + W/2 + 8;
 
-  // tarjeta total
-  const cardW2 = Math.min(300, Math.floor(W * 0.52));
-  const cardX = margin + W - cardW2;
-  const totalsH = 54;
+  const fecha = new Date(remito?.fecha || Date.now());
+  const fechaStr = fecha.toLocaleString("es-AR");
 
-  doc.save().roundedRect(cardX, y, cardW2, totalsH, 12)
-    .fill(C.white).lineWidth(0.8).strokeColor(C.border).stroke().restore();
+  // Columna izquierda
+  doc.text(`Remito Nº: ${remito?.numero || "-"}`, leftColX, y);
+  y += 16;
+  doc.text(`Fecha: ${fechaStr}`, leftColX, y);
+  y += 16;
+  if (remito?.empleado) {
+    doc.text(`Empleado: ${remito.empleado}`, leftColX, y);
+    y += 16;
+  }
+  if (remito?.rol) {
+    doc.text(`Rol: ${remito.rol}`, leftColX, y);
+    y += 16;
+  }
 
-  doc.font("Helvetica").fontSize(S.text).fillColor(C.text)
-    .text("Total", cardX + 14, y + 10, { width: cardW2 - 28 });
-  doc.font("Helvetica-Bold").fontSize(S.h2).fillColor(C.accentDark)
-    .text(money(remito?.total || 0), cardX + 14, y + 10, { width: cardW2 - 28, align: "right" });
+  // Columna derecha
+  let yRight = y - (remito?.rol ? 16 : 0) - 16; // alinear aprox con arriba
+  doc.text(`Total estimado: ${money(remito?.total)}`, rightColX, yRight);
+  yRight += 16;
+  if (remito?.servicio?.name) {
+    doc.text(`Servicio: ${remito.servicio.name}`, rightColX, yRight);
+    yRight += 16;
+  }
+  y = Math.max(y, yRight) + 10;
+  line(y); y += 12;
+
+  /** ====== Tabla de items ====== */
+
+  // Cabecera de tabla
+  const col = {
+    codigo: { x: margin + 0,   w: 90,  label: "Código" },
+    nombre: { x: margin + 95,  w: 220, label: "Descripción" },
+    cant:   { x: margin + 320, w: 60,  label: "Cant." },
+    precio: { x: margin + 385, w: 80,  label: "Precio" },
+    sub:    { x: margin + 470, w: 80,  label: "Subtotal" },
+  };
+
+  // Band de cabecera
+  addPageIfNeeded(40);
+  doc
+    .rect(margin, y, W, 24)
+    .fillAndStroke(C.head, C.border);
+  doc.fillColor(C.text).fontSize(S.text).font("Helvetica-Bold");
+  doc.text(col.codigo.label, col.codigo.x + 6, y + 6, { width: col.codigo.w - 12 });
+  doc.text(col.nombre.label, col.nombre.x + 6, y + 6, { width: col.nombre.w - 12 });
+  doc.text(col.cant.label,   col.cant.x   + 6, y + 6, { width: col.cant.w   - 12, align: "right" });
+  doc.text(col.precio.label, col.precio.x + 6, y + 6, { width: col.precio.w - 12, align: "right" });
+  doc.text(col.sub.label,    col.sub.x    + 6, y + 6, { width: col.sub.w    - 12, align: "right" });
+  y += 26;
+
+  // Filas
+  doc.font("Helvetica").fontSize(S.text).fillColor(C.text);
+  const rowGap = 2;
+  const maxNombreLineas = 2; // corta nombre en 2 líneas máx
+
+  // Normalizar items
+  const rows = (Array.isArray(items) ? items : []).map((it) => ({
+    codigo: (it.codigo ?? it.code ?? it.sku ?? "") + "",
+    nombre: (it.nombre ?? it.name ?? it.descripcion ?? "") + "",
+    cantidad: toNum(it.cantidad ?? it.qty, 0),
+    precio: toNum(it.precio ?? it.price, 0),
+    subtotal: toNum(it.subtotal ?? (toNum(it.cantidad,0)*toNum(it.precio,0)), 0),
+  }));
+
+  if (rows.length === 0) {
+    addPageIfNeeded(20);
+    doc.fillColor(C.muted).text("No hay items en este pedido.", margin, y);
+    y += 20;
+  } else {
+    for (const r of rows) {
+      // Alto dinámico por posible salto de nombre
+      const nombreOpts = { width: col.nombre.w - 12, continued: false };
+      const nombreLines = doc.heightOfString(r.nombre, nombreOpts);
+      const linesCount = Math.min(Math.ceil(nombreLines / doc.currentLineHeight()), maxNombreLineas);
+      const h = Math.max(S.rowH, linesCount * (doc.currentLineHeight() - 1) + 10);
+
+      addPageIfNeeded(h + rowGap + 40);
+
+      // Separador de fila
+      doc.save()
+        .moveTo(margin, y + h)
+        .lineTo(margin + W, y + h)
+        .lineWidth(0.4)
+        .strokeColor(C.border)
+        .stroke()
+        .restore();
+
+      // Código
+      doc.fillColor(C.text).text(r.codigo || "-", col.codigo.x + 6, y + 6, { width: col.codigo.w - 12 });
+
+      // Descripción (con tope de líneas)
+      const nombreY = y + 6;
+      let printed = r.nombre;
+      // pdfkit no tiene “maxLines”, así que recortamos a mano si hace falta
+      if (linesCount > maxNombreLineas) {
+        // naive cut si alguien pasa bloques enormes (raro)
+        printed = printed.slice(0, 180) + "…";
+      }
+      doc.text(printed, col.nombre.x + 6, nombreY, { width: col.nombre.w - 12 });
+
+      // Cantidad / Precio / Subtotal
+      doc.text(String(r.cantidad), col.cant.x + 6, y + 6, { width: col.cant.w - 12, align: "right" });
+      doc.text(money(r.precio),    col.precio.x + 6, y + 6, { width: col.precio.w - 12, align: "right" });
+      doc.text(money(r.subtotal),  col.sub.x + 6, y + 6, { width: col.sub.w - 12, align: "right" });
+
+      y += h + rowGap;
+    }
+  }
+
+  // Total
+  addPageIfNeeded(40);
+  y += 8;
+  line(y); y += 10;
+  doc.font("Helvetica-Bold").fontSize(S.text);
+  doc.text("TOTAL", col.precio.x + 6, y, { width: col.precio.w - 12, align: "right" });
+  doc.text(money(remito?.total), col.sub.x + 6, y, { width: col.sub.w - 12, align: "right" });
+
+  // Footer
+  y = BOTTOM - 24;
+  line(y - 8, C.border);
   doc.font("Helvetica").fontSize(S.small).fillColor(C.muted)
-    .text(`Generado: ${new Date().toLocaleString("es-AR")}`, cardX + 14, y + 32, { width: cardW2 - 28, align: "right" });
+     .text("Generado por Kazaro", margin, y, { width: W, align: "left" })
+     .text(new Date().toLocaleString("es-AR"), margin, y, { width: W, align: "right" });
 
-  // pie
-  doc.font("Helvetica").fontSize(S.small).fillColor(C.muted)
-    .text("Documento interno de pedido. Para cualquier consulta, contacte al área administrativa.",
-      margin, page.height - margin - S.small, { width: W, align: "center" });
-
+  // Cerrar
   doc.end();
   await new Promise((resolve, reject) => {
     stream.on("finish", resolve);
