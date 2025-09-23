@@ -107,8 +107,11 @@ app.listen(PORT, async () => {
     console.error("[mail] SMTP verify ERROR:", e);
   }
 });
-app.get(/^\/(?!auth|me|catalog|orders|supervisor|services|dev|health|remitos)\b.*$/, (req, res) => {
-  const file = path.join(PUBLIC_DIR, "index.html");
-  if (fs.existsSync(file)) return res.sendFile(file);
-  return res.status(404).json({ error: "Not found" });
-});
+app.get(
+  /^\/(?!auth|me|catalog|orders|supervisor|services|dev|health|remitos|assets|favicon\.ico).*/i,
+  (req, res) => {
+    const file = path.join(PUBLIC_DIR, "index.html");
+    if (fs.existsSync(file)) return res.sendFile(file);
+    return res.status(404).json({ error: "Not found" });
+  }
+);
