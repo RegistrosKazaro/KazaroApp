@@ -97,7 +97,7 @@ app.use("/orders", ordersRoutes);
 app.use("/supervisor", supervisorRoutes);
 app.use("/services", servicesRoutes);
 
-// compat: /auth/my-services -> servicesRoutes /my
+
 app.get("/auth/my-services", (req, res, next) => {
   req.url = "/my";
   return servicesRoutes(req, res, next);
