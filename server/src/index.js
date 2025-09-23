@@ -108,10 +108,13 @@ app.listen(PORT, async () => {
   }
 });
 app.get(
-  /^\/(?!auth|me|catalog|orders|supervisor|services|dev|health|remitos|assets|favicon\.ico).*/i,
+  // excluir endpoints de API y recursos "reales"
+  /^\/(?!auth|me|catalog|orders|supervisor|services|dev|health|remitos|assets|favicon\.ico|robots\.txt|manifest\.json).*/i,
   (req, res) => {
     const file = path.join(PUBLIC_DIR, "index.html");
     if (fs.existsSync(file)) return res.sendFile(file);
     return res.status(404).json({ error: "Not found" });
   }
 );
+
+app.use((_req, res) => res.status(404).json({ error: "Not found" }));
