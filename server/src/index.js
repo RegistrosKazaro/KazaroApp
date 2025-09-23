@@ -16,7 +16,7 @@ import meRoutes from "./routes/me.js";
 import devRoutes from "./routes/dev.js";
 import { DB_RESOLVED_PATH, db } from "./db.js";
 import { verifyMailTransport } from "./utils/mailer.js";
-
+import fs from "fs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -93,4 +93,9 @@ app.listen(PORT, async () => {
   } catch (e) {
     console.error("[mail] SMTP verify ERROR:", e);
   }
+});
+app.get(/^\/(?!auth|me|catalog|orders|supervisor|services|dev|health|remitos)\b.*$/, (req, res) => {
+  const file = path.join(PUBLIC_DIR, "index.html");
+  if (fs.existsSync(file)) return res.sendFile(file);
+  return res.status(404).json({ error: "Not found" });
 });
