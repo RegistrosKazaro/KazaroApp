@@ -5,7 +5,6 @@ const DB_PATH = process.env.DB_PATH || "./Kazaro.db";
 const db = new Database(DB_PATH);
 
 // ⚠️ Ajustá columnas si en tu proyecto real se llaman distinto.
-// Esto crea la tabla SOLO si no existe:
 db.exec(`
   CREATE TABLE IF NOT EXISTS Empleados (
     Id INTEGER PRIMARY KEY AUTOINCREMENT,
