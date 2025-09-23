@@ -1,40 +1,57 @@
 // server/src/utils/mailer.js
 import nodemailer from "nodemailer";
-import { env } from "./env.js"; // ajustá la ruta si tu env.js está en otro lado
-import { string } from "zod";
+import { env } from "./env.js";
+
+const MAIL_DISABLED = String(process.env.MAIL_DISABLE || "").toLowerCase() === "true";
+
+function parseBool(v) {
+  return String(v).toLowerCase() === "true";
+}
 
 function getTransport() {
-  const secure = String(env.SMTP_SECURE ?? "false") === "true";
-  const port = Number(env.SMTP_PORT || (secure ? 465 : 587));
+  if (MAIL_DISABLED) return null; 
 
-  // 👈 LOG AQUÍ (antes de createTransport)
+  const secure = parseBool(env.SMTP_SECURE ?? "false");
+  const port = Number(env.SMTP_PORT ?? (secure ? 465 : 587));
+
+  
   console.log("[mail] Using SMTP config:", {
     host: env.SMTP_HOST,
-    port: Number(env.SMTP_PORT || (String(env.SMTP_SECURE ?? false)===true ? 465 : 587)),
-    secure: String (env.SMTP_PORT || (string(env.SMTP_SECURE ?? false)===true ? 465 : 587 )),
-    user: env.SMTP_USER,
-    from: env.MAIL_FROM || env.SMTP_USER
+    port,
+    secure,
+    user: env.SMTP_USER ? "<set>" : undefined,
+    from: env.MAIL_FROM || env.SMTP_USER || undefined,
   });
+
+  
+  if (!env.SMTP_HOST) {
+    throw new Error("[mail] SMTP_HOST no configurado. Seteá variables SMTP o MAIL_DISABLE=true.");
+  }
 
   const transporter = nodemailer.createTransport({
     host: env.SMTP_HOST,
     port,
     secure,
-    auth: env.SMTP_USER && env.SMTP_PASS ? {
-      user: env.SMTP_USER,
-      pass: env.SMTP_PASS,
-    } : undefined,
-    logger: true, // logs detallados
-    debug: true,  // más verboso en consola
+    auth:
+      env.SMTP_USER && env.SMTP_PASS
+        ? { user: env.SMTP_USER, pass: env.SMTP_PASS }
+        : undefined,
+    logger: true, 
+    debug: true,
   });
 
   return transporter;
 }
 
 export async function verifyMailTransport() {
-  const transporter = getTransport();
+  if (MAIL_DISABLED) {
+    console.log("[mail] MAIL_DISABLE=true → skip verify (OK)");
+    return true;
+  }
   try {
+    const transporter = getTransport();
     await transporter.verify();
+    console.log("[mail] SMTP verify OK");
     return true;
   } catch (e) {
     console.error("[mail] transporter.verify ERROR:", e);
@@ -43,17 +60,20 @@ export async function verifyMailTransport() {
 }
 
 export async function sendMail({ to, subject, html, attachments = [] }) {
-  const transporter = getTransport();
+  if (MAIL_DISABLED) {
+    console.log("[mail] MAIL_DISABLE=true → no se envía mail (noop)");
+    return { messageId: "mail-disabled", accepted: [], rejected: [], response: "disabled" };
+  }
 
+  const transporter = getTransport();
   const info = await transporter.sendMail({
     from: env.MAIL_FROM || env.SMTP_USER,
     to,
     subject,
     html,
-    attachments, // [{ filename, path, contentType }]
+    attachments, 
   });
 
-  // Log útil para depurar
   console.log("[mail] sent", {
     messageId: info.messageId,
     accepted: info.accepted,
@@ -63,14 +83,3 @@ export async function sendMail({ to, subject, html, attachments = [] }) {
 
   return info;
 }
-function parseBool(v){ return String(v).toLowerCase()==="true"; }
-const secure = parseBool(env.SMTP_SECURE);
-const port   = Number(env.SMTP_PORT || (secure ? 465 : 587));
-
-console.log("[mail] Using SMTP config:", {
-  host: env.SMTP_HOST,
-  port,
-  secure,
-  user: env.SMTP_USER,
-  from: env.MAIL_FROM || env.SMTP_USER
-});
