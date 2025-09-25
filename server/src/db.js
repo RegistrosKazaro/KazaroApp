@@ -4,24 +4,17 @@ import fs from "fs";
 import path from "path";
 import { env } from "./utils/env.js";
 
-
+// ---------------- Localización de la DB ----------------
 function resolveDbPath() {
   const candidates = [];
-
   if (env.DB_PATH) {
-    candidates.push(
-      path.isAbsolute(env.DB_PATH)
-        ? env.DB_PATH
-        : path.resolve(process.cwd(), env.DB_PATH)
-    );
+    candidates.push(path.isAbsolute(env.DB_PATH) ? env.DB_PATH : path.resolve(process.cwd(), env.DB_PATH));
   }
-
   candidates.push(
     path.resolve(process.cwd(), "Kazaro.db"),
     path.resolve(process.cwd(), "../Kazaro.db"),
     path.resolve(process.cwd(), "../../Kazaro.db")
   );
-
   for (const p of candidates) {
     try { if (p && fs.existsSync(p)) return p; } catch {}
   }
@@ -42,7 +35,7 @@ db.pragma("foreign_keys = ON");
 db.pragma("journal_mode = WAL");
 db.pragma("busy_timeout = 5000");
 
-
+// ---------------- Helpers base ----------------
 function norm(s) {
   return String(s ?? "")
     .normalize("NFD")
@@ -50,14 +43,13 @@ function norm(s) {
     .toLowerCase()
     .trim();
 }
-
 function tableInfo(table) {
   try { return db.prepare(`PRAGMA table_info(${table})`).all(); }
   catch { return []; }
 }
 function allTables() {
   return db.prepare(`
-    SELECT name FROM sqlite_master 
+    SELECT name FROM sqlite_master
     WHERE type='table' AND name NOT LIKE 'sqlite_%'
     ORDER BY name
   `).all().map(r => r.name);
@@ -84,7 +76,7 @@ function fkList(table) {
   catch { return []; }
 }
 
-
+// ---------------- Empleados / Roles ----------------
 const empInfo = tableInfo("Empleados");
 const empleadoIdCol =
   (empInfo.find(c => c.pk === 1)?.name) ||
@@ -107,10 +99,8 @@ const rolesNameCol =
   pickCol(rolesInfo, ["Rol","Nombre","name","Descripcion","descripcion"]) ||
   "Rol";
 
-
 export function getUserForLogin(userOrEmailInput) {
   if (!tableExists("Empleados")) return null;
-
   const eInfo = tableInfo("Empleados");
 
   const idCol =
@@ -129,7 +119,6 @@ export function getUserForLogin(userOrEmailInput) {
 
   const whereParts = [];
   const params = [];
-
   if (userCol)  { whereParts.push(`LOWER(TRIM(${userCol})) = LOWER(TRIM(?))`);  params.push(userOrEmailInput); }
   if (emailCol) { whereParts.push(`LOWER(TRIM(${emailCol})) = LOWER(TRIM(?))`); params.push(userOrEmailInput); }
 
@@ -168,7 +157,7 @@ export function getUserRoles(userId) {
   `).all(userId).map(r => r.role);
 }
 
-
+// ---------------- Catálogo (descubrimiento dinámico) ----------------
 const NAME_CANDIDATES = [
   "Nombre","NombreProducto","Nombre_Producto","Descripcion","Detalle","Producto",
   "Titulo","title","name","descripcion"
@@ -196,24 +185,19 @@ const CATTABLE_NAME_HINTS = ["categor","rubro","famil","servi","secci","grup","t
 function scoreProductTable(tbl) {
   const info = tableInfo(tbl);
   if (!info.length || !hasRows(tbl)) return { score: 0 };
-
   const hasName = !!pickCol(info, NAME_CANDIDATES) || info.some(c => c.type?.toUpperCase().includes("TEXT"));
   const hasPrice = !!pickCol(info, PRICE_CANDIDATES);
   const hasCode = !!pickCol(info, CODE_CANDIDATES);
   const maybeCat = pickCol(info, CAT_CANDIDATES) || pickCol(info, CATNAME_CANDIDATES);
-
   const badHints = ["Empleados","Roles","Roles_Empleados","Pedidos","PedidoItems","Usuarios","Logs"];
   if (badHints.includes(tbl)) return { score: 0 };
-
   let score = 0;
   if (hasName) score += 4;
   if (hasPrice) score += 2;
   if (hasCode) score += 1;
   if (maybeCat) score += 2;
-
   return { score, info };
 }
-
 function chooseProductTable() {
   const candidates = allTables();
   let best = null, bestName = null;
@@ -224,7 +208,6 @@ function chooseProductTable() {
   if (!best) return null;
   return { table: bestName, info: best.info };
 }
-
 function findCategoryTableFor(productsTable, prodCatCol) {
   const fks = fkList(productsTable);
   const fk = fks.find(f => String(f.from).toLowerCase() === String(prodCatCol).toLowerCase());
@@ -240,20 +223,16 @@ function findCategoryTableFor(productsTable, prodCatCol) {
   }
   return null;
 }
-
 function chooseCategoryTable(products, prodCatCol) {
   if (!prodCatCol) return null;
   const tables = allTables();
   let best = null;
-
   for (const t of tables) {
     if (t === products) continue;
     if (["Empleados","Roles","Roles_Empleados","Pedidos","PedidoItems","Usuarios","Logs"].includes(t)) continue;
     if (!hasRows(t)) continue;
-
     const info = tableInfo(t);
     if (!info.length) continue;
-
     const catId = pickCol(info, [
       "CategoriaID","IdCategoria","categoria_id",
       "RubroID","FamiliaID","ServicioID","SeccionID",
@@ -264,7 +243,6 @@ function chooseCategoryTable(products, prodCatCol) {
       "Grupo","Tipo","Clasificacion","Descripcion","Detalle","name","descripcion","titulo"
     ]);
     if (!catId || !catName) continue;
-
     let joinOK = false;
     try {
       const row = db.prepare(`
@@ -275,15 +253,12 @@ function chooseCategoryTable(products, prodCatCol) {
       `).get();
       joinOK = !!row;
     } catch {}
-
     let score = CATTABLE_NAME_HINTS.some(h => t.toLowerCase().includes(h)) ? 3 : 0;
     if (joinOK) score += 10;
-
     if (!best || score > best.score) best = { score, table: t, catId, catName };
   }
   return (best && best.score >= 10) ? best : null;
 }
-
 export function discoverCatalogSchema() {
   const chosen = chooseProductTable();
   if (!chosen) {
@@ -301,18 +276,14 @@ export function discoverCatalogSchema() {
     const anyText = pinfo.find(c => String(c.type || "").toUpperCase().includes("TEXT"));
     prodName = anyText ? anyText.name : pinfo[0].name;
   }
-
   const prodCat  = pickCol(pinfo, CAT_CANDIDATES);
   const prodCatName = pickCol(pinfo, CATNAME_CANDIDATES);
-
   const prodCode = pickCol(pinfo, CODE_CANDIDATES);
   const prodPrice= pickCol(pinfo, PRICE_CANDIDATES);
   const prodStock= pickCol(pinfo, STOCK_CANDIDATES);
 
   let cat = null;
-  if (prodCat) {
-    cat = findCategoryTableFor(products, prodCat) || chooseCategoryTable(products, prodCat);
-  }
+  if (prodCat) cat = findCategoryTableFor(products, prodCat) || chooseCategoryTable(products, prodCat);
 
   return {
     ok: true,
@@ -324,7 +295,6 @@ export function discoverCatalogSchema() {
     }
   };
 }
-
 export function listCategories() {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
@@ -340,7 +310,6 @@ export function listCategories() {
       ORDER BY c.${catName} COLLATE NOCASE
     `).all();
   }
-
   if (!categories && prodCatName) {
     return db.prepare(`
       SELECT ${prodCatName} AS id, ${prodCatName} AS name, COUNT(*) AS count
@@ -349,7 +318,6 @@ export function listCategories() {
       ORDER BY ${prodCatName} COLLATE NOCASE
     `).all();
   }
-
   if (prodCat) {
     return db.prepare(`
       SELECT ${prodCat} AS id, 'Categoría ' || ${prodCat} AS name, COUNT(*) AS count
@@ -358,11 +326,9 @@ export function listCategories() {
       ORDER BY ${prodCat}
     `).all();
   }
-
   const total = db.prepare(`SELECT COUNT(*) AS c FROM ${products}`).get()?.c ?? 0;
   return [{ id: "__all__", name: "Todos", count: total }];
 }
-
 export function listProductsByCategory(categoryId, { q = "" } = {}) {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
@@ -383,14 +349,10 @@ export function listProductsByCategory(categoryId, { q = "" } = {}) {
   ].join(", ");
 
   const like = `%${q.trim()}%`;
-
   let whereCat = "1=1";
   const params = [];
-  if (prodCat && categoryId !== "__all__") {
-    whereCat = `${prodCat} = ?`; params.push(categoryId);
-  } else if (!prodCat && prodCatName && categoryId !== "__all__") {
-    whereCat = `${prodCatName} = ?`; params.push(categoryId);
-  }
+  if (prodCat && categoryId !== "__all__") { whereCat = `${prodCat} = ?`; params.push(categoryId); }
+  else if (!prodCat && prodCatName && categoryId !== "__all__") { whereCat = `${prodCatName} = ?`; params.push(categoryId); }
 
   let whereSearch = `${prodName} LIKE ?`;
   params.push(like);
@@ -404,7 +366,6 @@ export function listProductsByCategory(categoryId, { q = "" } = {}) {
   `;
   return db.prepare(sql).all(...params);
 }
-
 export function debugCatalogSchema() {
   const sch = discoverCatalogSchema();
   if (!sch.ok) return sch;
@@ -412,7 +373,7 @@ export function debugCatalogSchema() {
   return { ...sch, sample };
 }
 
-
+// ---------------- Pedidos (asegurar esquema) ----------------
 function ensureOrdersSchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS Pedidos (
@@ -431,10 +392,8 @@ function ensureOrdersSchema() {
       Precio       REAL,
       Cantidad     INTEGER NOT NULL,
       Subtotal     REAL
-      -- La columna Codigo se agrega abajo si no existe
     );
   `);
-
   try {
     const info = tableInfo("Pedidos");
     const hasServicio =
@@ -442,7 +401,6 @@ function ensureOrdersSchema() {
       info.some(c => String(c.name).toLowerCase() === "servicio_id");
     if (!hasServicio) db.exec(`ALTER TABLE Pedidos ADD COLUMN ServicioID INTEGER NULL;`);
   } catch {}
-
   try {
     const info2 = tableInfo("Pedidos");
     const hasServicio2 =
@@ -450,13 +408,10 @@ function ensureOrdersSchema() {
       info2.some(c => String(c.name).toLowerCase() === "servicio_id");
     if (hasServicio2) db.exec(`CREATE INDEX IF NOT EXISTS idx_pedidos_servicio ON Pedidos(ServicioID);`);
   } catch {}
-
   try {
     const pi = tableInfo("PedidoItems");
     const hasCodigo = pi.some(c => norm(c.name) === "codigo");
-    if (!hasCodigo) {
-      db.exec(`ALTER TABLE PedidoItems ADD COLUMN Codigo TEXT;`);
-    }
+    if (!hasCodigo) db.exec(`ALTER TABLE PedidoItems ADD COLUMN Codigo TEXT;`);
   } catch {}
 }
 ensureOrdersSchema();
@@ -476,7 +431,6 @@ export function getProductForOrder(productId) {
 
   return db.prepare(`SELECT ${cols} FROM ${products} WHERE ${prodId} = ? LIMIT 1`).get(productId);
 }
-
 export function createOrder({ empleadoId, rol, nota, items, servicioId = null }) {
   const tx = db.transaction(() => {
     let total = 0;
@@ -536,7 +490,7 @@ export function createOrder({ empleadoId, rol, nota, items, servicioId = null })
   return tx();
 }
 
-
+// ---------------- Servicios / Asignaciones (PIVOT) ----------------
 function resolveServicesTable() {
   let table = null;
   if (tableExists("Servicios")) table = "Servicios";
@@ -544,7 +498,6 @@ function resolveServicesTable() {
   else return null;
 
   const info = tableInfo(table);
-
   const idCol =
     pickCol(info, ["ServiciosID","ServicioID","IdServicio","ID","Id","id"]) ||
     (info.find(c => c.pk === 1)?.name) ||
@@ -557,69 +510,56 @@ function resolveServicesTable() {
       CAST(s.${idCol} AS TEXT)
     )
   `;
-
   return { table, idCol, nameExpr };
 }
 
-export function listServicesByUser(userId, { withDebug = false } = {}) {
-  if (!tableExists("supervisor_services")) {
-    const empty = [];
-    return withDebug ? Object.assign(empty, { __debug: [{ step: "no_pivot" }] }) : empty;
-  }
+// Asegura tabla pivot (id autoincremental para poder borrar por id)
+export function ensureSupervisorPivot() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS supervisor_services (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      EmpleadoID  INTEGER NOT NULL,
+      ServicioID  INTEGER NOT NULL,
+      UNIQUE(EmpleadoID, ServicioID),
+      FOREIGN KEY (EmpleadoID) REFERENCES Empleados(${empleadoIdCol}) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_supserv_emp ON supervisor_services(EmpleadoID);
+    CREATE INDEX IF NOT EXISTS idx_supserv_srv ON supervisor_services(ServicioID);
+  `);
+}
 
+// Devuelve lista {id, name} de servicios asignados (sin semanas)
+export function listServicesByUser(userId) {
+  ensureSupervisorPivot();
   const spec = resolveServicesTable();
-  if (!spec) {
-    const empty = [];
-    return withDebug ? Object.assign(empty, { __debug: [{ step: "no_services_table" }] }) : empty;
-  }
-
-  const sql = `
-    SELECT DISTINCT
-      s.${spec.idCol} AS id,
-      ${spec.nameExpr} AS name
+  if (!spec) return [];
+  const rows = db.prepare(`
+    SELECT a.id,
+           s.${spec.idCol} AS sid,
+           ${spec.nameExpr} AS sname
     FROM supervisor_services a
     JOIN ${spec.table} s
       ON CAST(s.${spec.idCol} AS TEXT) = CAST(a.ServicioID AS TEXT)
     WHERE CAST(a.EmpleadoID AS TEXT) = CAST(? AS TEXT)
-    ORDER BY name COLLATE NOCASE
-  `;
-
-  try {
-    const rows = db.prepare(sql).all(userId);
-    const out = rows.map(r => ({ id: Number(r.id), name: String(r.name) }));
-    return withDebug ? Object.assign(out, { __debug: [{ step: "ok", table: spec.table, idCol: spec.idCol }] }) : out;
-  } catch (e) {
-    const empty = [];
-    return withDebug ? Object.assign(empty, { __debug: [{ step: "err", error: String(e?.message || e) }] }) : empty;
-  }
+    ORDER BY sname COLLATE NOCASE
+  `).all(userId);
+  return rows.map(r => ({ id: Number(r.sid), name: String(r.sname) }));
 }
 
-export function getEmployeeDisplayName(userId) {
-  const row = db.prepare(`
-    SELECT
-      TRIM(COALESCE(Nombre,'') || ' ' || COALESCE(Apellido,'')) AS full,
-      Email
-    FROM Empleados
-    WHERE ${empleadoIdCol} = ?
-    LIMIT 1
-  `).get(userId);
-
-  const full = (row?.full || "").trim();
-  return full || row?.Email || `Empleado ${userId}`;
-}
-export function getEmployeeEmail(userId) {
-  try {
-    const row = db.prepare(`SELECT Email FROM Empleados WHERE ${empleadoIdCol} = ? LIMIT 1`).get(userId);
-    const e = (row?.Email || "").trim();
-    return e || null;
-  } catch { return null; }
+// Punto único para que el Supervisor vea sus servicios
+export function getAssignedServices(userId) {
+  // Pivot (fuente de la verdad)
+  return listServicesByUser(userId);
 }
 
+// ---------------- Extras para orders.js ----------------
 export function getFullOrder(pedidoId) {
   const cab = db.prepare(`
     SELECT p.PedidoID, p.EmpleadoID, p.Rol, p.Nota, p.Total, p.Fecha, p.ServicioID
     FROM Pedidos p WHERE p.PedidoID = ? LIMIT 1
   `).get(pedidoId);
+
+  if (!cab) return { cab: null, items: [] };
 
   const items = db.prepare(`
     SELECT 
@@ -638,5 +578,19 @@ export function getFullOrder(pedidoId) {
   return { cab, items };
 }
 
-
-export { listServicesByUser as getAssignedServices };
+export function getEmployeeDisplayName(userId) {
+  try {
+    const row = db.prepare(`
+      SELECT TRIM(COALESCE(Nombre,'') || ' ' || COALESCE(Apellido,'')) AS full,
+             Email,
+             username
+      FROM Empleados
+      WHERE ${empleadoIdCol} = ?
+      LIMIT 1
+    `).get(userId);
+    const full = (row?.full || "").trim();
+    return full || row?.username || row?.Email || `Empleado ${userId}`;
+  } catch {
+    return `Empleado ${userId}`;
+  }
+}

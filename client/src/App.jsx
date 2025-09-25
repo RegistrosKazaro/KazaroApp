@@ -7,8 +7,9 @@ import Login from "./pages/Login";
 import RoleSelect from "./pages/RoleSelect";
 import Products from "./pages/Products";
 import Cart from "./pages/Cart";
-import Services from "./pages/Services"; // << usamos Services
+import Services from "./pages/Services";
 import "./styles/app.css";
+import AdminPanel from "./pages/AdminPanel";
 
 function Guarded() {
   const { user, loading } = useAuth();
@@ -21,15 +22,27 @@ function Layout() {
   const { user, logout } = useAuth();
   const { items } = useCart();
   const { role } = useParams();
+
+  const roles = (user?.roles || []).map(r => String(r).toLowerCase());
+  const isAdmin = roles.includes("admin");
+
+  // role seguro para construir URLs
+  const safeRole = (role || roles[0] || "admin").toLowerCase();
+
   const rolesText = (user?.roles || []).join(", ");
   const cartQty = (items || []).reduce((s, it) => s + Number(it?.qty || 0), 0);
 
   return (
     <>
       <header className="appbar">
-        <Link to={`/app/${role || "administrativo"}/products`} className="brand">Kazaro</Link>
+        <Link to={`/app/${safeRole}/products`} className="brand">Kazaro</Link>
         <nav className="appbar-right">
-          <Link className="pill" to={`/app/${role || "administrativo"}/cart`}>
+          {isAdmin && (
+            <Link className="pill" to={`/app/${safeRole}/admin`}>
+              Admin
+            </Link>
+          )}
+          <Link className="pill" to={`/app/${safeRole}/cart`}>
             Carrito {cartQty ? `(${cartQty})` : ""}
           </Link>
           <span className="user">{user?.username} ({rolesText})</span>
@@ -41,6 +54,8 @@ function Layout() {
   );
 }
 
+
+
 export default function App() {
   return (
     <Routes>
@@ -50,10 +65,10 @@ export default function App() {
       {/* Todo lo que requiere sesión va dentro de Guarded */}
       <Route element={<Guarded />}>
         <Route path="/role-select" element={<RoleSelect />} />
-
         <Route path="/app/:role" element={<Layout />}>
           <Route path="services" element={<Services />} />
           <Route path="products" element={<Products />} />
+          <Route path="admin" element={<AdminPanel />} />
           <Route path="cart" element={<Cart />} />
           <Route index element={<Navigate to="products" replace />} />
         </Route>

@@ -27,32 +27,7 @@ export default function ServicesPage() {
     if (page < 1) setPage(1);
   }, [services.length, page, pageCount]);
 
-  const getId = (r) => {
-    const v =
-      r?.id ??
-      r?.servicioId ?? r?.servicioID ??
-      r?.ServicioID ?? r?.ServiciosID ??
-      r?.service_id ?? r?.servicio_id ??
-      r?.ServiceID ??
-      r?.Servicios?.id ?? r?.Servicio?.id ?? r?.servicio?.id ??
-      r?.service?.id;
-    const n = Number(v);
-    return Number.isFinite(n) ? n : undefined;
-  };
-
-  const getName = (r) => {
-    const v =
-      r?.name ?? r?.nombre ??
-      r?.ServicioNombre ?? r?.servicioNombre ??
-      r?.service_name ?? r?.ServiceName ??
-      r?.descripcion ?? r?.Descripcion ??
-      r?.Servicios?.ServicioNombre ?? r?.Servicio?.ServicioNombre ??
-      r?.servicio?.name ?? r?.service?.name ?? r?.Servicios?.name;
-    const s = (v ?? "").toString().trim();
-    return s || undefined;
-  };
-
-  
+  // Redirección si no es supervisor
   useEffect(() => {
     if (loadingUser) return;
     if (!user) {
@@ -60,103 +35,45 @@ export default function ServicesPage() {
       return;
     }
     const roles = (user?.roles || []).map((r) => String(r).toLowerCase());
-    if (!roles.some((r) => r.includes("super"))) {
+    if (!roles.includes("supervisor")) {
       nav("/app/administrativo/products", { replace: true });
     }
   }, [user, loadingUser, nav]);
 
-  
+  // Cargar servicios desde backend (solo asignados en la BD)
   useEffect(() => {
-    if (loadingUser) return;
-    if (!user) return;
+    if (loadingUser || !user) return;
 
     let alive = true;
     (async () => {
       setLoading(true);
       setErr("");
       try {
-        let rows = [];
-
-        
-        try {
-          const r = await api.get("/services/dev/services-by-username", {
-            params: { username: user.username },
-            withCredentials: false,
-          });
-          rows = Array.isArray(r.data?.rows) ? r.data.rows : [];
-        } catch (e) {
-          console.debug("[services] dev by username falló", e);
-        }
-
-        
-        if (!rows.length && user?.id != null) {
-          try {
-            const r = await api.get("/services/dev/services-by-id", {
-              params: { userId: user.id },
-              withCredentials: false,
-            });
-            rows = Array.isArray(r.data?.rows) ? r.data.rows : [];
-          } catch (e) {
-            console.debug("[services] dev by id falló", e);
-          }
-        }
-
-
-        if (!rows.length) {
-          try {
-            const r = await api.get("/services/my", { withCredentials: true });
-            const d = Array.isArray(r.data) ? r.data : (r.data?.rows || []);
-            rows = Array.isArray(d) ? d : [];
-          } catch (e) {
-            console.debug("[services] /services/my falló", e);
-          }
-        }
-
-        
-        if (!rows.length) {
-          try {
-            const r = await api.get("/auth/my-services", { withCredentials: true });
-            rows = Array.isArray(r.data) ? r.data : (Array.isArray(r.data?.rows) ? r.data.rows : []);
-          } catch (e) {
-            console.debug("[services] /auth/my-services falló", e);
-          }
-        }
-
-        
-        const mapped = (rows || [])
-          .map((r) => {
-            const id = getId(r);
-            const name = getName(r);
-            return id != null && name ? { id, name } : null;
-          })
-          .filter(Boolean);
-
-        const seen = new Set();
-        const unique = mapped.filter((r) => {
-          if (seen.has(r.id)) return false;
-          seen.add(r.id);
-          return true;
-        });
+        const r = await api.get("/supervisor/services", { withCredentials: true });
+        const rows = Array.isArray(r.data) ? r.data : [];
 
         if (!alive) return;
-        setServices(unique);
-        
+
+        setServices(rows);
         setPage(1);
 
-        if (unique.length && !service?.id) {
-          setService({ id: unique[0].id, name: unique[0].name });
+        // auto-selección del primero si no hay ninguno
+        if (rows.length && !service?.id) {
+          setService({ id: rows[0].id, name: rows[0].name });
         }
 
         setLoading(false);
       } catch (e) {
-        console.debug("[services] error inesperado", e);
+        console.error("[services] error:", e);
         if (!alive) return;
         setErr("No se pudieron cargar tus servicios.");
         setLoading(false);
       }
     })();
 
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [user, loadingUser, setService, service?.id]);
 
   const handlePick = (it) => setService({ id: it.id, name: it.name });
@@ -166,9 +83,9 @@ export default function ServicesPage() {
   };
 
   const goFirst = () => setPage(1);
-  const goPrev  = () => setPage((p) => Math.max(1, p - 1));
+  const goPrev = () => setPage((p) => Math.max(1, p - 1));
   const goNextP = () => setPage((p) => Math.min(pageCount, p + 1));
-  const goLast  = () => setPage(pageCount);
+  const goLast = () => setPage(pageCount);
 
   if (loadingUser) return <div className="state">Cargando…</div>;
   if (!user) return <Navigate to="/login" replace />;
@@ -201,18 +118,43 @@ export default function ServicesPage() {
           </div>
 
           {/* Paginador */}
-          <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <div
+            style={{
+              marginTop: 12,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
+            }}
+          >
             <span style={{ fontSize: 12, opacity: 0.8 }}>
-              Mostrando {start + 1}-{Math.min(start + PER_PAGE, services.length)} de {services.length}
+              Mostrando {start + 1}-{Math.min(start + PER_PAGE, services.length)} de{" "}
+              {services.length}
             </span>
             <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-              <button className="pill pill--primary" onClick={goFirst} disabled={page === 1}>&laquo;</button>
-              <button className="pill pill--primary" onClick={goPrev} disabled={page === 1}>Anterior</button>
+              <button className="pill pill--primary" onClick={goFirst} disabled={page === 1}>
+                &laquo;
+              </button>
+              <button className="pill pill--primary" onClick={goPrev} disabled={page === 1}>
+                Anterior
+              </button>
               <span style={{ padding: "4px 8px", fontSize: 16, color: "black" }}>
                 Página {page} / {pageCount}
               </span>
-              <button className="pill pill--primary" onClick={goNextP} disabled={page === pageCount}>Siguiente</button>
-              <button className="pill pill--primary" onClick={goLast} disabled={page === pageCount}>&raquo;</button>
+              <button
+                className="pill pill--primary"
+                onClick={goNextP}
+                disabled={page === pageCount}
+              >
+                Siguiente
+              </button>
+              <button
+                className="pill pill--primary"
+                onClick={goLast}
+                disabled={page === pageCount}
+              >
+                &raquo;
+              </button>
             </div>
           </div>
 

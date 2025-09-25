@@ -18,8 +18,8 @@ import meRoutes from "./routes/me.js";
 import devRoutes from "./routes/dev.js";
 import { DB_RESOLVED_PATH, db } from "./db.js";
 import { verifyMailTransport } from "./utils/mailer.js";
+import adminRoutes from "./routes/admin.js";
 
-// ---------- Paths ----------
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -27,7 +27,6 @@ const PUBLIC_DIR = process.env.PUBLIC_DIR
   ? path.resolve(process.cwd(), process.env.PUBLIC_DIR)
   : path.join(__dirname, "..", "public");
 
-// ---------- Diagnóstico DB al inicio (útil en Render) ----------
 const dbFile = process.env.DB_PATH || "./Kazaro.db";
 try {
   const st = fs.statSync(dbFile);
@@ -43,13 +42,10 @@ try {
 }
 
 const app = express();
-
-// ---------- Middlewares básicos ----------
 app.use(express.json());
 app.use(cookieParser());
 app.use(morgan("dev"));
 
-// CORS (permitimos tu front en Render y localhost dev)
 const allowed = new Set(
   [
     env.APP_URL,
@@ -63,52 +59,36 @@ const allowed = new Set(
 app.use(
   cors({
     origin(origin, cb) {
-      if (!origin) return cb(null, true); // curl/Postman
+      if (!origin) return cb(null, true);
       cb(null, allowed.has(origin));
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "Cache-Control",
-      "Pragma",
-      "Expires",
-    ],
+    allowedHeaders: ["Content-Type","Authorization","Cache-Control","Pragma","Expires"],
   })
 );
-app.use((req, res, next) => {
-  if (req.method === "OPTIONS") return res.sendStatus(204);
-  next();
-});
+app.use((req, res, next) => { if (req.method === "OPTIONS") return res.sendStatus(204); next(); });
 
-// Cookies/JWT
 app.use(cookies);
 
-// ---------- Estáticos (antes que las rutas y el fallback) ----------
+// estáticos
 app.use(express.static(PUBLIC_DIR));
 app.use("/remitos", express.static(path.join(PUBLIC_DIR, "remitos")));
 
-// ---------- Rutas de API ----------
+// API
 app.use("/auth", authRoutes);
 app.use("/me", meRoutes);
 app.use("/catalog", catalogRoutes);
 app.use("/orders", ordersRoutes);
 app.use("/supervisor", supervisorRoutes);
 app.use("/services", servicesRoutes);
+app.use("/admin", adminRoutes);
 
+app.get("/auth/my-services", (req, res, next) => { req.url = "/my"; return servicesRoutes(req, res, next); });
 
-app.get("/auth/my-services", (req, res, next) => {
-  req.url = "/my";
-  return servicesRoutes(req, res, next);
-});
-
-// health
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-// ---------- Fallback SPA (¡clave!) ----------
-// Para rutas del frontend (/login, /app, etc.) devolvemos index.html
-// Excluimos endpoints de API y archivos reales
+// SPA fallback
 app.get(
   /^\/(?!auth|me|catalog|orders|supervisor|services|dev|health|remitos|assets|favicon\.ico|robots\.txt|manifest\.json).*/i,
   (req, res) => {
@@ -121,12 +101,9 @@ app.get(
   }
 );
 
-// ---------- 404 final (después del fallback) ----------
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));
 
-// ---------- Start ----------
 const PORT = Number(env.PORT || process.env.PORT || 10000);
-
 app.listen(PORT, async () => {
   console.log(`[server] http://localhost:${PORT} (${env.NODE_ENV || "development"})`);
   console.log("[static] PUBLIC_DIR:", PUBLIC_DIR);
