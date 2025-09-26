@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import { env } from "./utils/env.js";
 
-// ---------------- Localización de la DB ----------------
+/* =====================  Resolución de ruta de DB  ===================== */
 function resolveDbPath() {
   const candidates = [];
   if (env.DB_PATH) {
@@ -18,24 +18,19 @@ function resolveDbPath() {
   for (const p of candidates) {
     try { if (p && fs.existsSync(p)) return p; } catch {}
   }
+  // si no existe ninguno, devolvemos el primero para que se cree
   return candidates[0];
 }
 
 const dbPath = resolveDbPath();
 export const DB_RESOLVED_PATH = dbPath;
 
-if (!fs.existsSync(dbPath)) {
-  console.error("[DB] No se encontró la base en:", dbPath);
-  console.error("[DB] Configurá env.DB_PATH con la ruta a tu Kazaro.db");
-  throw new Error(`No existe el archivo de base de datos en: ${dbPath}`);
-}
-
-export const db = new Database(dbPath, { fileMustExist: true });
+export const db = new Database(dbPath, { fileMustExist: fs.existsSync(dbPath) });
 db.pragma("foreign_keys = ON");
 db.pragma("journal_mode = WAL");
 db.pragma("busy_timeout = 5000");
 
-// ---------------- Helpers base ----------------
+/* =====================  Helpers base e introspección  ===================== */
 function norm(s) {
   return String(s ?? "")
     .normalize("NFD")
@@ -43,16 +38,19 @@ function norm(s) {
     .toLowerCase()
     .trim();
 }
-function tableInfo(table) {
+
+export function tinfo(table) {
   try { return db.prepare(`PRAGMA table_info(${table})`).all(); }
   catch { return []; }
 }
 function allTables() {
-  return db.prepare(`
-    SELECT name FROM sqlite_master
-    WHERE type='table' AND name NOT LIKE 'sqlite_%'
-    ORDER BY name
-  `).all().map(r => r.name);
+  try {
+    return db.prepare(`
+      SELECT name FROM sqlite_master
+      WHERE type='table' AND name NOT LIKE 'sqlite_%'
+      ORDER BY name
+    `).all().map(r => r.name);
+  } catch { return []; }
 }
 function tableExists(name) {
   const lower = String(name).toLowerCase();
@@ -61,6 +59,10 @@ function tableExists(name) {
 function hasRows(table) {
   try { return !!db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get(); }
   catch { return false; }
+}
+function fkList(table) {
+  try { return db.prepare(`PRAGMA foreign_key_list(${table})`).all(); }
+  catch { return []; }
 }
 function pickCol(info, candidates) {
   const names = info.map(c => c.name);
@@ -71,42 +73,36 @@ function pickCol(info, candidates) {
   }
   return null;
 }
-function fkList(table) {
-  try { return db.prepare(`PRAGMA foreign_key_list(${table})`).all(); }
-  catch { return []; }
+export function pick(info, regex, fallback = null) {
+  const hit = info.find(c => regex.test(String(c.name)));
+  return hit ? hit.name : fallback;
 }
 
-// ---------------- Empleados / Roles ----------------
-const empInfo = tableInfo("Empleados");
+/* =====================  Empleados / Roles  ===================== */
+const empInfo = tinfo("Empleados");
 const empleadoIdCol =
   (empInfo.find(c => c.pk === 1)?.name) ||
-  pickCol(empInfo, ["EmpleadosID","EmpleadoID","EmpleadoId","IdEmpleado","empleado_id","user_id","id"]) ||
-  "EmpleadoID";
+  pickCol(empInfo, ["EmpleadosID","EmpleadoID","EmpleadoId","IdEmpleado","empleado_id","user_id","id","ID"]) ||
+  "EmpleadosID";
 
-const reInfo = tableInfo("Roles_Empleados");
+const reInfo = tinfo("Roles_Empleados");
 const reEmpleadoIdCol =
-  pickCol(reInfo, ["EmpleadoID","EmpleadoId","IdEmpleado","empleado_id","user_id","id_empleado"]) ||
-  "EmpleadoID";
+  pickCol(reInfo, ["EmpleadoID","EmpleadoId","IdEmpleado","empleado_id","user_id","id_empleado"]) || "EmpleadoID";
 const reRolIdCol =
-  pickCol(reInfo, ["RolID","IdRol","rol_id","id_rol","id"]) ||
-  "RolID";
+  pickCol(reInfo, ["RolID","IdRol","rol_id","id_rol","id"]) || "RolID";
 
-const rolesInfo = tableInfo("Roles");
-const rolesIdCol =
-  pickCol(rolesInfo, ["RolID","IdRol","rol_id","id_rol","id"]) ||
-  "RolID";
-const rolesNameCol =
-  pickCol(rolesInfo, ["Rol","Nombre","name","Descripcion","descripcion"]) ||
-  "Rol";
+const rolesInfo = tinfo("Roles");
+const rolesIdCol   = pickCol(rolesInfo, ["RolID","IdRol","rol_id","id_rol","id"]) || "RolID";
+const rolesNameCol = pickCol(rolesInfo, ["Rol","Nombre","name","Descripcion","descripcion"]) || "Nombre";
 
 export function getUserForLogin(userOrEmailInput) {
   if (!tableExists("Empleados")) return null;
-  const eInfo = tableInfo("Empleados");
+  const eInfo = tinfo("Empleados");
 
   const idCol =
     (eInfo.find(c => c.pk === 1)?.name) ||
     pickCol(eInfo, ["EmpleadosID","EmpleadoID","IdEmpleado","empleado_id","user_id","id","ID"]) ||
-    "EmpleadoID";
+    "EmpleadosID";
 
   const userCol  = pickCol(eInfo, ["username","user","usuario","Usuario"]);
   const emailCol = pickCol(eInfo, ["email","Email","correo","Correo"]);
@@ -157,15 +153,12 @@ export function getUserRoles(userId) {
   `).all(userId).map(r => r.role);
 }
 
-// ---------------- Catálogo (descubrimiento dinámico) ----------------
-const NAME_CANDIDATES = [
-  "Nombre","NombreProducto","Nombre_Producto","Descripcion","Detalle","Producto",
-  "Titulo","title","name","descripcion"
-];
-const CODE_CANDIDATES = ["Codigo","CodigoProducto","Codigo_Producto","SKU","sku","codigo","code","Code"];
+/* =====================  Catálogo (descubrimiento dinámico)  ===================== */
+const NAME_CANDIDATES  = ["Nombre","NombreProducto","Nombre_Producto","Descripcion","Detalle","Producto","Titulo","title","name","descripcion"];
+const CODE_CANDIDATES  = ["Codigo","CodigoProducto","Codigo_Producto","SKU","sku","codigo","code","Code"];
 const PRICE_CANDIDATES = ["Precio","precio","Price","Costo","costo","importe","Valor","valor"];
 const STOCK_CANDIDATES = ["Stock","Existencia","Cantidad","Disponibilidad","stock","existencia","cantidad"];
-const CAT_CANDIDATES = [
+const CAT_CANDIDATES   = [
   "CategoriaID","IdCategoria","categoria_id","RubroID","FamiliaID",
   "CategoriaProductoID","IdCategoriaProducto","categoria_producto_id",
   "ServicioID","IdServicio","servicio_id",
@@ -177,24 +170,23 @@ const CAT_CANDIDATES = [
 ];
 const CATNAME_CANDIDATES = [
   "Categoria","CategoriaNombre","NombreCategoria","Rubro","Familia","Servicio","Seccion",
-  "Grupo","Tipo","Clasificacion",
-  "categoria_nombre","nombre_categoria"
+  "Grupo","Tipo","Clasificacion","categoria_nombre","nombre_categoria","Nombre"
 ];
-const CATTABLE_NAME_HINTS = ["categor","rubro","famil","servi","secci","grup","tipo","clasif"];
+const CATTABLE_HINTS = ["categor","rubro","famil","servi","secci","grup","tipo","clasif"];
 
 function scoreProductTable(tbl) {
-  const info = tableInfo(tbl);
+  const info = tinfo(tbl);
   if (!info.length || !hasRows(tbl)) return { score: 0 };
-  const hasName = !!pickCol(info, NAME_CANDIDATES) || info.some(c => c.type?.toUpperCase().includes("TEXT"));
+  const hasName  = !!pickCol(info, NAME_CANDIDATES) || info.some(c => /TEXT/i.test(String(c.type)));
   const hasPrice = !!pickCol(info, PRICE_CANDIDATES);
-  const hasCode = !!pickCol(info, CODE_CANDIDATES);
-  const maybeCat = pickCol(info, CAT_CANDIDATES) || pickCol(info, CATNAME_CANDIDATES);
-  const badHints = ["Empleados","Roles","Roles_Empleados","Pedidos","PedidoItems","Usuarios","Logs"];
-  if (badHints.includes(tbl)) return { score: 0 };
+  const hasCode  = !!pickCol(info, CODE_CANDIDATES);
+  const maybeCat = !!pickCol(info, CAT_CANDIDATES) || !!pickCol(info, CATNAME_CANDIDATES);
+  const blacklist = ["Empleados","Roles","Roles_Empleados","Pedidos","PedidoItems","Usuarios","Logs","supervisor_services","service_products","Ordenes","OrdenesDetalles","remitos","remito_items","email_log","Stock","sequences","service_emails"];
+  if (blacklist.includes(tbl)) return { score: 0 };
   let score = 0;
-  if (hasName) score += 4;
+  if (hasName)  score += 4;
   if (hasPrice) score += 2;
-  if (hasCode) score += 1;
+  if (hasCode)  score += 1;
   if (maybeCat) score += 2;
   return { score, info };
 }
@@ -212,13 +204,10 @@ function findCategoryTableFor(productsTable, prodCatCol) {
   const fks = fkList(productsTable);
   const fk = fks.find(f => String(f.from).toLowerCase() === String(prodCatCol).toLowerCase());
   if (fk) {
-    const info = tableInfo(fk.table);
+    const info = tinfo(fk.table);
     const catId   = fk.to || (info.find(c => c.pk === 1)?.name) ||
                     pickCol(info, ["CategoriaID","IdCategoria","id","ID"]);
-    const catName = pickCol(info, [
-      "Categoria","CategoriaNombre","NombreCategoria","Rubro","Familia","Servicio","Seccion",
-      "Grupo","Tipo","Clasificacion","Descripcion","Nombre","name","descripcion","Titulo","title"
-    ]);
+    const catName = pickCol(info, CATNAME_CANDIDATES);
     if (catId && catName) return { table: fk.table, catId, catName, info };
   }
   return null;
@@ -229,41 +218,28 @@ function chooseCategoryTable(products, prodCatCol) {
   let best = null;
   for (const t of tables) {
     if (t === products) continue;
-    if (["Empleados","Roles","Roles_Empleados","Pedidos","PedidoItems","Usuarios","Logs"].includes(t)) continue;
-    if (!hasRows(t)) continue;
-    const info = tableInfo(t);
-    if (!info.length) continue;
-    const catId = pickCol(info, [
-      "CategoriaID","IdCategoria","categoria_id",
-      "RubroID","FamiliaID","ServicioID","SeccionID",
-      "GrupoID","TipoID","ClasificacionID","id","ID"
-    ]);
-    const catName = pickCol(info, [
-      "Nombre","NombreCategoria","Categoria","Rubro","Familia","Servicio","Seccion",
-      "Grupo","Tipo","Clasificacion","Descripcion","Detalle","name","descripcion","titulo"
-    ]);
+    const info = tinfo(t);
+    if (!info.length || !hasRows(t)) continue;
+    const black = ["Empleados","Roles","Roles_Empleados","Pedidos","PedidoItems","Usuarios","Logs","supervisor_services","service_products","Ordenes","OrdenesDetalles","remitos","remito_items","email_log","Stock","sequences","service_emails"];
+    if (black.includes(t)) continue;
+
+    const catId   = pickCol(info, ["CategoriaID","IdCategoria","categoria_id","RubroID","FamiliaID","ServicioID","SeccionID","GrupoID","TipoID","ClasificacionID","id","ID"]);
+    const catName = pickCol(info, CATNAME_CANDIDATES);
     if (!catId || !catName) continue;
+
     let joinOK = false;
-    try {
-      const row = db.prepare(`
-        SELECT 1
-        FROM ${products} p
-        JOIN ${t} c ON p.${prodCatCol} = c.${catId}
-        LIMIT 1
-      `).get();
-      joinOK = !!row;
-    } catch {}
-    let score = CATTABLE_NAME_HINTS.some(h => t.toLowerCase().includes(h)) ? 3 : 0;
+    try { joinOK = !!db.prepare(`SELECT 1 FROM ${products} p JOIN ${t} c ON p.${prodCatCol} = c.${catId} LIMIT 1`).get(); } catch {}
+    let score = CATTABLE_HINTS.some(h => t.toLowerCase().includes(h)) ? 3 : 0;
     if (joinOK) score += 10;
     if (!best || score > best.score) best = { score, table: t, catId, catName };
   }
   return (best && best.score >= 10) ? best : null;
 }
+
 export function discoverCatalogSchema() {
   const chosen = chooseProductTable();
-  if (!chosen) {
-    return { ok: false, reason: "No se encontró ninguna tabla que parezca catálogo de productos." };
-  }
+  if (!chosen) return { ok: false, reason: "No se encontró ninguna tabla que parezca catálogo de productos." };
+
   const products = chosen.table;
   const pinfo = chosen.info;
 
@@ -273,14 +249,14 @@ export function discoverCatalogSchema() {
 
   let prodName = pickCol(pinfo, NAME_CANDIDATES);
   if (!prodName) {
-    const anyText = pinfo.find(c => String(c.type || "").toUpperCase().includes("TEXT"));
+    const anyText = pinfo.find(c => /TEXT/i.test(String(c.type)));
     prodName = anyText ? anyText.name : pinfo[0].name;
   }
-  const prodCat  = pickCol(pinfo, CAT_CANDIDATES);
+  const prodCat   = pickCol(pinfo, CAT_CANDIDATES);
   const prodCatName = pickCol(pinfo, CATNAME_CANDIDATES);
-  const prodCode = pickCol(pinfo, CODE_CANDIDATES);
-  const prodPrice= pickCol(pinfo, PRICE_CANDIDATES);
-  const prodStock= pickCol(pinfo, STOCK_CANDIDATES);
+  const prodCode  = pickCol(pinfo, CODE_CANDIDATES);
+  const prodPrice = pickCol(pinfo, PRICE_CANDIDATES);
+  const prodStock = pickCol(pinfo, STOCK_CANDIDATES);
 
   let cat = null;
   if (prodCat) cat = findCategoryTableFor(products, prodCat) || chooseCategoryTable(products, prodCat);
@@ -295,6 +271,8 @@ export function discoverCatalogSchema() {
     }
   };
 }
+
+/* ========= APIs auxiliares para catálogo ========= */
 export function listCategories() {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
@@ -329,6 +307,7 @@ export function listCategories() {
   const total = db.prepare(`SELECT COUNT(*) AS c FROM ${products}`).get()?.c ?? 0;
   return [{ id: "__all__", name: "Todos", count: total }];
 }
+
 export function listProductsByCategory(categoryId, { q = "" } = {}) {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
@@ -366,6 +345,7 @@ export function listProductsByCategory(categoryId, { q = "" } = {}) {
   `;
   return db.prepare(sql).all(...params);
 }
+
 export function debugCatalogSchema() {
   const sch = discoverCatalogSchema();
   if (!sch.ok) return sch;
@@ -373,7 +353,7 @@ export function debugCatalogSchema() {
   return { ...sch, sample };
 }
 
-// ---------------- Pedidos (asegurar esquema) ----------------
+/* =====================  Pedidos: asegurar esquema  ===================== */
 function ensureOrdersSchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS Pedidos (
@@ -382,7 +362,8 @@ function ensureOrdersSchema() {
       Rol        TEXT,
       Nota       TEXT,
       Total      REAL,
-      Fecha      TEXT DEFAULT (datetime('now'))
+      Fecha      TEXT DEFAULT (datetime('now')),
+      ServicioID INTEGER NULL
     );
     CREATE TABLE IF NOT EXISTS PedidoItems (
       PedidoItemID INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -391,28 +372,11 @@ function ensureOrdersSchema() {
       Nombre       TEXT,
       Precio       REAL,
       Cantidad     INTEGER NOT NULL,
-      Subtotal     REAL
+      Subtotal     REAL,
+      Codigo       TEXT
     );
+    CREATE INDEX IF NOT EXISTS idx_pedidos_servicio ON Pedidos(ServicioID);
   `);
-  try {
-    const info = tableInfo("Pedidos");
-    const hasServicio =
-      info.some(c => String(c.name).toLowerCase() === "servicioid") ||
-      info.some(c => String(c.name).toLowerCase() === "servicio_id");
-    if (!hasServicio) db.exec(`ALTER TABLE Pedidos ADD COLUMN ServicioID INTEGER NULL;`);
-  } catch {}
-  try {
-    const info2 = tableInfo("Pedidos");
-    const hasServicio2 =
-      info2.some(c => String(c.name).toLowerCase() === "servicioid") ||
-      info2.some(c => String(c.name).toLowerCase() === "servicio_id");
-    if (hasServicio2) db.exec(`CREATE INDEX IF NOT EXISTS idx_pedidos_servicio ON Pedidos(ServicioID);`);
-  } catch {}
-  try {
-    const pi = tableInfo("PedidoItems");
-    const hasCodigo = pi.some(c => norm(c.name) === "codigo");
-    if (!hasCodigo) db.exec(`ALTER TABLE PedidoItems ADD COLUMN Codigo TEXT;`);
-  } catch {}
 }
 ensureOrdersSchema();
 
@@ -431,42 +395,21 @@ export function getProductForOrder(productId) {
 
   return db.prepare(`SELECT ${cols} FROM ${products} WHERE ${prodId} = ? LIMIT 1`).get(productId);
 }
+
 export function createOrder({ empleadoId, rol, nota, items, servicioId = null }) {
   const tx = db.transaction(() => {
     let total = 0;
 
-    const info = tableInfo("Pedidos");
-    const haveServicio =
-      info.some(c => String(c.name).toLowerCase() === "servicioid") ||
-      info.some(c => String(c.name).toLowerCase() === "servicio_id");
+    const insPedido = db.prepare(`
+      INSERT INTO Pedidos (EmpleadoID, Rol, Nota, ServicioID, Total)
+      VALUES (?, ?, ?, ?, 0)
+    `);
+    const pedidoId = insPedido.run(empleadoId, String(rol || ""), String(nota || ""), servicioId).lastInsertRowid;
 
-    let pedidoId;
-    if (haveServicio) {
-      const insPedido = db.prepare(`
-        INSERT INTO Pedidos (EmpleadoID, Rol, Nota, ServicioID, Total)
-        VALUES (?, ?, ?, ?, 0)
-      `);
-      pedidoId = insPedido.run(empleadoId, String(rol || ""), String(nota || ""), servicioId).lastInsertRowid;
-    } else {
-      const insPedido = db.prepare(`
-        INSERT INTO Pedidos (EmpleadoID, Rol, Nota, Total)
-        VALUES (?, ?, ?, 0)
-      `);
-      pedidoId = insPedido.run(empleadoId, String(rol || ""), String(nota || "")).lastInsertRowid;
-    }
-
-    const pi = tableInfo("PedidoItems");
-    const hasCodigo = pi.some(c => norm(c.name) === "codigo");
-
-    const insItem = hasCodigo
-      ? db.prepare(`
-          INSERT INTO PedidoItems (PedidoID, ProductoID, Nombre, Precio, Cantidad, Subtotal, Codigo)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `)
-      : db.prepare(`
-          INSERT INTO PedidoItems (PedidoID, ProductoID, Nombre, Precio, Cantidad, Subtotal)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `);
+    const insItem = db.prepare(`
+      INSERT INTO PedidoItems (PedidoID, ProductoID, Nombre, Precio, Cantidad, Subtotal, Codigo)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
 
     for (const it of items || []) {
       const row = getProductForOrder(Number(it.productId));
@@ -475,12 +418,7 @@ export function createOrder({ empleadoId, rol, nota, items, servicioId = null })
       const qty   = Math.max(1, Number(it.qty || 1));
       const sub   = price * qty;
       total += sub;
-
-      if (hasCodigo) {
-        insItem.run(pedidoId, Number(it.productId), row.name, price, qty, sub, row.code ?? "");
-      } else {
-        insItem.run(pedidoId, Number(it.productId), row.name, price, qty, sub);
-      }
+      insItem.run(pedidoId, Number(it.productId), row.name, price, qty, sub, row.code ?? "");
     }
 
     db.prepare(`UPDATE Pedidos SET Total = ? WHERE PedidoID = ?`).run(total, pedidoId);
@@ -490,52 +428,36 @@ export function createOrder({ empleadoId, rol, nota, items, servicioId = null })
   return tx();
 }
 
-// ---------------- Servicios / Asignaciones (PIVOT) ----------------
-function resolveServicesTable() {
-  let table = null;
-  if (tableExists("Servicios")) table = "Servicios";
-  else if (tableExists("Servicos")) table = "Servicos";
-  else return null;
-
-  const info = tableInfo(table);
-  const idCol =
-    pickCol(info, ["ServiciosID","ServicioID","IdServicio","ID","Id","id"]) ||
-    (info.find(c => c.pk === 1)?.name) ||
-    "ServiciosID";
-
-  const nameCandidates = ["ServicioNombre","Nombre","Servicio","Descripcion","Detalle","Titulo"];
-  const nameExpr = `
-    COALESCE(
-      ${nameCandidates.map(n => `NULLIF(TRIM(s.${n}), '')`).join(", ")},
-      CAST(s.${idCol} AS TEXT)
-    )
-  `;
-  return { table, idCol, nameExpr };
-}
-
-// Asegura tabla pivot (id autoincremental para poder borrar por id)
+/* =====================  Servicios / Pivote  ===================== */
+// No tocamos tu tabla real (supervisor_services) que tiene PK compuesta y usa rowid.
 export function ensureSupervisorPivot() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS supervisor_services (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
       EmpleadoID  INTEGER NOT NULL,
       ServicioID  INTEGER NOT NULL,
-      UNIQUE(EmpleadoID, ServicioID),
-      FOREIGN KEY (EmpleadoID) REFERENCES Empleados(${empleadoIdCol}) ON DELETE CASCADE
+      PRIMARY KEY (EmpleadoID, ServicioID)
     );
     CREATE INDEX IF NOT EXISTS idx_supserv_emp ON supervisor_services(EmpleadoID);
     CREATE INDEX IF NOT EXISTS idx_supserv_srv ON supervisor_services(ServicioID);
   `);
 }
 
-// Devuelve lista {id, name} de servicios asignados (sin semanas)
+// Resolver tabla/columnas de Servicios (basado en tu BD real)
+function resolveServicesTable() {
+  const table = "Servicios";
+  const info = tinfo(table);
+  const idCol = pickCol(info, ["ServiciosID","ServicioID","IdServicio","ID","Id","id"]) || (info.find(c => c.pk === 1)?.name) || "ServiciosID";
+  const nameCol = pickCol(info, ["ServicioNombre","Nombre","Servicio","Descripcion","Detalle","Titulo","NombreServicio"]) || "ServicioNombre";
+  const nameExpr = `COALESCE(NULLIF(TRIM(s.${nameCol}), ''), CAST(s.${idCol} AS TEXT))`;
+  return { table, idCol, nameExpr, nameCol };
+}
+
+// Lista { id, name } de servicios asignados al usuario
 export function listServicesByUser(userId) {
   ensureSupervisorPivot();
   const spec = resolveServicesTable();
-  if (!spec) return [];
   const rows = db.prepare(`
-    SELECT a.id,
-           s.${spec.idCol} AS sid,
+    SELECT s.${spec.idCol} AS sid,
            ${spec.nameExpr} AS sname
     FROM supervisor_services a
     JOIN ${spec.table} s
@@ -546,13 +468,24 @@ export function listServicesByUser(userId) {
   return rows.map(r => ({ id: Number(r.sid), name: String(r.sname) }));
 }
 
-// Punto único para que el Supervisor vea sus servicios
 export function getAssignedServices(userId) {
-  // Pivot (fuente de la verdad)
   return listServicesByUser(userId);
 }
 
-// ---------------- Extras para orders.js ----------------
+/* === NUEVO: nombre de servicio por ID para asunto del mail === */
+export function getServiceNameById(servicioId) {
+  const spec = resolveServicesTable();
+  if (!spec) return null;
+  const row = db.prepare(`
+    SELECT ${spec.nameExpr} AS name
+    FROM ${spec.table} s
+    WHERE CAST(s.${spec.idCol} AS TEXT) = CAST(? AS TEXT)
+    LIMIT 1
+  `).get(servicioId);
+  return row?.name || null;
+}
+
+/* =====================  Extras para órdenes  ===================== */
 export function getFullOrder(pedidoId) {
   const cab = db.prepare(`
     SELECT p.PedidoID, p.EmpleadoID, p.Rol, p.Nota, p.Total, p.Fecha, p.ServicioID
@@ -581,9 +514,10 @@ export function getFullOrder(pedidoId) {
 export function getEmployeeDisplayName(userId) {
   try {
     const row = db.prepare(`
-      SELECT TRIM(COALESCE(Nombre,'') || ' ' || COALESCE(Apellido,'')) AS full,
-             Email,
-             username
+      SELECT
+        TRIM(COALESCE(Nombre,'') || ' ' || COALESCE(Apellido,'')) AS full,
+        Email,
+        username
       FROM Empleados
       WHERE ${empleadoIdCol} = ?
       LIMIT 1

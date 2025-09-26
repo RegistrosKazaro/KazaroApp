@@ -147,6 +147,7 @@ function ProductCard({ p, onAdd, addDisabled }) {
           onClick={() => onAdd(qty)}
           disabled={addDisabled}
           aria-label={`Agregar ${qty} de ${p.name} al carrito`}
+          color="#000000"
         >
           Agregar
         </button>

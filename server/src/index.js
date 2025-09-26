@@ -27,6 +27,7 @@ const PUBLIC_DIR = process.env.PUBLIC_DIR
   ? path.resolve(process.cwd(), process.env.PUBLIC_DIR)
   : path.join(__dirname, "..", "public");
 
+// Diagnóstico DB al iniciar
 const dbFile = process.env.DB_PATH || "./Kazaro.db";
 try {
   const st = fs.statSync(dbFile);
@@ -42,10 +43,14 @@ try {
 }
 
 const app = express();
+
+// ---- Middlewares base (orden importa) ----
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(morgan("dev"));
 
+// CORS con credenciales
 const allowed = new Set(
   [
     env.APP_URL,
@@ -59,8 +64,8 @@ const allowed = new Set(
 app.use(
   cors({
     origin(origin, cb) {
-      if (!origin) return cb(null, true);
-      cb(null, allowed.has(origin));
+      if (!origin) return cb(null, true);         // permitir herramientas locales
+      return cb(null, allowed.has(origin));       // orígenes permitidos
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -69,13 +74,14 @@ app.use(
 );
 app.use((req, res, next) => { if (req.method === "OPTIONS") return res.sendStatus(204); next(); });
 
+// Cookie -> req.user
 app.use(cookies);
 
 // estáticos
 app.use(express.static(PUBLIC_DIR));
 app.use("/remitos", express.static(path.join(PUBLIC_DIR, "remitos")));
 
-// API
+// ---- API ----
 app.use("/auth", authRoutes);
 app.use("/me", meRoutes);
 app.use("/catalog", catalogRoutes);
@@ -84,7 +90,9 @@ app.use("/supervisor", supervisorRoutes);
 app.use("/services", servicesRoutes);
 app.use("/admin", adminRoutes);
 
-app.get("/auth/my-services", (req, res, next) => { req.url = "/my"; return servicesRoutes(req, res, next); });
+// OJO: ya tenemos /auth/my-services dentro de authRoutes.
+// Este redirect a servicesRoutes podía colisionar; lo quito para evitar sorpresas.
+// app.get("/auth/my-services", (req, res, next) => { req.url = "/my"; return servicesRoutes(req, res, next); });
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 

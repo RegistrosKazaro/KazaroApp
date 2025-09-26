@@ -1,330 +1,364 @@
 // server/src/routes/admin.js
 import { Router } from "express";
-import { db, ensureSupervisorPivot } from "../db.js";
+import { db, ensureSupervisorPivot, discoverCatalogSchema } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 
 const router = Router();
 const mustBeAdmin = [requireAuth, requireRole(["admin", "Admin"])];
 
-// ---------------- helpers de introspección (columnas reales) ----------------
-function ti(table) {
-  try { return db.prepare(`PRAGMA table_info(${table})`).all(); } catch { return []; }
+// ---------- util: esquema dinámico de productos ----------
+function prodSchemaOrThrow() {
+  const sch = discoverCatalogSchema();
+  if (!sch?.ok) throw new Error(sch?.reason || "No hay esquema de productos");
+  return sch;
 }
-function pick(info, candidates, fallback) {
-  const names = info.map(c => c.name);
-  for (const raw of candidates) {
-    const idx = names.findIndex(n => n.toLowerCase() === String(raw).toLowerCase());
-    if (idx >= 0) return names[idx];
+
+/* =================== PRODUCTOS =================== */
+
+// Esquema para el front
+router.get("/products/_schema", mustBeAdmin, (_req, res) => {
+  try {
+    const sch = prodSchemaOrThrow();
+    res.json({
+      ok: true,
+      table: sch.tables.products,
+      categoriesTable: sch.tables.categories || null,
+      cols: sch.cols,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e?.message || "No se pudo detectar el esquema" });
   }
-  return fallback;
-}
+});
 
-// Empleados
-const empInfo  = ti("Empleados");
-const EMP_ID   = pick(empInfo, ["EmpleadosID","EmpleadoID","IdEmpleado","empleado_id","user_id","id","ID"], "EmpleadoID");
-const EMP_NAME = pick(empInfo, ["username","usuario","user","Nombre","name","Email","email"], null);
+// Listado / búsqueda (por nombre, código o ID)
+router.get("/products", mustBeAdmin, (req, res) => {
+  try {
+    const sch = prodSchemaOrThrow();
+    const { products } = sch.tables;
+    const { prodId, prodName, prodPrice, prodStock, prodCode } = sch.cols;
 
-// Servicios
-const srvInfo  = ti("Servicios");
-const SRV_ID   = pick(srvInfo, ["ServiciosID","ServicioID","IdServicio","servicio_id","id","ID"], "ServiciosID");
-const SRV_NAME = pick(srvInfo, ["ServicioNombre","Nombre","Descripcion","Detalle","Titulo","name"], "ServicioNombre");
+    const q = String(req.query.q ?? "").trim();
+    const like = `%${q}%`;
 
-// utilidad para logs
-function logErr(where, e, extra = {}) {
-  console.error(`[admin] ${where} ERROR:`, e?.message || e);
-  if (e?.stack) console.error(e.stack);
-  if (Object.keys(extra).length) console.error("[ctx]", extra);
-}
+    const where = q
+      ? `WHERE ${prodName} LIKE @like
+             ${prodCode ? `OR IFNULL(${prodCode},'') LIKE @like` : ""}
+             OR CAST(${prodId} AS TEXT) LIKE @like`
+      : "";
 
-// ---------------- PEDIDOS (sin cambios funcionales) ----------------
+    const sql = `
+      SELECT ${prodId} AS id,
+             ${prodName} AS name
+             ${prodCode  ? `, ${prodCode}  AS code`  : ""}
+             ${prodPrice ? `, ${prodPrice} AS price` : ""}
+             ${prodStock ? `, ${prodStock} AS stock` : ""}
+      FROM ${products}
+      ${where}
+      ORDER BY ${prodName} COLLATE NOCASE
+      LIMIT 500
+    `;
+    res.json(db.prepare(sql).all({ like }));
+  } catch {
+    res.status(500).json({ error: "Error al listar productos" });
+  }
+});
+
+// Crear producto
+router.post("/products", mustBeAdmin, (req, res) => {
+  try {
+    const sch = prodSchemaOrThrow();
+    const { products } = sch.tables;
+    const { prodName, prodPrice, prodStock, prodCode, prodCat } = sch.cols;
+
+    const name = String(req.body?.name ?? "").trim();
+    if (!name) return res.status(400).json({ error: "name es requerido" });
+
+    const cols = [prodName];
+    const vals = [name];
+
+    if (prodPrice && req.body?.price !== undefined) {
+      const v = (req.body.price === "" || req.body.price === null) ? null : Number(req.body.price);
+      cols.push(prodPrice); vals.push(v);
+    }
+    if (prodStock && req.body?.stock !== undefined) {
+      const v = (req.body.stock === "" || req.body.stock === null) ? null : Number(req.body.stock);
+      cols.push(prodStock); vals.push(v);
+    }
+    if (prodCode && req.body?.code !== undefined) {
+      const v = (req.body.code === "" || req.body.code === null) ? null : String(req.body.code);
+      cols.push(prodCode); vals.push(v);
+    }
+    if (prodCat && req.body?.catId !== undefined) {
+      const v = (req.body.catId === "" || req.body.catId === null) ? null : req.body.catId;
+      cols.push(prodCat); vals.push(v);
+    }
+
+    const placeholders = cols.map(() => "?").join(",");
+    const info = db.prepare(`INSERT INTO ${products} (${cols.join(",")}) VALUES (${placeholders})`).run(vals);
+    res.status(201).json({ ok: true, id: info.lastInsertRowid });
+  } catch {
+    res.status(500).json({ error: "No se pudo crear el producto" });
+  }
+});
+
+// Editar producto (nombre / precio / stock / código / categoría)
+router.put("/products/:id", mustBeAdmin, (req, res) => {
+  try {
+    const sch = prodSchemaOrThrow();
+    const { products } = sch.tables;
+    const { prodId, prodName, prodPrice, prodStock, prodCode, prodCat } = sch.cols;
+
+    const id = req.params.id;
+
+    const sets = [];
+    const vals = [];
+
+    if (prodName && req.body?.name !== undefined) {
+      sets.push(`${prodName} = ?`);
+      vals.push(String(req.body.name ?? ""));
+    }
+
+    if (prodPrice && req.body?.price !== undefined) {
+      // "" -> 0 o null? usamos número (0 si viene ""), si querés null mandá null
+      let v = req.body.price;
+      if (v === "") v = 0;
+      v = (v === null) ? null : Number(v);
+      sets.push(`${prodPrice} = ?`);
+      vals.push(v);
+    }
+
+    if (prodStock && req.body?.stock !== undefined) {
+      // 👇 manejo robusto para stock
+      let v = req.body.stock;
+      if (v === "") v = 0;                 // permitir setear "" -> 0 explícitamente
+      v = (v === null) ? null : Number(v); // null limpia, número setea
+      sets.push(`${prodStock} = ?`);
+      vals.push(v);
+    }
+
+    if (prodCode && req.body?.code !== undefined) {
+      const v = (req.body.code === null) ? null : String(req.body.code ?? "");
+      sets.push(`${prodCode} = ?`);
+      vals.push(v);
+    }
+
+    if (prodCat && req.body?.catId !== undefined) {
+      const v = (req.body.catId === "" || req.body.catId === null) ? null : req.body.catId;
+      sets.push(`${prodCat} = ?`);
+      vals.push(v);
+    }
+
+    if (!sets.length) return res.status(400).json({ error: "Nada para actualizar" });
+
+    const info = db.prepare(
+      `UPDATE ${products} SET ${sets.join(", ")} WHERE ${prodId} = ? OR rowid = ?`
+    ).run(...vals, id, id);
+
+    if (!info.changes) return res.status(404).json({ error: "Producto no encontrado" });
+
+    const updated = db.prepare(`
+      SELECT ${prodId} AS id,
+             ${prodName} AS name
+             ${prodCode  ? `, ${prodCode}  AS code`  : ""}
+             ${prodPrice ? `, ${prodPrice} AS price` : ""}
+             ${prodStock ? `, ${prodStock} AS stock` : ""}
+      FROM ${products}
+      WHERE ${prodId} = ? OR rowid = ?
+      LIMIT 1
+    `).get(id, id);
+
+    res.json({ ok: true, product: updated });
+  } catch (e) {
+    res.status(500).json({ error: "No se pudo actualizar" });
+  }
+});
+
+// Eliminar producto
+router.delete("/products/:id", mustBeAdmin, (req, res) => {
+  try {
+    const sch = prodSchemaOrThrow();
+    const { products } = sch.tables;
+    const { prodId } = sch.cols;
+    const id = req.params.id;
+
+    const info = db.prepare(
+      `DELETE FROM ${products} WHERE ${prodId} = ? OR rowid = ?`
+    ).run(id, id);
+
+    if (!info.changes) return res.status(404).json({ error: "Producto no encontrado" });
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "No se pudo eliminar" });
+  }
+});
+
+// Sumar/restar stock (atómico)
+router.patch("/products/:id/stock", mustBeAdmin, (req, res) => {
+  try {
+    const sch = prodSchemaOrThrow();
+    const { products } = sch.tables;
+    const { prodId, prodStock } = sch.cols;
+
+    if (!prodStock) return res.status(400).json({ error: "La tabla de productos no tiene columna de stock" });
+
+    const id = req.params.id;
+    const delta = Number(req.body?.delta ?? NaN);
+    if (!Number.isFinite(delta)) return res.status(400).json({ error: "delta inválido" });
+
+    const r = db.prepare(
+      `UPDATE ${products} SET ${prodStock} = COALESCE(${prodStock},0) + ? WHERE ${prodId} = ? OR rowid = ?`
+    ).run(delta, id, id);
+
+    if (!r.changes) return res.status(404).json({ error: "Producto no encontrado" });
+
+    const row = db.prepare(
+      `SELECT ${prodId} AS id, ${prodStock} AS stock FROM ${products} WHERE ${prodId} = ? OR rowid = ? LIMIT 1`
+    ).get(id, id);
+
+    res.json({ ok: true, product: row });
+  } catch {
+    res.status(500).json({ error: "No se pudo actualizar el stock" });
+  }
+});
+
+/* =================== PEDIDOS =================== */
 router.get("/orders", mustBeAdmin, (_req, res) => {
-  const rows = db.prepare(`
-    SELECT p.PedidoID   AS id,
-           p.EmpleadoID AS empleadoId,
-           p.Rol        AS rol,
-           p.Nota       AS nota,
-           p.Total      AS total,
-           p.Fecha      AS fecha,
-           p.ServicioID AS servicioId
-    FROM Pedidos p
-    ORDER BY p.PedidoID DESC
-    LIMIT 500
-  `).all();
-  res.json(rows);
+  try {
+    const rows = db.prepare(`
+      SELECT PedidoID AS id, EmpleadoID AS empleadoId, Rol AS rol, Total AS total, Fecha AS fecha
+      FROM Pedidos
+      ORDER BY PedidoID DESC
+      LIMIT 200
+    `).all();
+    res.json(rows);
+  } catch {
+    res.status(500).json({ error: "Error al listar pedidos" });
+  }
 });
 
 router.delete("/orders/:id", mustBeAdmin, (req, res) => {
-  const id = Number(req.params.id);
-  const tx = db.transaction(() => {
-    db.prepare(`DELETE FROM PedidoItems WHERE PedidoID = ?`).run(id);
-    const { changes } = db.prepare(`DELETE FROM Pedidos WHERE PedidoID = ?`).run(id);
-    return changes;
-  });
-  res.json({ ok: true, deleted: tx() > 0 });
+  try {
+    const r = db.prepare(`DELETE FROM Pedidos WHERE PedidoID = ?`).run(Number(req.params.id));
+    if (!r.changes) return res.status(404).json({ error: "Pedido no encontrado" });
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "Error al eliminar pedido" });
+  }
 });
 
 router.put("/orders/:id/price", mustBeAdmin, (req, res) => {
-  const id = Number(req.params.id);
-  const { newPrice } = req.body || {};
-  if (newPrice == null || Number.isNaN(Number(newPrice))) {
-    return res.status(400).json({ error: "newPrice requerido (número)" });
-  }
-  const { changes } = db.prepare(`UPDATE Pedidos SET Total = ? WHERE PedidoID = ?`)
-    .run(Number(newPrice), id);
-  res.json({ ok: true, changes });
-});
-
-router.put("/order-items/:itemId", mustBeAdmin, (req, res) => {
-  const itemId = Number(req.params.itemId);
-  const { precio, cantidad } = req.body || {};
-  if (precio == null && cantidad == null) {
-    return res.status(400).json({ error: "precio o cantidad requeridos" });
-  }
-
-  const item = db.prepare(`
-    SELECT PedidoID, Cantidad, Precio
-    FROM PedidoItems
-    WHERE PedidoItemID = ?
-  `).get(itemId);
-  if (!item) return res.status(404).json({ error: "Item no encontrado" });
-
-  const newCantidad = cantidad != null ? Number(cantidad) : Number(item.Cantidad);
-  const newPrecio   = precio   != null ? Number(precio)   : Number(item.Precio);
-  const newSubtotal = newCantidad * newPrecio;
-
-  const tx = db.transaction(() => {
-    db.prepare(`
-      UPDATE PedidoItems
-      SET Precio = ?, Cantidad = ?, Subtotal = ?
-      WHERE PedidoItemID = ?
-    `).run(newPrecio, newCantidad, newSubtotal, itemId);
-
-    const totalRow = db.prepare(`
-      SELECT COALESCE(SUM(Subtotal), 0) AS total
-      FROM PedidoItems
-      WHERE PedidoID = ?
-    `).get(item.PedidoID);
-
-    db.prepare(`UPDATE Pedidos SET Total = ? WHERE PedidoID = ?`).run(totalRow.total, item.PedidoID);
-    return { pedidoId: item.PedidoID, total: totalRow.total };
-  });
-
-  res.json({ ok: true, ...tx() });
-});
-
-router.post("/orders", mustBeAdmin, (req, res) => {
-  const { empleadoId, rol = "administrativo", nota = "", servicioId = null, items = [] } = req.body || {};
-  if (!empleadoId || !Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({ error: "empleadoId y items[] requeridos" });
-  }
-
-  const tx = db.transaction(() => {
-    const pedidoId = db.prepare(`
-      INSERT INTO Pedidos (EmpleadoID, Rol, Nota, ServicioID, Total, Fecha)
-      VALUES (?, ?, ?, ?, 0, datetime('now'))
-    `).run(empleadoId, String(rol || ""), String(nota || ""), servicioId).lastInsertRowid;
-
-    let total = 0;
-    const insItem = db.prepare(`
-      INSERT INTO PedidoItems (PedidoID, ProductoID, Nombre, Precio, Cantidad, Subtotal, Codigo)
-      VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, ''))
-    `);
-
-    for (const it of items) {
-      const cantidad = Number(it.cantidad ?? it.qty ?? 1);
-      const precio   = Number(it.precio   ?? it.price ?? 0);
-      const subtotal = cantidad * precio;
-      total += subtotal;
-      insItem.run(
-        pedidoId,
-        it.productoId ?? it.productId ?? null,
-        String(it.nombre || ""),
-        precio,
-        cantidad,
-        subtotal,
-        it.codigo ?? it.code ?? null
-      );
-    }
-
-    db.prepare(`UPDATE Pedidos SET Total = ? WHERE PedidoID = ?`).run(total, pedidoId);
-    return pedidoId;
-  });
-
-  res.json({ ok: true, pedidoId: tx() });
-});
-
-// ---------------------- ASIGNACIONES (pivote) ----------------------
-
-// Lista (opcional ?EmpleadoID=)
-router.get("/assignments", mustBeAdmin, (req, res) => {
   try {
-    ensureSupervisorPivot();
-    const EmpleadoID = req.query.EmpleadoID ? Number(req.query.EmpleadoID) : null;
+    const id = Number(req.params.id);
+    const newPrice = Number(req.body?.newPrice ?? NaN);
+    if (!Number.isFinite(newPrice)) return res.status(400).json({ error: "newPrice inválido" });
+    const r = db.prepare(`UPDATE Pedidos SET Total = ? WHERE PedidoID = ?`).run(newPrice, id);
+    if (!r.changes) return res.status(404).json({ error: "Pedido no encontrado" });
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "Error al actualizar total" });
+  }
+});
 
-    const base = `
-      SELECT
-        COALESCE(a.id, a.rowid) AS id,
-        a.EmpleadoID,
-        a.ServicioID,
-        ${EMP_NAME ? `e.${EMP_NAME}` : `CAST(e.${EMP_ID} AS TEXT)`} AS supervisor_username,
-        ${SRV_NAME ? `s.${SRV_NAME}` : `CAST(s.${SRV_ID} AS TEXT)`} AS service_name
-      FROM supervisor_services a
-      LEFT JOIN Empleados e ON e.${EMP_ID} = a.EmpleadoID
-      LEFT JOIN Servicios s ON s.${SRV_ID} = a.ServicioID
-    `;
+/* ========== SERVICIOS / SUPERVISORES / ASIGNACIONES (Admin) ========== */
+const EMP_ID = "EmpleadosID";
+const EMP_NAME_EXPR = `
+  TRIM(COALESCE(e.Nombre,'') || ' ' || COALESCE(e.Apellido,'')) ||
+  CASE WHEN IFNULL(TRIM(e.username),'') <> '' THEN ' ('||e.username||')' ELSE '' END
+`;
+const SRV_ID = "ServiciosID";
+const SRV_NAME = "ServicioNombre";
 
-    const rows = EmpleadoID
-      ? db.prepare(base + ` WHERE a.EmpleadoID = ? ORDER BY service_name COLLATE NOCASE`).all(EmpleadoID)
-      : db.prepare(base + ` ORDER BY supervisor_username COLLATE NOCASE, service_name COLLATE NOCASE`).all();
-
+// Buscar servicios
+router.get("/services", mustBeAdmin, (req, res) => {
+  try {
+    const q = String(req.query.q ?? "").trim();
+    const limit = Math.min(Math.max(parseInt(req.query.limit ?? "25", 10) || 25, 1), 100);
+    if (!q) return res.json([]);
+    const like = `%${q}%`;
+    const rows = db.prepare(`
+      SELECT ${SRV_ID} AS id, ${SRV_NAME} AS name
+      FROM Servicios s
+      WHERE (${SRV_NAME} LIKE @like OR CAST(${SRV_ID} AS TEXT) LIKE @like)
+      ORDER BY ${SRV_NAME} COLLATE NOCASE
+      LIMIT ${limit}
+    `).all({ like });
     res.json(rows);
-  } catch (e) {
-    logErr("GET /admin/assignments", e);
-    res.status(500).json({ error: "Error al listar asignaciones", detail: e?.message });
+  } catch {
+    res.status(500).json({ error: "Error al listar servicios" });
   }
 });
 
-// Crear asignación (evita duplicados)
-router.post("/assignments", mustBeAdmin, (req, res) => {
-  try {
-    ensureSupervisorPivot();
-    const { EmpleadoID, ServicioID } = req.body || {};
-    const emp = Number(EmpleadoID), srv = Number(ServicioID);
-
-    if (!Number.isFinite(emp) || !Number.isFinite(srv)) {
-      return res.status(400).json({ error: "EmpleadoID y ServicioID deben ser numéricos" });
-    }
-
-    const hitEmp = db.prepare(`SELECT 1 FROM Empleados WHERE ${EMP_ID} = ? LIMIT 1`).get(emp);
-    if (!hitEmp) return res.status(400).json({ error: `EmpleadoID ${emp} inexistente` });
-
-    const hitSrv = db.prepare(`SELECT 1 FROM Servicios WHERE ${SRV_ID} = ? LIMIT 1`).get(srv);
-    if (!hitSrv) return res.status(400).json({ error: `ServicioID ${srv} inexistente` });
-
-    const out = db.prepare(`
-      INSERT OR IGNORE INTO supervisor_services (EmpleadoID, ServicioID)
-      VALUES (?, ?)
-    `).run(emp, srv);
-
-    res.json({ ok: true, inserted: out.changes > 0 });
-  } catch (e) {
-    logErr("POST /admin/assignments", e, { body: req.body });
-    res.status(500).json({ error: "Error al asignar", detail: e?.message });
-  }
-});
-
-// Eliminar asignación por id/rowid
-router.delete("/assignments/:id", mustBeAdmin, (req, res) => {
-  try {
-    ensureSupervisorPivot();
-    const pid = Number(req.params.id);
-    const out = db.prepare(`DELETE FROM supervisor_services WHERE id = ? OR rowid = ?`).run(pid, pid);
-    res.json({ ok: true, deleted: out.changes > 0 });
-  } catch (e) {
-    logErr("DELETE /admin/assignments/:id", e, { id: req.params.id });
-    res.status(500).json({ error: "Error al borrar", detail: e?.message });
-  }
-});
-
-// Reasignar (exclusivo)
-router.patch("/assignments/reassign", mustBeAdmin, (req, res) => {
-  try {
-    ensureSupervisorPivot();
-    const { ServicioID, toEmpleadoID } = req.body || {};
-    const srv = Number(ServicioID), toEmp = Number(toEmpleadoID);
-    if (!Number.isFinite(srv) || !Number.isFinite(toEmp)) {
-      return res.status(400).json({ error: "ServicioID y toEmpleadoID deben ser numéricos" });
-    }
-
-    const hitEmp = db.prepare(`SELECT 1 FROM Empleados WHERE ${EMP_ID} = ? LIMIT 1`).get(toEmp);
-    if (!hitEmp) return res.status(400).json({ error: `toEmpleadoID ${toEmp} inexistente` });
-
-    const hitSrv = db.prepare(`SELECT 1 FROM Servicios WHERE ${SRV_ID} = ? LIMIT 1`).get(srv);
-    if (!hitSrv) return res.status(400).json({ error: `ServicioID ${srv} inexistente` });
-
-    const tx = db.transaction(() => {
-      db.prepare(`DELETE FROM supervisor_services WHERE ServicioID = ?`).run(srv);
-      const ins = db.prepare(`INSERT INTO supervisor_services (EmpleadoID, ServicioID) VALUES (?, ?)`).run(toEmp, srv);
-      return { newId: ins.lastInsertRowid };
-    });
-
-    res.json({ ok: true, ...tx() });
-  } catch (e) {
-    logErr("PATCH /admin/assignments/reassign", e, { body: req.body });
-    res.status(500).json({ error: "Error al reasignar", detail: e?.message });
-  }
-});
-
-// ---------------- combos ----------------
+// Supervisores
 router.get("/supervisors", mustBeAdmin, (_req, res) => {
   try {
     const rows = db.prepare(`
-      SELECT e.${EMP_ID} AS id,
-             ${EMP_NAME ? `e.${EMP_NAME}` : `CAST(e.${EMP_ID} AS TEXT)`} AS username,
-             e.Email
+      SELECT e.${EMP_ID} AS id, ${EMP_NAME_EXPR} AS username
       FROM Empleados e
       WHERE EXISTS (
         SELECT 1
         FROM Roles_Empleados re
         JOIN Roles r ON r.RolID = re.RolID
-        WHERE re.EmpleadoID = e.${EMP_ID}
-          AND lower(r.Nombre) = 'supervisor'
+        WHERE re.EmpleadoID = e.${EMP_ID} AND lower(r.Nombre) = 'supervisor'
       )
       ORDER BY username COLLATE NOCASE
     `).all();
     res.json(rows);
-  } catch (e) {
-    logErr("GET /admin/supervisors", e);
-    res.status(500).json({ error: "Error al listar supervisores", detail: e?.message });
+  } catch {
+    res.status(500).json({ error: "Error al listar supervisores" });
   }
 });
 
-router.get("/services", mustBeAdmin, (_req, res) => {
-  try {
-    const rows = db.prepare(`
-      SELECT ${SRV_ID} AS id, ${SRV_NAME} AS name
-      FROM Servicios
-      ORDER BY name COLLATE NOCASE
-    `).all();
-    res.json(rows);
-  } catch (e) {
-    logErr("GET /admin/services", e);
-    res.status(500).json({ error: "Error al listar servicios", detail: e?.message });
-  }
-});
-
-// ---------------- autodiagnóstico: columnas y join de prueba ----------------
-router.get("/assignments/_selfcheck", mustBeAdmin, (_req, res) => {
+// Asignaciones
+router.get("/assignments", mustBeAdmin, (req, res) => {
   try {
     ensureSupervisorPivot();
-    const empColNames = ti("Empleados").map(c => c.name);
-    const srvColNames = ti("Servicios").map(c => c.name);
-    const pivInfo = ti("supervisor_services").map(c => c.name);
-
-    // prueba de join
-    let joinOK = true, joinErr = null, sample = [];
-    try {
-      sample = db.prepare(`
-        SELECT a.EmpleadoID, a.ServicioID
-        FROM supervisor_services a
-        LEFT JOIN Empleados e ON e.${EMP_ID} = a.EmpleadoID
-        LEFT JOIN Servicios s ON s.${SRV_ID} = a.ServicioID
-        LIMIT 5
-      `).all();
-    } catch (e) {
-      joinOK = false; joinErr = e?.message || String(e);
-    }
-
-    res.json({
-      EMP_ID, EMP_NAME, SRV_ID, SRV_NAME,
-      empleados_cols: empColNames,
-      servicios_cols: srvColNames,
-      pivot_cols: pivInfo,
-      joinOK, joinErr, sample
-    });
+    const EmpleadoID = req.query.EmpleadoID ? Number(req.query.EmpleadoID) : null;
+    const base = `
+      SELECT a.rowid AS id, a.EmpleadoID, a.ServicioID,
+             (${EMP_NAME_EXPR}) AS supervisor_username,
+             s.${SRV_NAME} AS service_name
+      FROM supervisor_services a
+      LEFT JOIN Empleados e ON e.${EMP_ID} = a.EmpleadoID
+      LEFT JOIN Servicios s ON s.${SRV_ID} = a.ServicioID
+    `;
+    const rows = EmpleadoID
+      ? db.prepare(base + ` WHERE a.EmpleadoID = ? ORDER BY s.${SRV_NAME} COLLATE NOCASE`).all(EmpleadoID)
+      : db.prepare(base + ` ORDER BY supervisor_username COLLATE NOCASE, s.${SRV_NAME} COLLATE NOCASE`).all();
+    res.json(rows);
   } catch (e) {
-    logErr("GET /admin/assignments/_selfcheck", e);
-    res.status(500).json({ error: "selfcheck error", detail: e?.message });
+    console.error("GET /admin/assignments error:", e);
+    res.status(500).json({ error: "Error al listar asignaciones" });
+  }
+});
+
+router.post("/assignments", mustBeAdmin, (req, res) => {
+  try {
+    ensureSupervisorPivot();
+    const EmpleadoID = Number(req.body?.EmpleadoID);
+    const ServicioID = Number(req.body?.ServicioID);
+    if (!EmpleadoID || !ServicioID) return res.status(400).json({ error: "EmpleadoID y ServicioID son requeridos" });
+    const r = db.prepare(`INSERT OR IGNORE INTO supervisor_services (EmpleadoID, ServicioID) VALUES (?, ?)`)
+      .run(EmpleadoID, ServicioID);
+    res.status(201).json({ ok: true, id: r.lastInsertRowid || null });
+  } catch (e) {
+    console.error("POST /admin/assignments error:", e);
+    res.status(500).json({ error: "Error al crear asignación" });
+  }
+});
+
+router.delete("/assignments/:id", mustBeAdmin, (req, res) => {
+  try {
+    ensureSupervisorPivot();
+    const id = Number(req.params.id);
+    let r = db.prepare(`DELETE FROM supervisor_services WHERE rowid = ?`).run(id);
+    if (!r.changes && (req.query.EmpleadoID && req.query.ServicioID)) {
+      r = db.prepare(`DELETE FROM supervisor_services WHERE EmpleadoID = ? AND ServicioID = ?`)
+        .run(Number(req.query.EmpleadoID), Number(req.query.ServicioID));
+    }
+    if (!r.changes) return res.status(404).json({ error: "Asignación no encontrada" });
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "Error al eliminar asignación" });
   }
 });
 

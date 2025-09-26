@@ -1,18 +1,20 @@
 // server/src/routes/auth.js
 import express from "express";
 import { z } from "zod";
-import argon2 from "argon2";
+// Nota: import argon2 arriba no es necesario si lo cargamos dinámico en verifyPassword
 import { getUserForLogin, getUserRoles, listServicesByUser } from "../db.js";
 import { issueSession, clearSession, requireAuth } from "../middleware/auth.js";
 import { env } from "../utils/env.js";
 
 const router = express.Router();
 
+// Aceptamos identifier | username | email y password
 const LoginSchema = z.object({
-  username: z.string().min(1),
+  identifier: z.string().min(1).optional(),
+  username: z.string().min(1).optional(),
+  email: z.string().min(1).optional(),
   password: z.string().min(1),
 });
-
 
 async function verifyPassword({ password, password_hash, password_plain }) {
   const pwd = String(password ?? "");
@@ -30,25 +32,25 @@ async function verifyPassword({ password, password_hash, password_plain }) {
   // argon2
   if (hash && /^\$argon2/i.test(hash)) {
     try {
-      if (await import("argon2").then(m => m.default.verify(hash, pwd))) return true;
+      const ok = await import("argon2").then(m => m.default.verify(hash, pwd));
+      if (ok) return true;
     } catch {}
   }
 
-  // Si hay hash pero NO es bcrypt/argon2, lo tratamos como legacy-plain
+  // Si hay hash pero NO es bcrypt/argon2, tratamos como legacy texto plano
   if (hash && !/^\$2[aby]\$/.test(hash) && !/^\$argon2/i.test(hash)) {
     if (hash === pwd) return true;
   }
 
-  // columna de texto plano (legacy)
+  // Columna de texto plano (legacy)
   if (plain !== null && plain === pwd) return true;
 
   return false;
 }
 
-
 /**
  * POST /auth/login
- * body: { username, password }
+ * body: { identifier | username | email, password }
  * response: { id, username, roles[] } + cookie de sesión httpOnly
  */
 router.post("/login", async (req, res) => {
@@ -60,11 +62,16 @@ router.post("/login", async (req, res) => {
     return res.status(400).json({ error: "Datos inválidos" });
   }
 
-  // Saneamos entradas (evita espacios o rarezas)
-  const usernameInput = String(parsed.data.username).trim();
-  const passwordInput = String(parsed.data.password);
+  const body = parsed.data;
+  const usernameInput = String(
+    body.identifier ?? body.username ?? body.email ?? ""
+  ).trim();
+  const passwordInput = String(body.password);
 
-  // Traemos usuario (db.js ya detecta columnas con o sin acentos)
+  if (!usernameInput || !passwordInput) {
+    return res.status(400).json({ error: "Faltan credenciales" });
+  }
+
   const u = getUserForLogin(usernameInput);
 
   if (env.DEBUG_AUTH === "true") {
@@ -76,13 +83,10 @@ router.post("/login", async (req, res) => {
   }
 
   if (u.is_active != null && Number(u.is_active) === 0) {
-    if (env.DEBUG_AUTH === "true") {
-      console.log("[auth] usuario inactivo:", u.username);
-    }
+    if (env.DEBUG_AUTH === "true") console.log("[auth] usuario inactivo:", u.username);
     return res.status(401).json({ error: "Usuario o contraseña inválidos" });
   }
 
-  let reason = "desconocida";
   let ok = false;
   try {
     ok = await verifyPassword({
@@ -90,13 +94,8 @@ router.post("/login", async (req, res) => {
       password_hash: u.password_hash,
       password_plain: u.password_plain,
     });
-    reason = ok ? "ok" : "mismatch";
   } catch (e) {
-    reason = "error-" + (e?.message || e);
-  }
-
-  if (env.DEBUG_AUTH === "true") {
-    console.log("[auth] resultado verificación:", reason);
+    if (env.DEBUG_AUTH === "true") console.log("[auth] verify error:", e?.message || e);
   }
 
   if (!ok) {
@@ -104,8 +103,6 @@ router.post("/login", async (req, res) => {
   }
 
   const roles = (getUserRoles(u.id) || []).map(String);
-
-  // Emite cookie httpOnly + secure según .env (middleware/auth.js)
   issueSession(res, { id: u.id, username: u.username, roles });
 
   return res.json({ id: u.id, username: u.username, roles });
