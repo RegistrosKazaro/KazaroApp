@@ -20,13 +20,18 @@
   min-height: 40px;
   padding: 6px 10px;
 }
+.reports-actions{
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
 
 /* Resumen del período */
 .reports-summary{
   margin-top: 12px;
 }
 
-/* Grilla de tablas */
+/* Grilla de tablas y gráficos */
 .reports-grid{
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -75,6 +80,25 @@
   text-align: right;
 }
 
+/* Tarjetas de gráfico */
+.chart-card{
+  margin-top: 12px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 8px 18px rgba(0,0,0,.05);
+}
+.chart-title{
+  font-weight: 800;
+  color: #0b1a78;
+  padding: 10px 12px;
+  border-bottom: 1px solid #eef2f7;
+}
+.chart-box{
+  padding: 8px 6px 12px;
+  height: 300px; /* contenedor para ResponsiveContainer */
+}
+
 /* Títulos */
 .reports-scope h2{
   margin: 8px 0 6px;
@@ -84,7 +108,38 @@
   font-size: 1.05rem;
 }
 
+/* Botones pill variantes mínimas si no las tenés ya */
+.pill--secondary{
+  background: #eef4ff;
+  border: 1px solid #cfe0ff;
+  color: #0b1a78;
+}
+.pill--danger{
+  background: #fee2e2;
+  border: 1px solid #fecaca;
+  color: #7f1d1d;
+}
+
 /* Accesibilidad / motion reduce */
 @media (prefers-reduced-motion: reduce){
   *{ transition: none !important; animation: none !important; }
+}
+
+/* ============ Estilos de IMPRESIÓN (PDF) ============ */
+@media print {
+  body { background: #fff !important; }
+  .appbar, .appbar-right, .reports-toolbar, .pill, .btn { display: none !important; }
+  .reports-scope{
+    max-width: 100%;
+    margin: 0;
+  }
+  .reports-grid{
+    grid-template-columns: 1fr; /* una columna para caber mejor */
+    gap: 10px;
+  }
+  .chart-box{ height: 260px; }
+  .sup-table{
+    box-shadow: none;
+    border: 1px solid #ccc;
+  }
 }
