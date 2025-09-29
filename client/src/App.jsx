@@ -8,13 +8,26 @@ import RoleSelect from "./pages/RoleSelect";
 import Products from "./pages/Products";
 import Cart from "./pages/Cart";
 import Services from "./pages/Services";
-import "./styles/app.css";
 import AdminPanel from "./pages/AdminPanel";
+import Reports from "./pages/Reports";
+import "./styles/app.css";
 
 function Guarded() {
   const { user, loading } = useAuth();
   if (loading) return <div className="state">Cargando…</div>;
   if (!user)   return <Navigate to="/login" replace />;
+  return <Outlet />;
+}
+
+function AdminOnly() {
+  const { user } = useAuth();
+  const { role } = useParams();
+  const roles = (user?.roles || []).map(r => String(r).toLowerCase());
+  const isAdmin = roles.includes("admin");
+  if (!isAdmin) {
+    const safeRole = (role || roles[0] || "admin").toLowerCase();
+    return <Navigate to={`/app/${safeRole}/products`} replace />;
+  }
   return <Outlet />;
 }
 
@@ -42,6 +55,12 @@ function Layout() {
               Admin
             </Link>
           )}
+          {/* Informes: solo Admin */}
+          {isAdmin && (
+            <Link className="pill" to={`/app/${safeRole}/reports`}>
+              Informes
+            </Link>
+          )}
           <Link className="pill" to={`/app/${safeRole}/cart`}>
             Carrito {cartQty ? `(${cartQty})` : ""}
           </Link>
@@ -53,8 +72,6 @@ function Layout() {
     </>
   );
 }
-
-
 
 export default function App() {
   return (
@@ -69,6 +86,10 @@ export default function App() {
           <Route path="services" element={<Services />} />
           <Route path="products" element={<Products />} />
           <Route path="admin" element={<AdminPanel />} />
+          {/* Ruta Informes: envuelta en AdminOnly para bloquear no-admins */}
+          <Route element={<AdminOnly />}>
+            <Route path="reports" element={<Reports />} />
+          </Route>
           <Route path="cart" element={<Cart />} />
           <Route index element={<Navigate to="products" replace />} />
         </Route>

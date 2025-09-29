@@ -4,12 +4,13 @@ import { api } from "../api/client";
 import { useCart } from "../hooks/useCart";
 import "../styles/catalog.css";
 
-
 export default function Products() {
   const { role } = useParams();
   const isSupervisor = String(role).toLowerCase().includes("super");
   const [sp, setSp] = useSearchParams();
-  const { add, service } = useCart();
+
+  // ⬇️ además de add y service, ahora leemos items del carrito
+  const { add, service, items: cartItems } = useCart();
 
   const cat = sp.get("cat");
   const q = sp.get("q") || "";
@@ -50,6 +51,17 @@ export default function Products() {
   }, [items, page]);
 
   const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+
+  // ⬇️ mapa de cantidades reservadas en el carrito por productId
+  const reservedById = useMemo(() => {
+    const map = new Map();
+    for (const it of cartItems) {
+      const id = Number(it.productId);
+      const qty = Math.max(0, Number(it.qty) || 0);
+      map.set(id, (map.get(id) || 0) + qty);
+    }
+    return map;
+  }, [cartItems]);
 
   const onChangeCat = (e) => {
     const v = e.target.value;
@@ -95,14 +107,27 @@ export default function Products() {
       {!loading && !error && items.length > 0 && (
         <>
           <div className="product-grid">
-            {paginated.map(p => (
-              <ProductCard
-                key={p.id}
-                p={p}
-                onAdd={(qty) => add({ productId: p.id, name: p.name, price: p.price ?? 0, qty })}
-                addDisabled={isSupervisor && !service}
-              />
-            ))}
+            {paginated.map(p => {
+              const totalStock = Number.isFinite(Number(p.stock)) ? Number(p.stock) : undefined;
+              const reserved = reservedById.get(Number(p.id)) || 0;
+              const remaining = totalStock !== undefined ? Math.max(0, totalStock - reserved) : undefined;
+
+              return (
+                <ProductCard
+                  key={p.id}
+                  p={p}
+                  remainingStock={remaining}
+                  onAdd={(qty) => {
+                    const limit = remaining ?? Infinity;
+                    if (limit <= 0) return; // sin restante, no agrega
+                    const safeQty = Math.min(Math.max(1, Number(qty) || 1), limit);
+                    // guardamos también el stock total para el carrito (referencia)
+                    add({ productId: p.id, name: p.name, price: p.price ?? 0, qty: safeQty, stock: totalStock });
+                  }}
+                  addDisabled={(isSupervisor && !service) || ((remaining !== undefined) && remaining <= 0)}
+                />
+              );
+            })}
           </div>
 
           <nav className="pager" aria-label="Paginación de productos">
@@ -116,8 +141,9 @@ export default function Products() {
   );
 }
 
-function ProductCard({ p, onAdd, addDisabled }) {
+function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
   const [qty, setQty] = useState(1);
+
   const priceText = useMemo(() => {
     if (p.price == null) return "";
     const n = Number(p.price);
@@ -125,29 +151,48 @@ function ProductCard({ p, onAdd, addDisabled }) {
     return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", minimumFractionDigits: 2 }).format(n);
   }, [p.price]);
 
+  const sinRestante = (remainingStock !== undefined) && (remainingStock <= 0);
+
+  // Si cambia el restante (por agregar al carrito), ajustamos la cantidad visible
+  useEffect(() => {
+    if (remainingStock !== undefined) {
+      setQty(q => Math.min(Math.max(1, q), Math.max(1, remainingStock)));
+    }
+  }, [remainingStock]);
+
   return (
     <article className="product-card">
       <h3 className="product-title">{p.name}</h3>
       <div className="product-code">{p.code || "\u00A0"}</div>
       {p.price != null && <div className="product-price">{priceText}</div>}
 
+      {remainingStock !== undefined && (
+        <div className="product-stock" aria-live="polite" style={{ marginTop: 6 }}>
+          {sinRestante ? "Sin stock" : `Stock restante: ${remainingStock}`}
+        </div>
+      )}
+
       <div className="actions">
         <input
           type="number"
           min="1"
+          {...(remainingStock !== undefined ? { max: Math.max(1, remainingStock) } : {})}
           step="1"
           className="qty-input"
           value={qty}
-          onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
+          onChange={(e) => {
+            const v = Math.max(1, Number(e.target.value) || 1);
+            setQty(remainingStock !== undefined ? Math.min(v, Math.max(1, remainingStock)) : v);
+          }}
+          disabled={sinRestante}
           aria-label={`Cantidad de ${p.name}`}
         />
         <button
           type="button"
           className="btn btn-add"
           onClick={() => onAdd(qty)}
-          disabled={addDisabled}
+          disabled={addDisabled || sinRestante}
           aria-label={`Agregar ${qty} de ${p.name} al carrito`}
-          color="#000000"
         >
           Agregar
         </button>

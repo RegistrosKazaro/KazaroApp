@@ -1,4 +1,3 @@
-// server/src/routes/orders.js
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.js";
 import { db, getFullOrder, createOrder, getProductForOrder, getEmployeeDisplayName } from "../db.js";
@@ -76,7 +75,16 @@ router.post("/", requireAuth, async (req, res) => {
     if (!empleadoId) return res.status(400).json({ error: "Empleado inválido" });
     if (!items.length) return res.status(400).json({ error: "El pedido no tiene items" });
 
-    const { pedidoId, total } = createOrder({ empleadoId, rol, nota, items, servicioId });
+    let pedidoId, total;
+    try {
+      ({ pedidoId, total } = createOrder({ empleadoId, rol, nota, items, servicioId }));
+    } catch (e) {
+      if (e?.code === "OUT_OF_STOCK") {
+        // Validación dura de stock: 400 con mensaje claro
+        return res.status(400).json({ error: e.message, ...e.extra });
+      }
+      throw e;
+    }
 
     const { cab, items: fullItems } = getFullOrder(pedidoId);
     const empleado = getEmployeeDisplayName(empleadoId);
@@ -97,11 +105,10 @@ router.post("/", requireAuth, async (req, res) => {
 
     const { filePath, fileName } = await generateRemitoPDF({ remito, items: fullItems });
 
-    // ===== Asunto del mail según tu pedido =====
+    // Asunto del mail
     const subject = servicioId
       ? `NUEVO PEDIDO DE INSUMOS - "${servicioNombre}"`
       : `NUEVO PEDIDO DE INSUMOS - "${empleado}"`;
-    // ===========================================
 
     try {
       await sendMail({

@@ -1,4 +1,3 @@
-// server/src/db.js
 import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
@@ -353,6 +352,37 @@ export function debugCatalogSchema() {
   return { ...sch, sample };
 }
 
+/* =====================  **NUEVO**: asegurar columna 'stock'  ===================== */
+/* Se llama al iniciar el server. No toca datos existentes. */
+export function ensureStockColumn() {
+  try {
+    const sch = discoverCatalogSchema();
+    if (!sch.ok) return;
+    const products = sch.tables.products;
+    const info = tinfo(products);
+    const hasStock = info.some(c => String(c.name).toLowerCase() === "stock");
+
+    if (!hasStock) {
+      db.prepare(`ALTER TABLE ${products} ADD COLUMN Stock INTEGER NOT NULL DEFAULT 0`).run();
+      // normalizamos posibles NULL en filas existentes
+      db.prepare(`UPDATE ${products} SET Stock = 0 WHERE Stock IS NULL`).run();
+      console.log(`[db] Columna 'Stock' agregada en tabla ${products}`);
+    }
+  } catch (e) {
+    console.error("[db] ensureStockColumn error:", e?.message || e);
+  }
+}
+
+/* Helper opcional para saber tabla/columna */
+export function productsMeta() {
+  const sch = discoverCatalogSchema();
+  if (!sch.ok) return { table: null, hasStock: false };
+  const products = sch.tables.products;
+  const info = tinfo(products);
+  const hasStock = info.some(c => String(c.name).toLowerCase() === "stock");
+  return { table: products, hasStock };
+}
+
 /* =====================  Pedidos: asegurar esquema  ===================== */
 function ensureOrdersSchema() {
   db.exec(`
@@ -396,29 +426,82 @@ export function getProductForOrder(productId) {
   return db.prepare(`SELECT ${cols} FROM ${products} WHERE ${prodId} = ? LIMIT 1`).get(productId);
 }
 
+/* =====================  NUEVO: createOrder con validación de stock ===================== */
 export function createOrder({ empleadoId, rol, nota, items, servicioId = null }) {
   const tx = db.transaction(() => {
     let total = 0;
 
+    // Descubrir esquema de productos (incluye columna de stock si existe)
+    const sch = discoverCatalogSchema();
+    if (!sch.ok) throw new Error(sch.reason);
+    const { products } = sch.tables;
+    const { prodId, prodName, prodPrice, prodCode, prodStock } = sch.cols;
+    const hasStock = !!prodStock;
+
+    // Cabecera
     const insPedido = db.prepare(`
       INSERT INTO Pedidos (EmpleadoID, Rol, Nota, ServicioID, Total)
       VALUES (?, ?, ?, ?, 0)
     `);
     const pedidoId = insPedido.run(empleadoId, String(rol || ""), String(nota || ""), servicioId).lastInsertRowid;
 
+    // Detalle
     const insItem = db.prepare(`
       INSERT INTO PedidoItems (PedidoID, ProductoID, Nombre, Precio, Cantidad, Subtotal, Codigo)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
     for (const it of items || []) {
-      const row = getProductForOrder(Number(it.productId));
-      if (!row) continue;
+      const pid = Number(it.productId);
+      const qty = Math.max(1, Number(it.qty || 1));
+
+      // Datos del producto
+      const row = db.prepare(`
+        SELECT
+          ${prodName} AS name,
+          ${prodPrice ? prodPrice : "NULL"} AS price,
+          ${prodCode ? prodCode : "''"} AS code
+          ${hasStock ? `, COALESCE(${prodStock},0) AS stock` : ""}
+        FROM ${products}
+        WHERE ${prodId} = ?
+        LIMIT 1
+      `).get(pid);
+
+      if (!row) {
+        const err = new Error(`Producto ${pid} no encontrado`);
+        err.code = "PRODUCT_NOT_FOUND";
+        throw err;
+      }
+
       const price = row.price != null ? Number(row.price) : 0;
-      const qty   = Math.max(1, Number(it.qty || 1));
-      const sub   = price * qty;
+
+      if (hasStock) {
+        // Descuento atómico solo si hay stock suficiente
+        const upd = db.prepare(`
+          UPDATE ${products}
+          SET ${prodStock} = ${prodStock} - ?
+          WHERE ${prodId} = ? AND COALESCE(${prodStock},0) >= ?
+        `).run(qty, pid, qty);
+
+        if (upd.changes !== 1) {
+          const available = db.prepare(`
+            SELECT COALESCE(${prodStock},0) AS stock FROM ${products} WHERE ${prodId} = ? LIMIT 1
+          `).get(pid)?.stock ?? 0;
+
+          const err = new Error(
+            available <= 0
+              ? `Sin stock: ${row.name}`
+              : `Stock insuficiente: ${row.name} (máx ${available})`
+          );
+          err.code = "OUT_OF_STOCK";
+          err.extra = { productId: pid, name: row.name, available };
+          throw err;
+        }
+      }
+
+      const sub = price * qty;
       total += sub;
-      insItem.run(pedidoId, Number(it.productId), row.name, price, qty, sub, row.code ?? "");
+      insItem.run(pedidoId, pid, row.name, price, qty, sub, row.code || "");
     }
 
     db.prepare(`UPDATE Pedidos SET Total = ? WHERE PedidoID = ?`).run(total, pedidoId);
@@ -497,6 +580,7 @@ export function getFullOrder(pedidoId) {
   const items = db.prepare(`
     SELECT 
       i.PedidoItemID AS id,
+      i.PedidoID,
       i.ProductoID   AS productId,
       i.Nombre       AS nombre,
       i.Precio       AS precio,
@@ -527,4 +611,137 @@ export function getEmployeeDisplayName(userId) {
   } catch {
     return `Empleado ${userId}`;
   }
+}
+
+/* ======================== ADMIN: Categorías & Productos ======================== */
+/** Lista para <select> de categorías:
+ *  - Si hay tabla de categorías (FK): { id, name }
+ *  - Si no hay tabla (texto en productos): { id: nombre, name: nombre } desde valores distintos en productos
+ */
+export function adminListCategoriesForSelect() {
+  const sch = discoverCatalogSchema();
+  if (!sch.ok) throw new Error(sch.reason);
+
+  const { products, categories } = sch.tables;
+  const { prodCatName, catId, catName } = sch.cols;
+
+  if (categories && catId && catName) {
+    return db.prepare(`
+      SELECT ${catId} AS id, ${catName} AS name
+      FROM ${categories}
+      ORDER BY ${catName} COLLATE NOCASE
+    `).all();
+  }
+
+  if (prodCatName) {
+    return db.prepare(`
+      SELECT TRIM(${prodCatName}) AS name, TRIM(${prodCatName}) AS id
+      FROM ${products}
+      WHERE TRIM(IFNULL(${prodCatName}, '')) <> ''
+      GROUP BY TRIM(${prodCatName})
+      ORDER BY TRIM(${prodCatName}) COLLATE NOCASE
+    `).all();
+  }
+
+  return [];
+}
+
+/** Obtener un producto por ID (incluye categoría como id o como nombre, según esquema) */
+export function adminGetProductById(id) {
+  const sch = discoverCatalogSchema();
+  if (!sch.ok) throw new Error(sch.reason);
+
+  const { products } = sch.tables;
+  const { prodId, prodName, prodPrice, prodStock, prodCode, prodCat, prodCatName } = sch.cols;
+
+  const cols = [
+    `${prodId} AS id`,
+    `${prodName} AS name`,
+    prodPrice ? `${prodPrice} AS price` : `NULL AS price`,
+    prodStock ? `${prodStock} AS stock` : `NULL AS stock`,
+    prodCode  ? `${prodCode} AS code`  : `NULL AS code`,
+    prodCat   ? `${prodCat} AS categoryId` : (prodCatName ? `${prodCatName} AS categoryName` : `NULL AS categoryName`),
+  ].join(", ");
+
+  return db.prepare(`SELECT ${cols} FROM ${products} WHERE ${prodId} = ? OR rowid = ? LIMIT 1`).get(id, id);
+}
+
+/** Crear producto con categoría por ID (FK) o por nombre (texto) */
+export function adminCreateProduct(fields = {}) {
+  const sch = discoverCatalogSchema();
+  if (!sch.ok) throw new Error(sch.reason);
+
+  const { products } = sch.tables;
+  const { prodId, prodName, prodPrice, prodStock, prodCode, prodCat, prodCatName } = sch.cols;
+
+  if (!prodName) throw new Error("No se detectó columna de nombre en productos.");
+
+  const cols = [];
+  const vals = [];
+  const args = [];
+
+  cols.push(prodName); vals.push("?"); args.push(String(fields.name ?? "").trim());
+  if (prodPrice && fields.price != null) { cols.push(prodPrice); vals.push("?"); args.push(Number(fields.price) || 0); }
+  if (prodStock && fields.stock != null) { cols.push(prodStock); vals.push("?"); args.push(Math.max(0, parseInt(fields.stock) || 0)); }
+  if (prodCode  && fields.code  != null) { cols.push(prodCode);  vals.push("?"); args.push(String(fields.code)); }
+
+  if (prodCat && fields.categoryId != null) {
+    cols.push(prodCat); vals.push("?"); args.push(fields.categoryId);
+  } else if (!prodCat && prodCatName && fields.categoryName != null) {
+    cols.push(prodCatName); vals.push("?"); args.push(String(fields.categoryName).trim());
+  }
+
+  const sql = `INSERT INTO ${products} (${cols.join(",")}) VALUES (${vals.join(",")})`;
+  const info = db.prepare(sql).run(...args);
+
+  const selCols = [
+    `${prodId} AS id`,
+    `${prodName} AS name`,
+    prodPrice ? `${prodPrice} AS price` : `NULL AS price`,
+    prodStock ? `${prodStock} AS stock` : `NULL AS stock`,
+    prodCode  ? `${prodCode} AS code`  : `NULL AS code`,
+    prodCat   ? `${prodCat} AS categoryId` : (prodCatName ? `${prodCatName} AS categoryName` : `NULL AS categoryName`),
+  ].join(", ");
+
+  return db.prepare(`SELECT ${selCols} FROM ${products} WHERE ${prodId} = ?`).get(info.lastInsertRowid);
+}
+
+/** Actualizar producto con categoría por ID (FK) o por nombre (texto) */
+export function adminUpdateProduct(id, fields = {}) {
+  const sch = discoverCatalogSchema();
+  if (!sch.ok) throw new Error(sch.reason);
+
+  const { products } = sch.tables;
+  const { prodId, prodName, prodPrice, prodStock, prodCode, prodCat, prodCatName } = sch.cols;
+
+  const set = [];
+  const args = [];
+
+  if (fields.name != null && prodName)  { set.push(`${prodName} = ?`);  args.push(String(fields.name).trim()); }
+  if (fields.price != null && prodPrice){ set.push(`${prodPrice} = ?`); args.push(Number(fields.price) || 0); }
+  if (fields.stock != null && prodStock){ set.push(`${prodStock} = ?`); args.push(Math.max(0, parseInt(fields.stock) || 0)); }
+  if (fields.code  != null && prodCode) { set.push(`${prodCode}  = ?`); args.push(String(fields.code)); }
+
+  if (prodCat && fields.categoryId !== undefined) {
+    set.push(`${prodCat} = ?`); args.push(fields.categoryId);
+  } else if (!prodCat && prodCatName && fields.categoryName !== undefined) {
+    set.push(`${prodCatName} = ?`); args.push(String(fields.categoryName).trim());
+  }
+
+  if (!set.length) {
+    return db.prepare(`SELECT * FROM ${products} WHERE ${prodId} = ? OR rowid = ?`).get(id, id) || null;
+  }
+
+  db.prepare(`UPDATE ${products} SET ${set.join(", ")} WHERE ${prodId} = ? OR rowid = ?`).run(...args, id, id);
+
+  const selCols = [
+    `${prodId} AS id`,
+    `${prodName} AS name`,
+    prodPrice ? `${prodPrice} AS price` : `NULL AS price`,
+    prodStock ? `${prodStock} AS stock` : `NULL AS stock`,
+    prodCode  ? `${prodCode} AS code`  : `NULL AS code`,
+    prodCat   ? `${prodCat} AS categoryId` : (prodCatName ? `${prodCatName} AS categoryName` : `NULL AS categoryName`),
+  ].join(", ");
+
+  return db.prepare(`SELECT ${selCols} FROM ${products} WHERE ${prodId} = ? OR rowid = ?`).get(id, id);
 }

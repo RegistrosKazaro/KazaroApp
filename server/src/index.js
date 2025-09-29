@@ -16,7 +16,7 @@ import supervisorRoutes from "./routes/supervisor.js";
 import servicesRoutes from "./routes/services.js";
 import meRoutes from "./routes/me.js";
 import devRoutes from "./routes/dev.js";
-import { DB_RESOLVED_PATH, db } from "./db.js";
+import { DB_RESOLVED_PATH, db, ensureStockColumn } from "./db.js"; // <— incluye ensureStockColumn
 import { verifyMailTransport } from "./utils/mailer.js";
 import adminRoutes from "./routes/admin.js";
 
@@ -90,8 +90,6 @@ app.use("/supervisor", supervisorRoutes);
 app.use("/services", servicesRoutes);
 app.use("/admin", adminRoutes);
 
-// OJO: ya tenemos /auth/my-services dentro de authRoutes.
-// Este redirect a servicesRoutes podía colisionar; lo quito para evitar sorpresas.
 // app.get("/auth/my-services", (req, res, next) => { req.url = "/my"; return servicesRoutes(req, res, next); });
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
@@ -116,6 +114,9 @@ app.listen(PORT, async () => {
   console.log(`[server] http://localhost:${PORT} (${env.NODE_ENV || "development"})`);
   console.log("[static] PUBLIC_DIR:", PUBLIC_DIR);
   console.log("[db] usando:", DB_RESOLVED_PATH);
+
+  // ===== NUEVO: asegura columna 'Stock' si no existe =====
+  try { ensureStockColumn(); } catch (e) { console.error("[db] ensureStockColumn:", e); }
 
   try {
     const cnt = db.prepare("SELECT COUNT(*) AS c FROM Empleados").get()?.c ?? 0;

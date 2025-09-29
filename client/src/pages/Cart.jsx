@@ -74,9 +74,19 @@ export default function Cart() {
             <tbody>
               {items.map(it => {
                 const sub = Number(it.price || 0) * Number(it.qty || 1);
+                const max = Number.isFinite(Number(it.stock)) ? Number(it.stock) : undefined;
+                const sinStock = (max !== undefined) && (max <= 0);
+
                 return (
                   <tr key={it.productId}>
-                    <td>{it.name}</td>
+                    <td>
+                      {it.name}
+                      {max !== undefined && (
+                        <div style={{ fontSize: 12, opacity: .85, marginTop: 4 }}>
+                          {sinStock ? "Sin stock" : `Stock disponible: ${max}`}
+                        </div>
+                      )}
+                    </td>
                     <td className="mono">
                       {new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(Number(it.price || 0))}
                     </td>
@@ -84,10 +94,16 @@ export default function Cart() {
                       <input
                         type="number"
                         min="1"
+                        {...(max !== undefined ? { max: Math.max(1, max) } : {})}
                         step="1"
                         className="qty-input"
                         value={it.qty}
-                        onChange={(e) => update(it.productId, Math.max(1, Number(e.target.value) || 1))}
+                        onChange={(e) => {
+                          const v = Math.max(1, Number(e.target.value) || 1);
+                          const safe = (max !== undefined) ? Math.min(v, Math.max(1, max)) : v;
+                          update(it.productId, safe);
+                        }}
+                        disabled={sinStock}
                         aria-label={`Cantidad de ${it.name}`}
                       />
                     </td>
@@ -121,20 +137,20 @@ export default function Cart() {
           {errorSend && <div className="state error" style={{ marginTop: 12 }}>{errorSend}</div>}
 
           {remito && (
-  <section className="state" style={{ marginTop: 12 }}>
-    <h3 style={{ marginTop: 0 }}>Remito generado</h3>
-    <div><strong>Número:</strong> {remito.numero}</div>
-    <div><strong>Fecha:</strong> {new Date(remito.fecha).toLocaleString("es-AR")}</div>
-    <div><strong>Generado por:</strong> {remito.empleado}</div>
-    {remito.servicio && <div><strong>Servicio:</strong> {remito.servicio.name}</div>}
-    <div><strong>Total:</strong> {new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(remito.total || 0)}</div>
-    {remito.pdfUrl && (
-      <div style={{ marginTop: 8 }}>
-        <a className="pill" href={remito.pdfUrl} target="_blank" rel="noopener noreferrer">Descargar PDF</a>
-      </div>
-    )}
-  </section>
-)}
+            <section className="state" style={{ marginTop: 12 }}>
+              <h3 style={{ marginTop: 0 }}>Remito generado</h3>
+              <div><strong>Número:</strong> {remito.numero}</div>
+              <div><strong>Fecha:</strong> {new Date(remito.fecha).toLocaleString("es-AR")}</div>
+              <div><strong>Generado por:</strong> {remito.empleado}</div>
+              {remito.servicio && <div><strong>Servicio:</strong> {remito.servicio.name}</div>}
+              <div><strong>Total:</strong> {new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(remito.total || 0)}</div>
+              {remito.pdfUrl && (
+                <div style={{ marginTop: 8 }}>
+                  <a className="pill" href={remito.pdfUrl} target="_blank" rel="noopener noreferrer">Descargar PDF</a>
+                </div>
+              )}
+            </section>
+          )}
         </>
       )}
     </div>
