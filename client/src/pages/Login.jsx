@@ -40,7 +40,7 @@ export default function Login() {
 
   return (
     <div className="catalog" style={{ maxWidth: 460, margin: "60px auto" }}>
-      <h2>Ingresar</h2>
+      <h1>Ingresar</h1>
 
       <form onSubmit={onSubmit} className="srv-card" style={{ padding: 16, color: "black" }}>
         <label>Usuario</label>
