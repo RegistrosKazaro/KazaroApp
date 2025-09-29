@@ -11,7 +11,9 @@
   --radius: 14px;
   --shadow: 0 10px 30px rgba(0,0,0,.08);
 }
-
+h1{
+  color: black;
+}
 @media (prefers-color-scheme: dark){
   :root{
     --bg:#0b1020;
