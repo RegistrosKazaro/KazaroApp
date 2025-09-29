@@ -1,4 +1,6 @@
 // server/src/db/seed.js
+// Seed idempotente para garantizar un usuario admin y su rol en cada deploy.
+
 import Database from "better-sqlite3";
 import argon2 from "argon2";
 import bcrypt from "bcryptjs";
@@ -6,47 +8,120 @@ import bcrypt from "bcryptjs";
 const DB_PATH = process.env.DB_PATH || "./Kazaro.db";
 const db = new Database(DB_PATH);
 
-// Si falta la tabla, salgo (primero debe correr migrate)
-const exists = db.prepare(
-  "SELECT 1 FROM sqlite_master WHERE type='table' AND name='Empleados'"
-).get();
-if (!exists) {
-  console.log("[seed] Falta 'Empleados'. Corré migrate primero.");
-  process.exit(0);
+// ---------- helpers ----------
+function tableExists(name) {
+  const row = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
+    .get(name);
+  return !!row;
 }
 
-// Si ya hay filas, no vuelvo a insertar
-const count = db.prepare("SELECT COUNT(*) AS c FROM Empleados").get().c;
-if (count > 0) {
-  console.log("[seed] Empleados ya tiene filas. No hago nada.");
-  process.exit(0);
+function colNamesOf(table) {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all();
+  // mapa { lowerCaseName -> realName }
+  const map = {};
+  rows.forEach((r) => (map[String(r.name).toLowerCase()] = r.name));
+  return map;
 }
 
-// Credenciales por defecto (podés sobreescribir con ENV en Render)
-const user  = process.env.SEED_ADMIN_USER  || "admin";
-const pass  = process.env.SEED_ADMIN_PASS  || "123456";
-const nombre= process.env.SEED_ADMIN_NAME  || "Administrador";
-const email = process.env.SEED_ADMIN_EMAIL || "admin@example.com";
-const rol   = process.env.SEED_ADMIN_ROLE  || "administrativo";
-
-// Elegí el hasher según tu backend (por defecto uso ARGON2)
-const HASHER = (process.env.SEED_HASHER || "argon2").toLowerCase();
-// Nota: tu server/package.json ya tiene "argon2" y "bcryptjs" instalados.
-
-async function makeHash(plain) {
-  if (HASHER === "bcrypt") {
+async function makeHash(plain, hasher) {
+  if ((hasher || "").toLowerCase() === "bcrypt") {
     return bcrypt.hashSync(plain, 10);
   }
-  // por defecto argon2
+  // default argon2
   return await argon2.hash(plain);
 }
 
-const hash = await makeHash(pass);
+function upsertRole(roleName) {
+  if (!tableExists("Roles")) return null;
 
-db.prepare(`
-  INSERT INTO Empleados (Username, PasswordHash, Nombre, Email, Rol)
-  VALUES (?, ?, ?, ?, ?)
-`).run(user, hash, nombre, email, rol);
+  const get = db.prepare("SELECT id FROM Roles WHERE nombre = ?");
+  const row = get.get(roleName);
+  if (row?.id) return row.id;
 
-console.log(`[seed] Usuario creado: ${user} / ${pass} (rol: ${rol}, hasher: ${HASHER})`);
+  const ins = db.prepare("INSERT INTO Roles (nombre) VALUES (?)");
+  const info = ins.run(roleName);
+  return info.lastInsertRowid;
+}
 
+function ensureRoleEmpleado(empleadoId, roleId) {
+  if (!tableExists("Roles_Empleados")) return;
+  const get = db.prepare(
+    "SELECT 1 FROM Roles_Empleados WHERE EmpleadoID=? AND RolID=?"
+  );
+  const row = get.get(empleadoId, roleId);
+  if (row) return;
+  db.prepare(
+    "INSERT INTO Roles_Empleados (EmpleadoID, RolID) VALUES (?, ?)"
+  ).run(empleadoId, roleId);
+}
+
+// ---------- validaciones básicas ----------
+if (!tableExists("Empleados")) {
+  console.log("[seed] Falta la tabla 'Empleados'. Corré migrate primero.");
+  process.exit(0);
+}
+
+const cols = colNamesOf("Empleados");
+
+// resolvemos nombres reales según tu DB
+const USERNAME = cols["username"] || cols["Username"] || "username";
+const PASSHASH =
+  cols["password_hash"] || cols["PasswordHash"] || "password_hash";
+const NOMBRE = cols["nombre"] || cols["Nombre"] || "Nombre";
+const EMAIL = cols["email"] || cols["Email"] || "Email";
+const IS_ACTIVE = cols["is_active"] || cols["Is_Active"] || "is_active";
+const PASS_PLAIN =
+  cols["password_plain"] || cols["Password_Plain"] || "password_plain";
+const ID = cols["empleadosid"] || cols["EmpleadosID"] || "EmpleadosID";
+
+// ---------- variables del admin ----------
+const SEED_HASHER = (process.env.SEED_HASHER || "argon2").toLowerCase();
+const ADMIN_USER = process.env.SEED_ADMIN_USER || "admin";
+const ADMIN_PASS = process.env.SEED_ADMIN_PASS || "123456";
+const ADMIN_NAME = process.env.SEED_ADMIN_NAME || "Administrador";
+const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL || "admin@example.com";
+const ADMIN_ROLE = process.env.SEED_ADMIN_ROLE || "admin";
+
+// ---------- generamos hash ----------
+const hashed = await makeHash(ADMIN_PASS, SEED_HASHER);
+
+// ---------- upsert Empleados (por username) ----------
+const getByUser = db.prepare(
+  `SELECT ${ID} AS id FROM Empleados WHERE ${USERNAME} = ?`
+);
+const row = getByUser.get(ADMIN_USER);
+
+if (row?.id) {
+  // update
+  const stmt = db.prepare(
+    `UPDATE Empleados
+     SET ${PASSHASH} = ?, ${NOMBRE} = ?, ${EMAIL} = ?, ${IS_ACTIVE} = 1, ${PASS_PLAIN} = ?
+     WHERE ${ID} = ?`
+  );
+  stmt.run(hashed, ADMIN_NAME, ADMIN_EMAIL, ADMIN_PASS, row.id);
+  console.log(
+    `[seed] Admin actualizado: ${ADMIN_USER} (id=${row.id}, hasher=${SEED_HASHER})`
+  );
+
+  // rol (si existen tablas de roles)
+  const roleId = upsertRole(ADMIN_ROLE);
+  if (roleId) ensureRoleEmpleado(row.id, roleId);
+} else {
+  // insert
+  const stmt = db.prepare(
+    `INSERT INTO Empleados (${USERNAME}, ${PASSHASH}, ${NOMBRE}, ${EMAIL}, ${IS_ACTIVE}, ${PASS_PLAIN})
+     VALUES (?, ?, ?, ?, 1, ?)`
+  );
+  const info = stmt.run(ADMIN_USER, hashed, ADMIN_NAME, ADMIN_EMAIL, ADMIN_PASS);
+  const newId = info.lastInsertRowid;
+  console.log(
+    `[seed] Admin creado: ${ADMIN_USER} (id=${newId}, hasher=${SEED_HASHER})`
+  );
+
+  // rol (si existen tablas de roles)
+  const roleId = upsertRole(ADMIN_ROLE);
+  if (roleId) ensureRoleEmpleado(newId, roleId);
+}
+
+console.log("[seed] OK");
