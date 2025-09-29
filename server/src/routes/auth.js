@@ -42,7 +42,7 @@ async function verifyPassword({ password, password_hash, password_plain }) {
     if (hash === pwd) return true;
   }
 
-  // Columna de texto plano (legacy)
+
   if (plain !== null && plain === pwd) return true;
 
   return false;
