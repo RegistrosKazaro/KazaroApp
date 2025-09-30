@@ -17,7 +17,6 @@
   --ring: 0 0 0 3px rgba(37,99,235,.28);
 }
 
-/* Dark mode */
 @media (prefers-color-scheme: dark){
   :root{
     --bg:#0b1220; --card:#0f1626; --text:#e5e7eb; --muted:#9aa3b2; --border:#1f2a44;
@@ -26,7 +25,6 @@
   }
 }
 
-/* ---------- Contenedor (base: sin tocar desktop) ---------- */
 .catalog{
   padding:
     max(16px, env(safe-area-inset-top))
@@ -39,7 +37,6 @@
   letter-spacing: .2px;
 }
 
-/* Título fluido */
 .catalog h2{
   margin: 2px 0 14px;
   font-weight: 600;
@@ -48,7 +45,6 @@
   color: #000000;
 }
 
-/* Estados */
 .state{
   background: var(--card);
   border: 1px solid var(--border);
@@ -66,34 +62,27 @@
   .state.error{ border-color:#7f1d1d; background:#1a0f13; }
 }
 
-/* =========================================================
-   GRID (desktop conserva tu layout; mobile se fuerza a 1 col)
-   ========================================================= */
 .services-grid{
   display: grid;
-  grid-template-columns: 1fr;           /* móvil: 1 columna */
+  grid-template-columns: 1fr;           
   gap: var(--gap);
   align-items: stretch;
 }
 
-/* ≥480px: 2 columnas */
 @media (min-width: 480px){
   .services-grid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-/* ≥640px: 3 columnas + padding mayor */
 @media (min-width: 640px){
   .catalog{ padding: 20px; }
   .services-grid{ grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
-/* ≥1024px: 4 columnas + centrar contenido (como antes) */
 @media (min-width: 1024px){
   .catalog{ max-width: 920px; margin-inline: auto; }
   .services-grid{ grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
-/* ---------- Card ---------- */
 .service-card{
   appearance: none;
   border: 1px solid var(--border);
@@ -101,18 +90,15 @@
   color: black;
   border-radius: calc(var(--radius) + 2px);
   box-shadow: var(--shadow-sm);
-
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 6px;
-
   min-height: 72px;
   width: 100%;
   padding: 14px 16px;
   text-align: left;
   cursor: pointer;
-
   transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease, background .12s ease;
 }
 .service-card > div{
@@ -144,8 +130,6 @@
   box-shadow: var(--shadow-md), var(--ring);
 }
 
-
-/* ---------- Botones ---------- */
 button{ font: inherit; color: inherit; }
 .pill, .btn{
   display: inline-flex;
@@ -162,7 +146,7 @@ button{ font: inherit; color: inherit; }
   -webkit-tap-highlight-color: transparent;
 }
 @media (max-width: 359px){
-  .pill, .btn{ width: 100%; } /* teléfonos muy chicos */
+  .pill, .btn{ width: 100%; } 
 }
 .pill:hover{
   transform: translateY(-1px);
@@ -187,7 +171,6 @@ button:disabled, .btn[disabled], .pill[disabled]{
   outline: none; box-shadow: var(--shadow-md), var(--ring);
 }
 
-/* ---------- Paginación ---------- */
 .pagination{
   display: flex;
   align-items: center;
@@ -204,7 +187,6 @@ button:disabled, .btn[disabled], .pill[disabled]{
   color: #000000; }
 }
 
-/* ---------- Inputs ---------- */
 .input{
   width: 100%;
   min-height: var(--tap);
@@ -226,12 +208,10 @@ button:disabled, .btn[disabled], .pill[disabled]{
   .input{ background: #ffffff; }
 }
 
-/* ---------- Reduce motion ---------- */
 @media (prefers-reduced-motion: reduce){
   .service-card, .btn, .pill { transition: none !important; }
 }
 
-/* ---------- Scrollbar ---------- */
 @supports selector(::-webkit-scrollbar){
   ::-webkit-scrollbar{ height: 10px; width: 10px; }
   ::-webkit-scrollbar-thumb{
@@ -241,15 +221,9 @@ button:disabled, .btn[disabled], .pill[disabled]{
   ::-webkit-scrollbar-track{ background: transparent; }
 }
 
-/* =========================================================
-   OVERRIDES SOLO EN MOBILE (≤480px)
-   - No afecta escritorio
-   - Corrige header y anchos fijos heredados
-   ========================================================= */
+
 @media (max-width: 480px){
   html, body, #root{ width:100%; max-width:100%; overflow-x:hidden; }
-
-  /* ocupar todo el ancho en móvil, aunque el JSX tenga maxWidth */
   .appmain,
   .catalog{
     max-width: none !important;
@@ -260,7 +234,7 @@ button:disabled, .btn[disabled], .pill[disabled]{
     
   }
 
-  /* AppBar responsive */
+
   .appbar{
     display:flex; flex-wrap:wrap; align-items:center; gap:8px;
     padding:10px 12px !important;
@@ -274,7 +248,6 @@ button:disabled, .btn[disabled], .pill[disabled]{
 
   .catalog h2{ font-size:20px !important; margin:6px 0 12px !important; }
 
-  /* grid a 1 columna (ya está arriba pero reforzamos) */
   .services-grid{ grid-template-columns:1fr !important; gap:10px !important; }
 
   .service-card{
@@ -286,11 +259,9 @@ button:disabled, .btn[disabled], .pill[disabled]{
   .btn, .pill{ min-height:44px !important; }
 }
 
-/* Celular grande / tablet chica (481–767px): 2 columnas */
 @media (min-width: 481px) and (max-width: 767px){
   .services-grid{ grid-template-columns: repeat(2, minmax(0,1fr)) !important; }
 }
-/* ====== Pill base (por si otro CSS la pisa) ====== */
 .catalog .pill{
   background: var(--pill-bg, #f3f4f6);
   color: var(--pill-fg, #111827);
@@ -305,7 +276,6 @@ button:disabled, .btn[disabled], .pill[disabled]{
   transition: background .15s ease, border-color .15s ease, color .15s ease, transform .1s ease, box-shadow .1s ease;
 }
 
-/* Hover/active */
 .catalog .pill:hover{
   transform: translateY(-1px);
   box-shadow: 0 2px 8px rgba(0,0,0,.08);
@@ -315,7 +285,6 @@ button:disabled, .btn[disabled], .pill[disabled]{
   box-shadow: none;
 }
 
-/* Disabled visible */
 .catalog .pill:disabled{
   opacity: .55;
   cursor: not-allowed;
@@ -323,11 +292,10 @@ button:disabled, .btn[disabled], .pill[disabled]{
   box-shadow: none;
 }
 
-/* ====== Variantes de color ====== */
 .catalog .pill--primary{
-  --pill-bg: #eaf1ff;     /* fondo */
-  --pill-fg: #000000;     /* texto */
-  --pill-border: #0c0c0c; /* borde */
+  --pill-bg: #eaf1ff;     
+  --pill-fg: #000000;     
+  --pill-border: #0c0c0c; 
 }
 .catalog .pill--primary:hover{
   --pill-bg: #dfe9ff;
@@ -350,7 +318,6 @@ button:disabled, .btn[disabled], .pill[disabled]{
   --pill-border: #ffc6c6;
 }
 
-/* Si la pill está en la appbar oscura y querés contraste: */
 .appbar--dark .pill{
   background: transparent;
   color: #fff;

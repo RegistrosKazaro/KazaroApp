@@ -1,4 +1,3 @@
-/* client/src/styles/service-select.css */
 .services { padding: 20px; }
 .services h2 { margin: 0 0 14px; }
 .service-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; max-width: 560px; }

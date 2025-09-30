@@ -1,4 +1,3 @@
-/* Header simple y limpio */
 .appbar{
   background:#0b1220;
   color:#fff;
@@ -32,13 +31,11 @@
 
 .user{ opacity:.9; }
 
-/* Contenedor principal */
 .appmain{
   padding:16px;
   
 }
 
-/* Ayudas generales que ya usa tu proyecto */
 .state{
   background:#f4f7ff;
   border:1px solid #dbe3ff;

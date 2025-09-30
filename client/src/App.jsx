@@ -1,4 +1,3 @@
-// client/src/App.jsx
 import { Routes, Route, Navigate, Link, Outlet, useParams } from "react-router-dom";
 import { useAuth } from "./hooks/useAuth";
 import { useCart } from "./hooks/useCart";
@@ -39,7 +38,6 @@ function Layout() {
   const roles = (user?.roles || []).map(r => String(r).toLowerCase());
   const isAdmin = roles.includes("admin");
 
-  // role seguro para construir URLs
   const safeRole = (role || roles[0] || "admin").toLowerCase();
 
   const rolesText = (user?.roles || []).join(", ");

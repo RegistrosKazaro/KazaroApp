@@ -1,8 +1,4 @@
-/* client/src/styles/admin-panel.css
-   ---- Estilos SOLO del Panel de Administración (compacto) ---- */
-
 .admin-container{
-  /* Theme */
   --ap-border:#D8DFEA;
   --ap-bg:#FFFFFF;
   --ap-bg-2:#F3F6FB;
@@ -17,8 +13,6 @@
   --ap-radius:12px;
   --ap-radius-sm:8px;
   --ap-h:40px;
-
-  /* >>> wrapper para alinear tabs y tarjetas con el mismo ancho */
   max-width: 1100px;
   margin: 0 auto;
   padding: 20px 16px;
@@ -26,7 +20,6 @@
   color:var(--ap-text);
 }
 
-/* ---------- Titulares y tarjetas ---------- */
 .admin-container h2{margin:0 0 10px;font-size:20px;font-weight:800}
 .admin-container .card{
   background:var(--ap-bg);
@@ -37,7 +30,6 @@
   box-shadow:var(--ap-shadow-soft);
 }
 
-/* ---------- Botones (compactos) ---------- */
 .admin-container .btn{
   appearance:none;border:1px solid var(--ap-border);background:#fff;color:var(--ap-text);
   padding:8px 12px;border-radius:8px;min-height:36px;font-weight:600;cursor:pointer;
@@ -48,9 +40,6 @@
 .admin-container .btn.primary{background:var(--ap-primary);border-color:var(--ap-primary);color:#fff}
 .admin-container .btn.danger{background:#FFE8E8;color:var(--ap-danger);border-color:#FFC6C6}
 
-/* =========================================================
-   TABLAS (Productos, Pedidos)
-   ========================================================= */
 .admin-container .table{
   border:1px solid var(--ap-border);
   border-radius:10px;
@@ -58,7 +47,6 @@
   background:#fff;
 }
 
-/* Encabezado fijo dentro del body scrolleable de la tabla */
 .admin-container .table-products .thead{
   position:sticky; top:0; z-index:2;
   display:grid;
@@ -72,7 +60,6 @@
   text-transform:uppercase; letter-spacing:.035em;
 }
 
-/* Cuerpo scrolleable */
 .admin-container .table-products .tbody{display:block;max-height:62vh;overflow:auto}
 .admin-container .table-products .tr{
   display:grid;
@@ -89,10 +76,8 @@
 }
 .admin-container .num{justify-content:flex-end;font-variant-numeric:tabular-nums}
 
-/* Acciones */
 .admin-container .actions{display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-start}
 
-/* Nombre con truncado de 2 líneas */
 .admin-container .truncate-2{
   display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;
 }
@@ -100,7 +85,6 @@
   .admin-container .truncate-2{display:block;line-height:1.25;max-height:calc(1.25em * 2);overflow:hidden}
 }
 
-/* Responsive de tabla */
 @media (max-width:1100px){
   .admin-container .table-products .thead,
   .admin-container .table-products .tr{
@@ -122,9 +106,6 @@
   .admin-container .table-products .tr>div:nth-child(2){font-weight:800}
 }
 
-/* =========================================================
-   SHEET (panel lateral para editar producto) — compacto
-   ========================================================= */
 .admin-container .sheet-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.28);backdrop-filter:saturate(120%) blur(1px);z-index:40}
 .admin-container .sheet{
   position:fixed;top:0;right:0;height:100dvh;width:min(440px,92vw);
@@ -142,11 +123,6 @@
 .admin-container .sheet-body .input:focus{border-color:var(--ap-primary-600);box-shadow:0 0 0 3px rgba(37,99,235,.28)}
 .admin-container .sheet-actions{display:flex;gap:6px;margin-top:6px;padding-top:6px;border-top:1px solid var(--ap-border)}
 
-/* =========================================================
-   ASIGNAR SERVICIOS — compacto
-   ========================================================= */
-
-/* Barra de filtros */
 .admin-container .assign-toolbar{
   display:grid;grid-template-columns:minmax(220px,300px) 1fr auto;
   gap:8px;align-items:end;margin-bottom:8px
@@ -162,7 +138,7 @@
 .admin-container .assign-toolbar .input:focus,
 .admin-container .assign-toolbar select:focus{border-color:var(--ap-primary-600);box-shadow:0 0 0 3px rgba(37,99,235,.28)}
 
-/* Lista en columnas */
+
 .admin-container .assign-list{
   display:grid;
   grid-template-columns:repeat(3,minmax(0,1fr));
@@ -171,19 +147,16 @@
 @media (max-width:1100px){ .admin-container .assign-list{grid-template-columns:repeat(2,minmax(0,1fr))} }
 @media (max-width:620px){ .admin-container .assign-list{grid-template-columns:1fr} }
 
-/* Ítem */
 .admin-container .assign-item{
   display:flex;align-items:flex-start;gap:8px;
   border:1px solid var(--ap-border);border-radius:10px;background:#fff;padding:10px;
   box-shadow:var(--ap-shadow-soft);transition:border-color .15s, box-shadow .15s, background .15s
 }
 
-/* Checkbox grande y accesible */
 .admin-container .assign-item input[type="checkbox"]{
   inline-size:20px; block-size:20px; margin-top:1px; cursor:pointer;
 }
 
-/* Contenido (título + badge) */
 .admin-container .assign-content{flex:1;min-width:0}
 .admin-container .assign-title{
   font-weight:700; line-height:1.25; font-size:.95rem;
@@ -195,41 +168,32 @@
   padding:4px 6px;border-radius:999px;border:1px solid var(--ap-border);color:#1E3A8A;background:#E0E7FF;
 }
 
-/* Estado asignado visual */
 .admin-container .assign-item.assigned{background:#EEF4FF;border-color:#BFDBFE}
 .admin-container .assign-item.assigned .badge{background:#DBEAFE;border-color:#BFDBFE;color:#1E40AF}
 
-/* Hover/focus */
 .admin-container .assign-item:hover{border-color:#C9D6EA;box-shadow:var(--ap-shadow)}
 .admin-container .assign-item:has(input[type="checkbox"]:focus-visible){outline:3px solid rgba(37,99,235,.28);outline-offset:2px}
 
-/* =========================================================
-   Mensajes y utilidades
-   ========================================================= */
 .admin-container .alert{
   border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:14px;
   background:var(--ap-bg-2);border:1px solid var(--ap-border);color:var(--ap-text)
 }
 .admin-container .alert.error{color:#7F1D1D;border-color:#FECACA;background:#FEF2F2}
 
-/* Edición inline de stock */
 .admin-container .stock-inline{display:flex; align-items:center; gap:6px; flex-wrap:wrap}
 .admin-container .stock-input{width:90px; min-height:36px; text-align:right}
 .admin-container .stock-value{font-variant-numeric:tabular-nums}
 .admin-container .btn.xs{min-height:30px; padding:6px 10px; border-radius:8px; font-size:.85rem}
 
-/* ===== Barra superior de tabs — ARRIBA, alineada con el card ===== */
 .admin-container .admin-topbar{
-  /* ← antes era sticky; ahora va integra al flujo */
   position: static;
   background: transparent;
   border: 0;
   display:flex; gap:8px; align-items:center;
   padding: 0;
-  margin: 0 0 14px 0;   /* separada del card */
+  margin: 0 0 14px 0;   
 }
 
-/* Botón de tab */
 .admin-container .tab-btn{
   appearance:none;
   border:1px solid var(--ap-border, #d8dfea);

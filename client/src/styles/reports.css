@@ -1,10 +1,8 @@
-/* =================== Reports (scoped) =================== */
 .reports-scope{
   max-width: 1100px;
   margin-inline: auto;
 }
 
-/* Toolbar superior */
 .reports-toolbar{
   display: flex;
   align-items: center;
@@ -14,7 +12,7 @@
 }
 .reports-toolbar label{
   font-weight: 700;
-  color: #2563eb; /* azul accesible */
+  color: #2563eb; 
 }
 .reports-toolbar .select{
   min-height: 40px;
@@ -26,12 +24,10 @@
   margin-left: auto;
 }
 
-/* Resumen del período */
 .reports-summary{
   margin-top: 12px;
 }
 
-/* Grilla de tablas y gráficos */
 .reports-grid{
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -42,7 +38,6 @@
   .reports-grid{ grid-template-columns: 1fr; }
 }
 
-/* Tablas (extiende .sup-table existente, pero sólo dentro de reports) */
 .reports-scope .sup-table{
   width: 100%;
   border-collapse: collapse;
@@ -73,14 +68,12 @@
   background: #f3f8ff;
 }
 
-/* Números tabulares y alineados a la derecha */
 .mono{
   font-variant-numeric: tabular-nums;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   text-align: right;
 }
 
-/* Tarjetas de gráfico */
 .chart-card{
   margin-top: 12px;
   background: #fff;
@@ -96,10 +89,9 @@
 }
 .chart-box{
   padding: 8px 6px 12px;
-  height: 300px; /* contenedor para ResponsiveContainer */
+  height: 300px; 
 }
 
-/* Títulos */
 .reports-scope h2{
   margin: 8px 0 6px;
 }
@@ -109,7 +101,6 @@
   color: black;
 }
 
-/* Botones pill variantes mínimas si no las tenés ya */
 .pill--secondary{
   background: #eef4ff;
   border: 1px solid #cfe0ff;
@@ -121,12 +112,10 @@
   color: #7f1d1d;
 }
 
-/* Accesibilidad / motion reduce */
 @media (prefers-reduced-motion: reduce){
   *{ transition: none !important; animation: none !important; }
 }
 
-/* ============ Estilos de IMPRESIÓN (PDF) ============ */
 @media print {
   body { background: #fff !important; }
   .appbar, .appbar-right, .reports-toolbar, .pill, .btn { display: none !important; }

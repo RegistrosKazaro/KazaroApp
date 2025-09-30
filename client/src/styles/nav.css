@@ -1,4 +1,4 @@
-/* Topbar */
+
 .topbar{
   position: sticky;
   top: 0;
@@ -29,7 +29,6 @@
   margin-right: 12px;
 }
 
-/* Right side */
 .right{
   display: inline-flex;
   align-items: center;
@@ -40,7 +39,6 @@
   font-size: 14px;
 }
 
-/* Ghost button (Login / Carrito) */
 .ghost{
   text-decoration: none;
   border: 1px solid var(--border, #e5e7eb);
@@ -50,7 +48,6 @@
 }
 .ghost:focus-visible{ outline: 3px solid rgba(96,165,250,.6); }
 
-/* Logout */
 .btn-out{
   padding: 6px 10px;
   border-radius: 10px;
@@ -61,7 +58,6 @@
 }
 .btn-out:focus-visible{ outline: 3px solid rgba(96,165,250,.6); }
 
-/* --- Ajustes cuando el header es transparente (en /login) --- */
 .topbar--transparent .brand,
 .topbar--transparent .ghost,
 .topbar--transparent .user,
@@ -73,7 +69,6 @@
   color: #0e4787;
 }
 
-/* ==== ServiceMenu (delegable) ==== */
 .service-menu .select {
   padding: 6px 8px;
   border: 1px solid var(--line, #ddd);

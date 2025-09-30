@@ -1,4 +1,3 @@
-/* ====== Pantalla “Elegí tu rol” ====== */
 :root{
   --radius: 14px;
   --control-h: 44px;
@@ -27,7 +26,6 @@
   margin-top: 12px;
 }
 
-/* Botones grandes y accesibles */
 .role-btn{
   display: inline-flex;
   align-items: center;
@@ -55,7 +53,6 @@
   cursor: not-allowed;
 }
 
-/* Variante principal (si querés destacarla) */
 .role-btn.primary{
   border-color: color-mix(in srgb, var(--primary-600) 60%, #0000);
   background: linear-gradient(180deg, var(--primary) 0%, var(--primary-600) 100%);

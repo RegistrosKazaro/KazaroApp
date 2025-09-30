@@ -1,11 +1,7 @@
-/* ====== Catálogo de productos (accesible) ====== */
-/* Reutiliza variables del login si existen, con fallbacks seguros */
 :root{
   --radius: 14px;
   --radius-sm: 10px;
   --control-h: 44px;
-
-  /* Fallbacks por si tu tema no las define */
   --bg: #0b1220;
   --card: #ffffff;
   --text: #0b1220;
@@ -18,19 +14,16 @@
   --focus: #8fd3ff;
 }
 
-/* Contenedor */
 .catalog{
   padding: 20px;
   color: var(--text);
 }
 
-/* Título */
 .catalog h2{
   margin: 0 0 12px;
   font-size: clamp(22px, 2.4vw, 28px);
 }
 
-/* ===== Toolbar: categoría + servicio (si supervisor) + buscador ===== */
 .catalog-toolbar{
   display: grid;
   grid-template-columns: minmax(220px, 280px) minmax(220px, 340px) 1fr;
@@ -49,7 +42,6 @@
   }
 }
 
-/* Inputs base (coherentes con login) */
 .select,
 .input{
   width: 100%;
@@ -72,7 +64,6 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 35%, transparent);
 }
 
-/* Buscador con icono */
 .input.search{
   background-image:
     url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="%23596175" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>');
@@ -84,14 +75,12 @@
   border: 1px solid black;
 }
 
-/* ===== Grilla ===== */
 .product-grid{
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 14px;
 }
 
-/* ===== Tarjeta ===== */
 .product-card{
   background: white ;
   border: 1px solid var(--border);
@@ -108,7 +97,6 @@
   border-color: color-mix(in srgb, var(--border) 60%, var(--focus) 40%);
 }
 
-/* Título / código / precio */
 .product-title{
   color: #0b1220;
   font-weight: 600;
@@ -126,14 +114,12 @@
   letter-spacing: .2px;
 }
 
-/* Acciones */
 .product-card .actions{
   display: flex;
   gap: 10px;
   align-items: center;
 }
 
-/* Cantidad */
 .qty-input{
   width: 84px;
   min-height: var(--control-h);
@@ -151,7 +137,6 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 35%, transparent);
 }
 
-/* Botón “Agregar” (respeta estética del login) */
 .btn{
   display: inline-flex;
   justify-content: center;
@@ -178,7 +163,6 @@
   cursor: not-allowed;
 }
 
-/* Icono carrito */
 .btn-add::before{
   content: "";
   inline-size: 16px;
@@ -188,7 +172,6 @@
           mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 3h2l2.2 10a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.6L21 8H7"/><circle cx="9" cy="20" r="1.5"/><circle cx="17" cy="20" r="1.5"/></svg>') no-repeat center / contain;
 }
 
-/* Estados */
 .catalog .state{
   padding: 10px 12px;
   border-radius: var(--radius-sm);
@@ -201,7 +184,6 @@
   background: #ffe9ec;
 }
 
-/* Paginación */
 .pager{
   margin: 16px 0 8px;
   display: flex;
@@ -230,16 +212,11 @@
   outline-offset: 2px;
 }
 
-/* Prefiere menos movimiento */
 @media (prefers-reduced-motion: reduce){
   *{ transition: none !important; animation: none !important; }
 }
-/* =========================================================
-   Carrito responsive (tabla -> tarjetas) SIN tocar JSX
-   Se aplica solo en móviles; desktop queda igual.
-   ========================================================= */
+
 @media (max-width: 520px){
-  /* La tabla se apila como tarjetas */
   .sup-table,
   .sup-table thead,
   .sup-table tbody,
@@ -269,13 +246,11 @@
     font-weight: 500;
   }
 
-  /* Cada celda muestra una "etiqueta" a la izquierda
-     (como si fuera el TH) usando nth-child */
   .sup-table td{
     border: 0;
     padding: 6px 0;
     display: grid;
-    grid-template-columns: auto 1fr; /* etiqueta + valor */
+    grid-template-columns: auto 1fr; 
     align-items: center;
     gap: 8px;
   }
@@ -292,15 +267,12 @@
     margin-right: 8px;
   }
 
-  /* Inputs de cantidad más compactos para que entren */
   .qty-input{
     width: 72px;
     min-width: 72px;
     text-align: center;
     min-height: 40px;
   }
-
-  /* Botón Quitar a ancho completo en mobile */
   
   .sup-table td:last-child .btn{
     width: 100%;
@@ -316,7 +288,6 @@
     background: #ffffff;
   }
 
-  /* En pantallas MUY chicas, hacemos el botón más compacto */
   @media (max-width: 360px){
     .sup-table td{
       grid-template-columns: 1fr; /* etiqueta arriba, valor abajo */
@@ -331,25 +302,20 @@
     }
   }
 }
-/* ============================================
-   Carrito (SUP-TABLE) — Legibilidad en DESKTOP
-   ============================================ */
+
 @media (min-width: 521px){
-  /* Contenedor tabla */
   .catalog .sup-table{
     color: var(--cart-text, #0b1220);
     background: var(--cart-bg, #ffffff);
     border-color: var(--border, #e5e7eb);
   }
 
-  /* Celdas y encabezados */
   .catalog .sup-table th,
   .catalog .sup-table td{
-    color: inherit;                 /* hereda #0b1220 */
+    color: inherit;                 
     background: transparent;
   }
 
-  /* Encabezados con leve fondo para contraste */
   .catalog .sup-table thead th{
     font-weight: 600;
     color: var(--cart-th, #111827);
@@ -357,34 +323,29 @@
     border-bottom: 1px solid var(--border, #e5e7eb);
   }
 
-  /* Números (precio / subtotal) */
   .catalog .sup-table .mono{
     color: black;
     font-variant-numeric: tabular-nums;
   }
 
-  /* Input cantidad */
   .catalog .qty-input{
     color: var(--cart-text, #0b1220);
     background: var(--input-bg, #ffffff);
     border-color: var(--border, #e5e7eb);
   }
 
-  /* Botón Quitar en desktop (si usás el mismo .btn rojo de mobile) */
   .catalog .sup-table td:last-child .btn{
     background: #ffe8e8;
     color: #b91c1c;
     border: 1px solid #ffc6c6;
   }
 
-  /* Links dentro del resumen/tabla */
   .catalog a{
     color: var(--link, #1d4ed8);
     font-weight: 500;
   }
 }
 
-/* Dark mode: mantiene buen contraste también */
 @media (prefers-color-scheme: dark){
   .catalog .sup-table{
     --cart-text: #000000;
@@ -408,14 +369,12 @@
 }
 
 
-/* ====== Layout base (centrado, márgenes) ====== */
 .admin-container {
   max-width: 1100px;
   margin: 0 auto;
   padding: 20px;
 }
 
-/* ====== Tarjetas ====== */
 .card {
   background: #fff;
   border: 1px solid #e5e7eb;
@@ -431,7 +390,6 @@ h2 {
   font-weight: 700;
 }
 
-/* ====== Tabs ====== */
 .tabs {
   display: flex;
   gap: 8px;
@@ -456,7 +414,6 @@ h2 {
   cursor: default;
 }
 
-/* ====== Formularios y grillas ====== */
 .row {
   display: flex;
   gap: 12px;
@@ -490,7 +447,6 @@ h2 {
   box-shadow: 0 0 0 3px rgba(17,24,39,.15);
 }
 
-/* ====== Tabla genérica (para pedidos/productos) ====== */
 .table { width: 100%; }
 .thead, .tbody .tr {
   display: grid;
@@ -508,7 +464,6 @@ h2 {
   padding: 8px 0;
 }
 
-/* ====== Mensajes ====== */
 .alert {
   border-radius: 10px;
   padding: 10px 12px;
@@ -529,7 +484,6 @@ h2 {
 }
 .hint.small { font-size: 12px; color: #475569; }
 
-/* ====== Cards de resultados de servicios ====== */
 .cards-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -558,7 +512,6 @@ h2 {
   font-size: 14px;
 }
 
-/* ====== Switch ====== */
 .switch {
   position: relative; display: inline-block; width: 44px; height: 24px;
 }

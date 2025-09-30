@@ -3,7 +3,6 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App.jsx";
 
-// 👇 OJO: el archivo se llama AuthContext.jsx
 import AuthProvider from "./context/AuthProvider.jsx";
 import CartProvider from "./context/CartProvider.jsx";
 
