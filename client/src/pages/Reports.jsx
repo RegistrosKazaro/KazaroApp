@@ -1,10 +1,10 @@
 // client/src/pages/Reports.jsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import "../styles/catalog.css";
 import "../styles/reports.css";
 
-// Recharts (asegurate de tenerlo instalado: npm i recharts)
+// Recharts
 import {
   ResponsiveContainer,
   BarChart,
@@ -15,6 +15,11 @@ import {
   Tooltip,
   Legend,
 } from "recharts";
+
+// PDF + capturas
+import jsPDF from "jspdf";
+import html2canvas from "html2canvas";
+import autoTable from "jspdf-autotable";
 
 function yRange() {
   const y = new Date().getFullYear();
@@ -63,9 +68,13 @@ export default function Reports() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [data, setData] = useState(null);
-
-  // Modo demo
   const [demo, setDemo] = useState(false);
+
+  // Refs a gráficos para exportarlos como imagen al PDF
+  const refServUnits = useRef(null);
+  const refServAmount = useRef(null);
+  const refProdUnits = useRef(null);
+  const refProdAmount = useRef(null);
 
   async function load() {
     if (demo) {
@@ -73,7 +82,6 @@ export default function Reports() {
       setData(demoData);
       return;
     }
-
     setLoading(true); setErr(""); setData(null);
     try {
       const { data } = await api.get("/admin/reports/monthly", { params: { year, month } });
@@ -85,7 +93,7 @@ export default function Reports() {
     }
   }
 
-  useEffect(() => { load(); /* auto-carga del mes actual */ // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); /* auto-carga */ // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [demo]);
 
   const title = useMemo(() => `${MONTHS_ES[month-1]} ${year}`, [month, year]);
@@ -94,7 +102,6 @@ export default function Reports() {
   const fmtMoney = (v) => new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(v || 0);
   const short = (s) => (String(s ?? "")).length > 18 ? String(s).slice(0, 16)+"…" : String(s ?? "");
 
-  // Datos para gráficos
   const chartServices = useMemo(() => {
     if (!data?.top_services) return [];
     return data.top_services.map((r, i) => ({
@@ -143,7 +150,6 @@ export default function Reports() {
       ])
     ].map(arr => arr.map(esc).join(",")).join("\n");
 
-    // Descargas
     const download = (filename, content) => {
       const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
       const url = URL.createObjectURL(blob);
@@ -159,9 +165,148 @@ export default function Reports() {
     download(`reporte_articulos_${tag}.csv`, pRows);
   }
 
-  // Imprimir / Guardar en PDF
-  function printReport() {
-    window.print();
+  // Captura un nodo DOM a imagen PNG usando html2canvas
+  async function captureNode(node, { width = 760, height = 360 } = {}) {
+    if (!node) return null;
+    const canvas = await html2canvas(node, { backgroundColor: "#ffffff", scale: 2, useCORS: true });
+    const img = canvas.toDataURL("image/png");
+    // devolvemos tamaño sugerido en puntos (jsPDF usa pt)
+    return { img, width, height };
+  }
+
+  // Exportar PDF con portada + gráficos + tablas
+  async function exportPDF() {
+    if (!data?.ok) {
+      alert("No hay datos para exportar. Generá un informe primero.");
+      return;
+    }
+
+    const tag = `${String(year)}-${String(month).padStart(2,"0")}`;
+    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" }); // 842x595 pt aprox
+
+    // Portada
+    doc.setFillColor(255,255,255);
+    doc.rect(0, 0, doc.internal.pageSize.getWidth(), doc.internal.pageSize.getHeight(), "F");
+
+    doc.setTextColor("#0b1a78");
+    doc.setFontSize(26);
+    doc.setFont(undefined, "bold");
+    doc.text("Informe Mensual – Kazaro", 60, 80);
+
+    doc.setTextColor("#124f7e");
+    doc.setFontSize(16);
+    doc.setFont(undefined, "normal");
+    doc.text(`${MONTHS_ES[month-1]} ${year}`, 60, 110);
+
+    // Tarjetas simples
+    doc.setTextColor("#6b7280");
+    doc.setFontSize(11);
+    doc.text("Pedidos", 60, 160);
+    doc.text("Unidades", 260, 160);
+    doc.text("Monto", 460, 160);
+
+    doc.setTextColor("#111827");
+    doc.setFont(undefined, "bold");
+    doc.setFontSize(24);
+    doc.text(String(data.totals?.ordersCount ?? 0), 60, 190);
+    doc.text(String(data.totals?.itemsCount ?? 0), 260, 190);
+    doc.text(new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(data.totals?.amount ?? 0), 460, 190);
+
+    doc.setTextColor("#0b1a78");
+    doc.setFontSize(13);
+    doc.setFont(undefined, "bold");
+    doc.text("Detalle del período", 60, 240);
+    doc.setFontSize(11);
+    doc.setFont(undefined, "normal");
+    doc.text("• Top 10 servicios por unidades y monto", 60, 264);
+    doc.text("• Top 10 artículos por unidades y monto", 60, 284);
+
+    // Página: Unidades por servicio (gráfico)
+    const servUnitsCap = await captureNode(refServUnits.current);
+    if (servUnitsCap) {
+      doc.addPage();
+      doc.setFontSize(16);
+      doc.setTextColor("#0b1a78");
+      doc.setFont(undefined, "bold");
+      doc.text("Top 10 servicios por unidades", 60, 60);
+      doc.addImage(servUnitsCap.img, "PNG", 60, 80, 720, 320);
+    }
+
+    // Página: Monto por servicio (gráfico)
+    const servAmountCap = await captureNode(refServAmount.current);
+    if (servAmountCap) {
+      doc.addPage();
+      doc.setFontSize(16);
+      doc.setTextColor("#0b1a78");
+      doc.setFont(undefined, "bold");
+      doc.text("Top 10 servicios por monto", 60, 60);
+      doc.addImage(servAmountCap.img, "PNG", 60, 80, 720, 320);
+    }
+
+    // Página: Unidades por artículo (gráfico)
+    const prodUnitsCap = await captureNode(refProdUnits.current);
+    if (prodUnitsCap) {
+      doc.addPage();
+      doc.setFontSize(16);
+      doc.setTextColor("#0b1a78");
+      doc.setFont(undefined, "bold");
+      doc.text("Top 10 artículos por unidades", 60, 60);
+      doc.addImage(prodUnitsCap.img, "PNG", 60, 80, 720, 320);
+    }
+
+    // Página: Monto por artículo (gráfico)
+    const prodAmountCap = await captureNode(refProdAmount.current);
+    if (prodAmountCap) {
+      doc.addPage();
+      doc.setFontSize(16);
+      doc.setTextColor("#0b1a78");
+      doc.setFont(undefined, "bold");
+      doc.text("Top 10 artículos por monto", 60, 60);
+      doc.addImage(prodAmountCap.img, "PNG", 60, 80, 720, 320);
+    }
+
+    // Tablas (servicios)
+    if (data.top_services?.length) {
+      doc.addPage();
+      autoTable(doc, {
+        head: [["#", "Servicio", "Pedidos", "Unidades", "Monto"]],
+        body: data.top_services.map((r, idx) => [
+          idx + 1,
+          r.serviceName || `Servicio ${r.serviceId ?? "-"}`,
+          r.pedidos ?? 0,
+          r.qty ?? 0,
+          new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(r.amount || 0),
+        ]),
+        startY: 60,
+        styles: { fontSize: 10, cellPadding: 6 },
+        headStyles: { fillColor: [238,244,255], textColor: [11,26,120], fontStyle: "bold" },
+        theme: "grid",
+        margin: { left: 60, right: 60 },
+      });
+    }
+
+    // Tablas (artículos)
+    if (data.top_products?.length) {
+      doc.addPage();
+      autoTable(doc, {
+        head: [["#", "Artículo", "Código", "Pedidos", "Unidades", "Monto"]],
+        body: data.top_products.map((r, idx) => [
+          idx + 1,
+          r.name || `#${r.productId ?? "-"}`,
+          r.code || "",
+          r.pedidos ?? 0,
+          r.qty ?? 0,
+          new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(r.amount || 0),
+        ]),
+        startY: 60,
+        styles: { fontSize: 10, cellPadding: 6 },
+        headStyles: { fillColor: [238,244,255], textColor: [11,26,120], fontStyle: "bold" },
+        theme: "grid",
+        margin: { left: 60, right: 60 },
+      });
+    }
+
+    doc.save(`Informe_Mensual_${tag}.pdf`);
   }
 
   const onToggleDemo = () => setDemo(d => !d);
@@ -189,8 +334,8 @@ export default function Reports() {
           <button className="pill pill--primary" onClick={exportCSV} disabled={!data?.ok}>
             Exportar CSV
           </button>
-          <button className="pill pill--primary" onClick={printReport} disabled={!data?.ok}>
-            Imprimir / PDF
+          <button className="pill pill--primary" onClick={exportPDF} disabled={!data?.ok}>
+            Exportar PDF (gráficos)
           </button>
           <button
             className={`pill ${demo ? "pill--danger" : "pill--secondary"}`}
@@ -245,42 +390,39 @@ export default function Reports() {
                 </table>
               )}
 
-              {/* Gráfico */}
-              {chartServices.length > 0 && (
-                <div className="chart-card">
-                  <div className="chart-title">Unidades por servicio</div>
-                  <div className="chart-box">
-                    <ResponsiveContainer width="100%" height={280}>
-                      <BarChart data={chartServices} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="name" />
-                        <YAxis />
-                        <Tooltip formatter={(v, name) => name === "monto" ? fmtMoney(v) : v} />
-                        <Legend />
-                        <Bar dataKey="unidades" name="Unidades" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
+              {/* Gráfico Unidades */}
+              <div className="chart-card" ref={refServUnits}>
+                <div className="chart-title">Unidades por servicio</div>
+                <div className="chart-box">
+                  <ResponsiveContainer width="100%" height={280}>
+                    <BarChart data={chartServices} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="name" />
+                      <YAxis />
+                      <Tooltip formatter={(v, name) => name === "monto" ? fmtMoney(v) : v} />
+                      <Legend />
+                      <Bar dataKey="unidades" name="Unidades" fill="#1971B8" />
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
-              )}
+              </div>
 
-              {chartServices.length > 0 && (
-                <div className="chart-card">
-                  <div className="chart-title">Monto por servicio</div>
-                  <div className="chart-box">
-                    <ResponsiveContainer width="100%" height={280}>
-                      <BarChart data={chartServices} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="name" />
-                        <YAxis />
-                        <Tooltip formatter={(v) => fmtMoney(v)} />
-                        <Legend />
-                        <Bar dataKey="monto" name="Monto" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
+              {/* Gráfico Monto */}
+              <div className="chart-card" ref={refServAmount}>
+                <div className="chart-title">Monto por servicio</div>
+                <div className="chart-box">
+                  <ResponsiveContainer width="100%" height={280}>
+                    <BarChart data={chartServices} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="name" />
+                      <YAxis />
+                      <Tooltip formatter={(v) => fmtMoney(v)} />
+                      <Legend />
+                      <Bar dataKey="monto" name="Monto" fill="#69AEE3" />
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
-              )}
+              </div>
             </div>
 
             {/* Top Productos */}
@@ -318,42 +460,39 @@ export default function Reports() {
                 </table>
               )}
 
-              {/* Gráficos */}
-              {chartProducts.length > 0 && (
-                <div className="chart-card">
-                  <div className="chart-title">Unidades por artículo</div>
-                  <div className="chart-box">
-                    <ResponsiveContainer width="100%" height={280}>
-                      <BarChart data={chartProducts} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="name" />
-                        <YAxis />
-                        <Tooltip formatter={(v, name) => name === "monto" ? fmtMoney(v) : v} />
-                        <Legend />
-                        <Bar dataKey="unidades" name="Unidades" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
+              {/* Gráfico Unidades */}
+              <div className="chart-card" ref={refProdUnits}>
+                <div className="chart-title">Unidades por artículo</div>
+                <div className="chart-box">
+                  <ResponsiveContainer width="100%" height={280}>
+                    <BarChart data={chartProducts} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="name" />
+                      <YAxis />
+                      <Tooltip formatter={(v, name) => name === "monto" ? fmtMoney(v) : v} />
+                      <Legend />
+                      <Bar dataKey="unidades" name="Unidades" fill="#1971B8" />
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
-              )}
+              </div>
 
-              {chartProducts.length > 0 && (
-                <div className="chart-card">
-                  <div className="chart-title">Monto por artículo</div>
-                  <div className="chart-box">
-                    <ResponsiveContainer width="100%" height={280}>
-                      <BarChart data={chartProducts} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="name" />
-                        <YAxis />
-                        <Tooltip formatter={(v) => fmtMoney(v)} />
-                        <Legend />
-                        <Bar dataKey="monto" name="Monto" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
+              {/* Gráfico Monto */}
+              <div className="chart-card" ref={refProdAmount}>
+                <div className="chart-title">Monto por artículo</div>
+                <div className="chart-box">
+                  <ResponsiveContainer width="100%" height={280}>
+                    <BarChart data={chartProducts} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="name" />
+                      <YAxis />
+                      <Tooltip formatter={(v) => fmtMoney(v)} />
+                      <Legend />
+                      <Bar dataKey="monto" name="Monto" fill="#69AEE3" />
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
-              )}
+              </div>
             </div>
           </div>
         </>
