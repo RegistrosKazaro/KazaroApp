@@ -19,6 +19,7 @@ import devRoutes from "./routes/dev.js";
 import { DB_RESOLVED_PATH, db, ensureStockColumn } from "./db.js"; // <— incluye ensureStockColumn
 import { verifyMailTransport } from "./utils/mailer.js";
 import adminRoutes from "./routes/admin.js";
+import serviceProductsRoutes from "./routes/serviceProducts.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -49,6 +50,8 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(morgan("dev"));
+app.use("/admin/sp", serviceProductsRoutes);
+
 
 // CORS con credenciales
 const allowed = new Set(
