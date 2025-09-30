@@ -9,8 +9,10 @@ export default function Products() {
   const isSupervisor = String(role).toLowerCase().includes("super");
   const [sp, setSp] = useSearchParams();
 
-  // ⬇️ además de add y service, ahora leemos items del carrito
+  // carrito + servicio seleccionado por el supervisor
   const { add, service, items: cartItems } = useCart();
+  // ⬇️ variable simple para deps del effect (evita expresión compleja y “missing dep”)
+  const serviceId = service?.id ?? null;
 
   const cat = sp.get("cat");
   const q = sp.get("q") || "";
@@ -37,13 +39,28 @@ export default function Products() {
 
   useEffect(() => {
     if (!cat) return;
-    setLoading(true);
+
     setError("");
-    api.get("/catalog/products", { params: { catId: cat, q } })
+
+    // ⬇️ si es supervisor y aún no eligió servicio, no cargamos productos
+    if (isSupervisor && !serviceId) {
+      setItems([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    const params = {
+      catId: cat,
+      q,
+      ...(isSupervisor && serviceId ? { serviceId } : {}),
+    };
+
+    api.get("/catalog/products", { params })
       .then(({ data }) => setItems(data || []))
       .catch(() => setError("No se pudieron cargar los productos"))
       .finally(() => setLoading(false));
-  }, [cat, q]);
+  }, [cat, q, isSupervisor, serviceId]); // ✅ deps simples y completas
 
   const paginated = useMemo(() => {
     const start = (page - 1) * pageSize;
@@ -52,7 +69,7 @@ export default function Products() {
 
   const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
 
-  // ⬇️ mapa de cantidades reservadas en el carrito por productId
+  // cantidades reservadas en el carrito por productId
   const reservedById = useMemo(() => {
     const map = new Map();
     for (const it of cartItems) {
@@ -94,7 +111,7 @@ export default function Products() {
         />
       </div>
 
-      {isSupervisor && !service && (
+      {isSupervisor && !serviceId && (
         <div className="state" style={{ marginBottom: 12 }}>
           Elegí un servicio antes de agregar productos (Menú → Supervisor → Servicios).
         </div>
@@ -102,7 +119,9 @@ export default function Products() {
 
       {loading && <div className="state">Cargando…</div>}
       {!loading && error && <div className="state error" role="alert">{error}</div>}
-      {!loading && !error && !items.length && <div className="state">No hay productos.</div>}
+      {!loading && !error && !items.length && !(isSupervisor && !serviceId) && (
+        <div className="state">No hay productos.</div>
+      )}
 
       {!loading && !error && items.length > 0 && (
         <>
@@ -119,12 +138,11 @@ export default function Products() {
                   remainingStock={remaining}
                   onAdd={(qty) => {
                     const limit = remaining ?? Infinity;
-                    if (limit <= 0) return; // sin restante, no agrega
+                    if (limit <= 0) return;
                     const safeQty = Math.min(Math.max(1, Number(qty) || 1), limit);
-                    // guardamos también el stock total para el carrito (referencia)
                     add({ productId: p.id, name: p.name, price: p.price ?? 0, qty: safeQty, stock: totalStock });
                   }}
-                  addDisabled={(isSupervisor && !service) || ((remaining !== undefined) && remaining <= 0)}
+                  addDisabled={(isSupervisor && !serviceId) || ((remaining !== undefined) && remaining <= 0)}
                 />
               );
             })}
@@ -153,7 +171,6 @@ function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
 
   const sinRestante = (remainingStock !== undefined) && (remainingStock <= 0);
 
-  // Si cambia el restante (por agregar al carrito), ajustamos la cantidad visible
   useEffect(() => {
     if (remainingStock !== undefined) {
       setQty(q => Math.min(Math.max(1, q), Math.max(1, remainingStock)));

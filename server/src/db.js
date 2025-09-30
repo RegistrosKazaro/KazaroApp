@@ -307,7 +307,8 @@ export function listCategories() {
   return [{ id: "__all__", name: "Todos", count: total }];
 }
 
-export function listProductsByCategory(categoryId, { q = "" } = {}) {
+/** ⬇️⬇️  ACTUALIZADA: ahora acepta { q, serviceId } y filtra por la pivote service_products  */
+export function listProductsByCategory(categoryId, { q = "", serviceId = null } = {}) {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
   const { products } = sch.tables;
@@ -317,30 +318,63 @@ export function listProductsByCategory(categoryId, { q = "" } = {}) {
   const hasPrice = !!prodPrice;
   const hasStock = !!prodStock;
 
+  // Detectar pivote service_products y sus columnas
+  let pivot = null;
+  try {
+    const spTbl = db.prepare(`
+      SELECT name FROM sqlite_master WHERE type='table' AND name='service_products' LIMIT 1
+    `).get();
+    if (spTbl) {
+      const pcols = db.prepare(`PRAGMA table_info('service_products')`).all();
+      const names = new Set(pcols.map(c => String(c.name).toLowerCase()));
+      if (names.has("servicioid") && names.has("productoid")) pivot = { srv: "ServicioID", prod: "ProductoID" };
+      else if (names.has("servicio_id") && names.has("producto_id")) pivot = { srv: "servicio_id", prod: "producto_id" };
+      else if (names.has("service_id") && names.has("product_id")) pivot = { srv: "service_id", prod: "product_id" };
+    }
+  } catch { /* noop */ }
+
   const cols = [
-    `${prodId}   AS id`,
-    `${prodName} AS name`,
-    prodCat ? `${prodCat}  AS categoryId` : (prodCatName ? `${prodCatName} AS categoryId` : `'__all__' AS categoryId`),
-    hasCode  ? `${prodCode}  AS code`  : `' ' AS code`,
-    hasPrice ? `${prodPrice} AS price` : `NULL AS price`,
-    hasStock ? `${prodStock} AS stock` : `NULL AS stock`,
+    `p.${prodId}   AS id`,
+    `p.${prodName} AS name`,
+    prodCat ? `p.${prodCat}  AS categoryId` : (prodCatName ? `p.${prodCatName} AS categoryId` : `'__all__' AS categoryId`),
+    hasCode  ? `p.${prodCode}  AS code`  : `' ' AS code`,
+    hasPrice ? `p.${prodPrice} AS price` : `NULL AS price`,
+    hasStock ? `p.${prodStock} AS stock` : `NULL AS stock`,
   ].join(", ");
 
   const like = `%${q.trim()}%`;
-  let whereCat = "1=1";
+  const where = [];
   const params = [];
-  if (prodCat && categoryId !== "__all__") { whereCat = `${prodCat} = ?`; params.push(categoryId); }
-  else if (!prodCat && prodCatName && categoryId !== "__all__") { whereCat = `${prodCatName} = ?`; params.push(categoryId); }
 
-  let whereSearch = `${prodName} LIKE ?`;
-  params.push(like);
-  if (hasCode) { whereSearch = `(${prodName} LIKE ? OR ${prodCode} LIKE ?)`; params.push(like); }
+  // Filtro por categoría
+  if (prodCat && categoryId !== "__all__") { where.push(`p.${prodCat} = ?`); params.push(categoryId); }
+  else if (!prodCat && prodCatName && categoryId !== "__all__") { where.push(`p.${prodCatName} = ?`); params.push(categoryId); }
+
+  // Búsqueda por nombre/código
+  if (q && q.trim()) {
+    if (hasCode) { where.push(`(p.${prodName} LIKE ? OR p.${prodCode} LIKE ?)`); params.push(like, like); }
+    else { where.push(`p.${prodName} LIKE ?`); params.push(like); }
+  }
+
+  // Filtro por servicio asignado
+  if (serviceId && pivot) {
+    where.push(`
+      EXISTS (
+        SELECT 1 FROM service_products sp
+        WHERE CAST(sp.${pivot.srv}  AS TEXT) = CAST(? AS TEXT)
+          AND CAST(sp.${pivot.prod} AS TEXT) = CAST(p.${prodId} AS TEXT)
+      )
+    `);
+    params.push(String(serviceId));
+  }
+
+  const whereSQL = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
   const sql = `
     SELECT ${cols}
-    FROM ${products}
-    WHERE ${whereCat} AND ${whereSearch}
-    ORDER BY ${prodName} COLLATE NOCASE
+    FROM ${products} p
+    ${whereSQL}
+    ORDER BY p.${prodName} COLLATE NOCASE
   `;
   return db.prepare(sql).all(...params);
 }
@@ -614,10 +648,6 @@ export function getEmployeeDisplayName(userId) {
 }
 
 /* ======================== ADMIN: Categorías & Productos ======================== */
-/** Lista para <select> de categorías:
- *  - Si hay tabla de categorías (FK): { id, name }
- *  - Si no hay tabla (texto en productos): { id: nombre, name: nombre } desde valores distintos en productos
- */
 export function adminListCategoriesForSelect() {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
@@ -646,7 +676,6 @@ export function adminListCategoriesForSelect() {
   return [];
 }
 
-/** Obtener un producto por ID (incluye categoría como id o como nombre, según esquema) */
 export function adminGetProductById(id) {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
@@ -666,7 +695,6 @@ export function adminGetProductById(id) {
   return db.prepare(`SELECT ${cols} FROM ${products} WHERE ${prodId} = ? OR rowid = ? LIMIT 1`).get(id, id);
 }
 
-/** Crear producto con categoría por ID (FK) o por nombre (texto) */
 export function adminCreateProduct(fields = {}) {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
@@ -706,7 +734,6 @@ export function adminCreateProduct(fields = {}) {
   return db.prepare(`SELECT ${selCols} FROM ${products} WHERE ${prodId} = ?`).get(info.lastInsertRowid);
 }
 
-/** Actualizar producto con categoría por ID (FK) o por nombre (texto) */
 export function adminUpdateProduct(id, fields = {}) {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);

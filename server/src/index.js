@@ -16,10 +16,11 @@ import supervisorRoutes from "./routes/supervisor.js";
 import servicesRoutes from "./routes/services.js";
 import meRoutes from "./routes/me.js";
 import devRoutes from "./routes/dev.js";
-import { DB_RESOLVED_PATH, db, ensureStockColumn } from "./db.js"; // <— incluye ensureStockColumn
-import { verifyMailTransport } from "./utils/mailer.js";
 import adminRoutes from "./routes/admin.js";
 import serviceProductsRoutes from "./routes/serviceProducts.js";
+
+import { DB_RESOLVED_PATH, db, ensureStockColumn } from "./db.js";
+import { verifyMailTransport } from "./utils/mailer.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,7 +29,7 @@ const PUBLIC_DIR = process.env.PUBLIC_DIR
   ? path.resolve(process.cwd(), process.env.PUBLIC_DIR)
   : path.join(__dirname, "..", "public");
 
-// Diagnóstico DB al iniciar
+// ===== Diagnóstico DB al iniciar =====
 const dbFile = process.env.DB_PATH || "./Kazaro.db";
 try {
   const st = fs.statSync(dbFile);
@@ -45,15 +46,13 @@ try {
 
 const app = express();
 
-// ---- Middlewares base (orden importa) ----
+/* ===== Middlewares base (orden IMPORTA) ===== */
+app.use(morgan("dev"));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
-app.use(morgan("dev"));
-app.use("/admin/sp", serviceProductsRoutes);
 
-
-// CORS con credenciales
+/* ===== CORS con credenciales ===== */
 const allowed = new Set(
   [
     env.APP_URL,
@@ -64,27 +63,27 @@ const allowed = new Set(
     "http://127.0.0.1:5173",
   ].filter(Boolean)
 );
-app.use(
-  cors({
-    origin(origin, cb) {
-      if (!origin) return cb(null, true);         // permitir herramientas locales
-      return cb(null, allowed.has(origin));       // orígenes permitidos
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type","Authorization","Cache-Control","Pragma","Expires"],
-  })
-);
-app.use((req, res, next) => { if (req.method === "OPTIONS") return res.sendStatus(204); next(); });
 
-// Cookie -> req.user
+const corsOptions = {
+  origin(origin, cb) {
+    if (!origin) return cb(null, true);           // Postman/curl sin Origin
+    if (allowed.has(origin)) return cb(null, true);
+    return cb(new Error(`Origen no permitido por CORS: ${origin}`));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "Cache-Control", "Pragma", "Expires", "X-Requested-With"],
+};
+app.use(cors(corsOptions)); // <-- esto ya maneja el preflight; NO usar app.options("*", ...)
+
+/* ===== Cookie -> req.user ===== */
 app.use(cookies);
 
-// estáticos
+/* ===== Archivos estáticos ===== */
 app.use(express.static(PUBLIC_DIR));
 app.use("/remitos", express.static(path.join(PUBLIC_DIR, "remitos")));
 
-// ---- API ----
+/* ===== API ===== */
 app.use("/auth", authRoutes);
 app.use("/me", meRoutes);
 app.use("/catalog", catalogRoutes);
@@ -93,11 +92,12 @@ app.use("/supervisor", supervisorRoutes);
 app.use("/services", servicesRoutes);
 app.use("/admin", adminRoutes);
 
-// app.get("/auth/my-services", (req, res, next) => { req.url = "/my"; return servicesRoutes(req, res, next); });
+// MUY IMPORTANTE: /admin/sp DESPUÉS de cors() y cookies
+app.use("/admin/sp", serviceProductsRoutes);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-// SPA fallback
+/* ===== SPA fallback ===== */
 app.get(
   /^\/(?!auth|me|catalog|orders|supervisor|services|dev|health|remitos|assets|favicon\.ico|robots\.txt|manifest\.json).*/i,
   (req, res) => {
@@ -117,8 +117,8 @@ app.listen(PORT, async () => {
   console.log(`[server] http://localhost:${PORT} (${env.NODE_ENV || "development"})`);
   console.log("[static] PUBLIC_DIR:", PUBLIC_DIR);
   console.log("[db] usando:", DB_RESOLVED_PATH);
+  console.log("[cors] allowed origins:", Array.from(allowed));
 
-  // ===== NUEVO: asegura columna 'Stock' si no existe =====
   try { ensureStockColumn(); } catch (e) { console.error("[db] ensureStockColumn:", e); }
 
   try {

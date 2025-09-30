@@ -1,5 +1,5 @@
 // client/src/pages/AdminPanel.jsx
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
@@ -14,21 +14,23 @@ function ProductsSection() {
   const [editing, setEditing] = useState(null);
   const [err, setErr] = useState("");
 
-  // Edición inline de stock (sin stepper)
+  // Edición inline de stock
   const [stockEdit, setStockEdit] = useState({ id: null, value: "" });
 
   const can = (k) => !!(schema?.cols?.[k]);
 
-  const loadSchema = async () => {
+  const loadSchema = useCallback(async () => {
     try { setSchema((await api.get("/admin/products/_schema")).data); }
     catch (e) { setErr(e?.response?.data?.error || e.message); }
-  };
-  const loadRows = async () => {
+  }, []);
+
+  const loadRows = useCallback(async () => {
     try { setRows((await api.get("/admin/products", { params: { q } })).data || []); }
     catch (e) { setErr(e?.response?.data?.error || e.message); }
-  };
-  useEffect(() => { loadSchema(); }, []);
-  useEffect(() => { loadRows(); }, [q]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [q]);
+
+  useEffect(() => { loadSchema(); }, [loadSchema]);
+  useEffect(() => { loadRows(); }, [loadRows]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -197,27 +199,20 @@ function AssignServicesSection() {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
-  const loadSupervisors = async () => {
-    try {
-      const sups = await api.get("/admin/supervisors");
-      setSupervisors(sups.data || []);
-    } catch (e) {
-      setMsg(e?.response?.data?.error || "Error al listar supervisores");
-    }
-  };
-  const loadAssignments = async (EmpleadoID) => {
+  const loadSupervisors = useCallback(async () => {
+    try { setSupervisors((await api.get("/admin/supervisors")).data || []); }
+    catch (e) { setMsg(e?.response?.data?.error || "Error al listar supervisores"); }
+  }, []);
+
+  const loadAssignments = useCallback(async (EmpleadoID) => {
     setMsg("");
     if (!EmpleadoID) { setAssignments([]); return; }
-    try {
-      const a = await api.get("/admin/assignments", { params: { EmpleadoID } });
-      setAssignments(a.data || []);
-    } catch (e) {
-      setMsg(e?.response?.data?.error || "Error al listar asignaciones");
-    }
-  };
+    try { setAssignments((await api.get("/admin/assignments", { params: { EmpleadoID } })).data || []); }
+    catch (e) { setMsg(e?.response?.data?.error || "Error al listar asignaciones"); }
+  }, []);
 
-  useEffect(() => { loadSupervisors(); }, []);
-  useEffect(() => { loadAssignments(selectedSupervisor); }, [selectedSupervisor]);
+  useEffect(() => { loadSupervisors(); }, [loadSupervisors]);
+  useEffect(() => { loadAssignments(selectedSupervisor); }, [selectedSupervisor, loadAssignments]);
 
   const isAssigned = (srvId) => assignments.some(a => String(a.ServicioID) === String(srvId));
   const pivotIdOf  = (srvId) => (assignments.find(a => String(a.ServicioID) === String(srvId))?.id) ?? null;
@@ -248,18 +243,10 @@ function AssignServicesSection() {
     try {
       if (isAssigned(srvId)) {
         const pid = pivotIdOf(srvId);
-        if (pid) {
-          await api.delete(`/admin/assignments/${pid}`);
-        } else {
-          await api.delete(`/admin/assignments/by-key`, {
-            params: { EmpleadoID: selectedSupervisor, ServicioID: srvId }
-          });
-        }
+        if (pid) await api.delete(`/admin/assignments/${pid}`);
+        else await api.delete(`/admin/assignments/by-key`, { params: { EmpleadoID: selectedSupervisor, ServicioID: srvId } });
       } else {
-        await api.post("/admin/assignments", {
-          EmpleadoID: String(selectedSupervisor),
-          ServicioID: String(srvId),
-        });
+        await api.post("/admin/assignments", { EmpleadoID: String(selectedSupervisor), ServicioID: String(srvId) });
       }
       await loadAssignments(selectedSupervisor);
     } catch (e) {
@@ -328,15 +315,253 @@ function AssignServicesSection() {
   );
 }
 
+/* =======================  SERVICE ↔ PRODUCTS (confirmación al guardar)  ======================= */
+function ServiceProductsSection() {
+  const PAGE_SIZE = 12;
+
+  const [step, setStep] = useState("pick"); // pick | assign
+  const [service, setService] = useState(null);
+
+  // búsqueda incremental de servicios
+  const [qSrv, setQSrv] = useState("");
+  const [srvResults, setSrvResults] = useState([]);
+  const [srvMsg, setSrvMsg] = useState("");
+  const [srvLoading, setSrvLoading] = useState(false);
+  const debounceRef = useRef(null);
+  const lastQueryRef = useRef("");
+
+  // cat / productos (desde /catalog)
+  const [cats, setCats] = useState([]);
+  const [catId, setCatId] = useState("__all__");
+  const [q, setQ] = useState("");
+  const [allRows, setAllRows] = useState([]);
+  const [rows, setRows] = useState([]);
+  const [page, setPage] = useState(1);
+
+  // asignaciones
+  const [selected, setSelected] = useState(new Set());
+
+  // estados
+  const [loading, setLoading] = useState(false);
+  const [loadErr, setLoadErr] = useState("");
+  const [saveErr, setSaveErr] = useState("");
+  const [saveOk, setSaveOk] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  /* ==== búsqueda incremental de servicios ==== */
+  useEffect(() => {
+    if (step !== "pick") return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    debounceRef.current = setTimeout(async () => {
+      const term = qSrv.trim();
+      if (term === lastQueryRef.current) return;
+      lastQueryRef.current = term;
+
+      if (!term) { setSrvResults([]); setSrvMsg(""); return; }
+      try {
+        setSrvLoading(true);
+        const { data } = await api.get("/admin/services", { params: { q: term, limit: 25 } });
+        setSrvResults(data || []);
+        setSrvMsg((data || []).length ? "" : "No se encontraron servicios.");
+      } catch (e) {
+        setSrvMsg(e?.response?.data?.error || "Error buscando servicios");
+      } finally {
+        setSrvLoading(false);
+      }
+    }, 250);
+
+    return () => clearTimeout(debounceRef.current);
+  }, [qSrv, step]);
+
+  /* ==== al pasar a 'assign': traer categorías y asignaciones ==== */
+  useEffect(() => {
+    if (step !== "assign" || !service) return;
+    setPage(1);
+    setSaveOk(""); setSaveErr(""); setLoadErr("");
+
+    api.get("/catalog/categories")
+      .then(({ data }) => setCats(Array.isArray(data) ? data : []))
+      .catch(() => setCats([]));
+
+    api.get(`/admin/sp/assignments/${service.id}`)
+      .then(({ data }) => setSelected(new Set((data?.productIds || []).map(String))))
+      .catch(() => setSelected(new Set()));
+  }, [step, service]);
+
+  /* ==== cargar artículos desde /catalog/products ==== */
+  const loadProducts = useCallback(async () => {
+    if (step !== "assign" || !service) return;
+    setLoadErr("");
+    setLoading(true);
+    try {
+      const { data } = await api.get("/catalog/products", {
+        params: { catId: catId || "__all__", q: q || "" }
+      });
+      setAllRows(Array.isArray(data) ? data : []);
+      setPage(1);
+    } catch (e) {
+      setAllRows([]);
+      setLoadErr(e?.response?.data?.error || "No se pudieron cargar los productos");
+    } finally {
+      setLoading(false);
+    }
+  }, [step, service, catId, q]);
+
+  useEffect(() => { loadProducts(); }, [loadProducts]);
+
+  /* ==== paginación (cliente) ==== */
+  useEffect(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    setRows(allRows.slice(start, start + PAGE_SIZE));
+  }, [allRows, page]);
+  useEffect(() => { setPage(1); }, [catId]);
+  useEffect(() => { setPage(1); }, [q]);
+
+  /* ==== toggle asignado ==== */
+  const toggle = (id, checked) => {
+    const next = new Set(selected);
+    if (checked) next.add(String(id)); else next.delete(String(id));
+    setSelected(next);
+    setSaveOk(""); setSaveErr("");
+  };
+
+  /* ==== guardar (con verificación y confirmación) ==== */
+  const saveAll = async () => {
+    if (!service) return;
+    setSaving(true);
+    setSaveErr("");
+    setSaveOk("");
+
+    const before = new Set(selected);
+
+    try {
+      const res = await api.put(`/admin/sp/assignments/${service.id}`, {
+        productIds: Array.from(selected)
+      });
+
+      // Releer para confirmar
+      const { data } = await api.get(`/admin/sp/assignments/${service.id}`);
+      const afterIds = (data?.productIds || []).map(String);
+      const afterSet = new Set(afterIds);
+
+      let added = 0, removed = 0;
+      for (const id of afterSet) if (!before.has(id)) added++;
+      for (const id of before) if (!afterSet.has(id)) removed++;
+
+      setSelected(new Set(afterSet));
+
+      const stamp = new Date().toLocaleTimeString();
+      const baseMsg = res?.data?.message || "Asignaciones guardadas";
+      setSaveOk(`${baseMsg} ✓ — asignados: ${afterIds.length} ( +${added} / -${removed} ) — ${stamp}`);
+    } catch (e) {
+      setSaveErr(e?.response?.data?.error || e.message || "No se pudieron guardar");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const totalPages = Math.max(1, Math.ceil(allRows.length / PAGE_SIZE));
+  const canNext = page < totalPages;
+  const prevPage = () => setPage(p => Math.max(1, p - 1));
+  const nextPage = () => { if (canNext) setPage(p => p + 1); };
+
+  return (
+    <section className="card">
+      <h2>Servicio ↔ Productos</h2>
+
+      {step === "pick" && (
+        <>
+          <div className="toolbar">
+            <input className="input" placeholder="Buscar servicio…" value={qSrv} onChange={(e)=>setQSrv(e.target.value)} />
+            <button className="btn primary" onClick={()=>setQSrv(qSrv)} disabled={srvLoading}>
+              {srvLoading ? "Buscando…" : "Buscar"}
+            </button>
+          </div>
+          {srvMsg && <div className="alert error">{srvMsg}</div>}
+          <div className="assign-list">
+            {srvResults.map(s => (
+              <label key={s.id} className="assign-item">
+                <input type="radio" name="srv-pick" onChange={()=>{ setService(s); setStep("assign"); }} />
+                <div className="assign-content"><div className="assign-title">{s.name}</div></div>
+              </label>
+            ))}
+            {!srvResults.length && !srvMsg && <div className="hint">Empezá a escribir para ver resultados.</div>}
+          </div>
+        </>
+      )}
+
+      {step === "assign" && (
+        <>
+          <div className="toolbar">
+            <button className="btn" onClick={()=>{ setStep("pick"); setService(null); setAllRows([]); setRows([]); setSelected(new Set()); }}>
+              ← Cambiar servicio
+            </button>
+            <div className="sp-service-pill">Servicio: <strong>{service?.name}</strong></div>
+            <div style={{ flex: 1 }} />
+            <button className="btn primary" onClick={saveAll} disabled={saving}>
+              {saving ? "Guardando…" : (saveOk ? "Guardado ✓" : "Guardar cambios")}
+            </button>
+          </div>
+
+          <div className="toolbar">
+            <select className="input" value={catId} onChange={(e)=>setCatId(e.target.value)}>
+              <option value="__all__">Todas las categorías</option>
+              {cats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <input className="input" placeholder="Buscar producto…" value={q} onChange={(e)=>setQ(e.target.value)} />
+          </div>
+
+          {loadErr && (
+            <div className="alert error">
+              {loadErr} <button className="btn xs" type="button" onClick={loadProducts}>Reintentar</button>
+            </div>
+          )}
+          {saveErr && <div className="alert error">{saveErr}</div>}
+          {saveOk && <div className="alert">{saveOk}</div>}
+
+          <div className="assign-list">
+            {rows.map(r => {
+              const on = selected.has(String(r.id));
+              return (
+                <label key={r.id} className={`assign-item ${on ? "assigned" : ""}`}>
+                  <input type="checkbox" checked={on} onChange={(e)=>toggle(r.id, e.target.checked)} />
+                  <div className="assign-content">
+                    <div className="assign-title">{r.name}</div>
+                    <div className="assign-badges">
+                      <span className="badge">{r.code || "s/código"}</span>
+                      {typeof r.price === "number" && <span className="badge">${r.price}</span>}
+                      {typeof r.stock === "number" && <span className="badge">stock {r.stock}</span>}
+                    </div>
+                  </div>
+                </label>
+              );
+            })}
+            {!rows.length && !loadErr && <div className="hint">{loading ? "Cargando…" : "No hay productos para mostrar."}</div>}
+          </div>
+
+          <div className="toolbar" style={{ justifyContent: "space-between" }}>
+            <div className="hint">Página {page} / {totalPages}</div>
+            <div>
+              <button className="btn" onClick={prevPage} disabled={page <= 1}>Anterior</button>
+              <button className="btn" onClick={nextPage} disabled={!canNext} style={{ marginLeft: 8 }}>Siguiente</button>
+            </div>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 /* =======================  ORDERS  ======================= */
 function OrdersSection() {
   const [orders, setOrders] = useState([]);
   const [err, setErr] = useState("");
-  const load = async () => {
+  const load = useCallback(async () => {
     try { setOrders((await api.get("/admin/orders")).data || []); }
     catch (e) { setErr(e?.response?.data?.error || e.message); }
-  };
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
   const onDeleteOrder = async (id) => {
     if (!confirm(`¿Eliminar pedido #${id}?`)) return;
     try { await api.delete(`/admin/orders/${id}`); await load(); }
@@ -410,6 +635,14 @@ export default function AdminPanel() {
           Asignar servicios
         </button>
         <button
+          className={`tab-btn ${tab==="serviceProducts" ? "is-active" : ""}`}
+          onClick={()=>setTab("serviceProducts")}
+          role="tab"
+          aria-selected={tab==="serviceProducts"}
+        >
+          Servicio ↔ Productos
+        </button>
+        <button
           className={`tab-btn ${tab==="orders" ? "is-active" : ""}`}
           onClick={()=>setTab("orders")}
           role="tab"
@@ -421,6 +654,7 @@ export default function AdminPanel() {
 
       {tab==="products" && <ProductsSection />}
       {tab==="services" && <AssignServicesSection />}
+      {tab==="serviceProducts" && <ServiceProductsSection />}
       {tab==="orders" && <OrdersSection />}
     </div>
   );
