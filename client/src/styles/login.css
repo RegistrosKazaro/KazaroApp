@@ -166,9 +166,9 @@ body{
   margin-top:4px;
   padding:12px 14px;
   border-radius:12px;
-  border:2px solid var(--danger);
-  background:#ffe9ed;
-  color:var(--text);
+  border:1px solid red;
+  background:#ff0000;
+  color:rgb(0, 0, 0);
   font-size:15px;
 }
 
@@ -232,10 +232,10 @@ body{
       radial-gradient(700px 500px at -20% -20%, var(--accent-3) 0, transparent 55%),
       linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 40%, var(--bg-2) 100%);
   }
-  .srv-card.login-card{ background:#fff; border-color:#e5e7eb; }
+  .srv-card.login-card{ background:#fff; border-color:#09225528; }
   .input{ background:#fff; color:black; }
   .link-btn{ background:#ffffff; color:#2563eb; }
-  .state.error{ background:#ffe9ed; color:var(--text); }
+  .state.error{ background:#ff0000; color:rgb(255, 0, 0); }
 }
 
 @media (prefers-reduced-motion:reduce){
