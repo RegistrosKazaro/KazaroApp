@@ -37,7 +37,7 @@
 }
 .admin-container .btn:hover{filter:brightness(1.03)}
 .admin-container .btn:active{transform:translateY(1px)}
-.admin-container .btn.primary{background:var(--ap-primary);border-color:var(--ap-primary);color:#fff}
+.admin-container .btn.primary{background:var(--ap-primary);border-color:var(--ap-primary);color:#fff; margin-bottom: 12px;}
 .admin-container .btn.danger{background:#FFE8E8;color:var(--ap-danger);border-color:#FFC6C6}
 
 .admin-container .table{
@@ -45,6 +45,7 @@
   border-radius:10px;
   overflow:hidden;
   background:#fff;
+  
 }
 
 .admin-container .table-products .thead{
@@ -118,7 +119,7 @@
 .admin-container .sheet-body{display:grid;gap:8px;padding:12px 14px;overflow:auto}
 .admin-container .sheet-body .label{display:block;font-size:12px;color:var(--ap-muted);margin-bottom:4px}
 .admin-container .sheet-body .input{
-  width:100%;min-height:var(--ap-h);padding:10px;border-radius:8px;border:1px solid var(--ap-border);background:#fff;color:var(--ap-text);outline:none
+  width:100%;min-height:var(--ap-h);padding:10px;border-radius:8px;border:1px solid var(--ap-border);background:#fff;color:var(--ap-text);outline:none;
 }
 .admin-container .sheet-body .input:focus{border-color:var(--ap-primary-600);box-shadow:0 0 0 3px rgba(37,99,235,.28)}
 .admin-container .sheet-actions{display:flex;gap:6px;margin-top:6px;padding-top:6px;border-top:1px solid var(--ap-border)}
