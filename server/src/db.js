@@ -271,6 +271,39 @@ export function discoverCatalogSchema() {
   };
 }
 
+/* =====================  Visibilidad por Rol (NUEVO)  ===================== */
+// Relación muchos-a-muchos: Producto × Rol ('administrativo' | 'supervisor')
+export function ensureVisibilitySchema() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ProductRoleVisibility (
+      product_id INTEGER NOT NULL,
+      role       TEXT    NOT NULL CHECK (LOWER(role) IN ('administrativo','supervisor')),
+      PRIMARY KEY (product_id, role)
+    );
+    CREATE INDEX IF NOT EXISTS idx_prv_role ON ProductRoleVisibility(role);
+    CREATE INDEX IF NOT EXISTS idx_prv_product ON ProductRoleVisibility(product_id);
+  `);
+}
+
+export function assignVisibility(productId, roleName) {
+  const role = String(roleName || "").toLowerCase();
+  if (!["administrativo","supervisor"].includes(role)) {
+    throw new Error(`Rol inválido: ${roleName}`);
+  }
+  return db.prepare(`
+    INSERT OR IGNORE INTO ProductRoleVisibility (product_id, role)
+    VALUES (?, ?)
+  `).run(productId, role);
+}
+
+export function revokeVisibility(productId, roleName) {
+  const role = String(roleName || "").toLowerCase();
+  return db.prepare(`
+    DELETE FROM ProductRoleVisibility
+    WHERE product_id = ? AND LOWER(role) = ?
+  `).run(productId, role);
+}
+
 /* ========= APIs auxiliares para catálogo ========= */
 export function listCategories() {
   const sch = discoverCatalogSchema();
@@ -307,8 +340,10 @@ export function listCategories() {
   return [{ id: "__all__", name: "Todos", count: total }];
 }
 
-/** ⬇️⬇️  ACTUALIZADA: ahora acepta { q, serviceId } y filtra por la pivote service_products  */
-export function listProductsByCategory(categoryId, { q = "", serviceId = null } = {}) {
+/** ⬇️⬇️  ACTUALIZADA: ahora acepta { q, serviceId, role, roles } y filtra por ProductRoleVisibility  */
+export function listProductsByCategory(categoryId, { q = "", serviceId = null, role = null, roles = null } = {}) {
+  ensureVisibilitySchema();
+
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
   const { products } = sch.tables;
@@ -318,7 +353,7 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null } 
   const hasPrice = !!prodPrice;
   const hasStock = !!prodStock;
 
-  // Detectar pivote service_products y sus columnas
+  // Detectar pivote service_products (lo conservamos)
   let pivot = null;
   try {
     const spTbl = db.prepare(`
@@ -327,9 +362,9 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null } 
     if (spTbl) {
       const pcols = db.prepare(`PRAGMA table_info('service_products')`).all();
       const names = new Set(pcols.map(c => String(c.name).toLowerCase()));
-      if (names.has("servicioid") && names.has("productoid")) pivot = { srv: "ServicioID", prod: "ProductoID" };
+      if (names.has("servicioid") && names.has("productoid")) pivot = { srv: "ServicioID",  prod: "ProductoID" };
       else if (names.has("servicio_id") && names.has("producto_id")) pivot = { srv: "servicio_id", prod: "producto_id" };
-      else if (names.has("service_id") && names.has("product_id")) pivot = { srv: "service_id", prod: "product_id" };
+      else if (names.has("service_id") && names.has("product_id"))    pivot = { srv: "service_id",  prod: "product_id"  };
     }
   } catch { /* noop */ }
 
@@ -342,21 +377,30 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null } 
     hasStock ? `p.${prodStock} AS stock` : `NULL AS stock`,
   ].join(", ");
 
-  const like = `%${q.trim()}%`;
+  // ====== Filtro por ROL ======
+  const normRoles = []
+    .concat(roles ?? [])
+    .concat(role ?? [])
+    .map(r => String(r).trim().toLowerCase())
+    .filter(Boolean);
+
+  const joinPRV = normRoles.length
+    ? `JOIN ProductRoleVisibility prv
+         ON CAST(prv.product_id AS TEXT) = CAST(p.${prodId} AS TEXT)`
+    : ``;
+
   const where = [];
   const params = [];
 
-  // Filtro por categoría
   if (prodCat && categoryId !== "__all__") { where.push(`p.${prodCat} = ?`); params.push(categoryId); }
   else if (!prodCat && prodCatName && categoryId !== "__all__") { where.push(`p.${prodCatName} = ?`); params.push(categoryId); }
 
-  // Búsqueda por nombre/código
   if (q && q.trim()) {
+    const like = `%${q.trim()}%`;
     if (hasCode) { where.push(`(p.${prodName} LIKE ? OR p.${prodCode} LIKE ?)`); params.push(like, like); }
     else { where.push(`p.${prodName} LIKE ?`); params.push(like); }
   }
 
-  // Filtro por servicio asignado
   if (serviceId && pivot) {
     where.push(`
       EXISTS (
@@ -368,11 +412,18 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null } 
     params.push(String(serviceId));
   }
 
+  if (normRoles.length) {
+    const placeholders = normRoles.map(() => '?').join(',');
+    where.push(`LOWER(prv.role) IN (${placeholders})`);
+    params.push(...normRoles);
+  }
+
   const whereSQL = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
   const sql = `
     SELECT ${cols}
     FROM ${products} p
+    ${joinPRV}
     ${whereSQL}
     ORDER BY p.${prodName} COLLATE NOCASE
   `;
@@ -443,6 +494,7 @@ function ensureOrdersSchema() {
   `);
 }
 ensureOrdersSchema();
+ensureVisibilitySchema(); // ⬅️ importante: crear/asegurar pivote de visibilidad al iniciar
 
 export function getProductForOrder(productId) {
   const sch = discoverCatalogSchema();
@@ -721,6 +773,14 @@ export function adminCreateProduct(fields = {}) {
 
   const sql = `INSERT INTO ${products} (${cols.join(",")}) VALUES (${vals.join(",")})`;
   const info = db.prepare(sql).run(...args);
+
+  // (Opcional) visibilidad por defecto:
+  // assignVisibility(info.lastInsertRowid, 'supervisor');           // solo supervisores
+  // if (Array.isArray(fields.visibleFor)) {
+  //   for (const r of fields.visibleFor) assignVisibility(info.lastInsertRowid, r);
+  // } else if (fields.role) {
+  //   assignVisibility(info.lastInsertRowid, fields.role);
+  // }
 
   const selCols = [
     `${prodId} AS id`,
