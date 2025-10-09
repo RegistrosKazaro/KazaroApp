@@ -1,10 +1,30 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { useCart } from "../hooks/useCart";
 import { api } from "../api/client";
 import "../styles/catalog.css";
 
+function useServiceBudget(servicioId) {
+  const [budget, setBudget] = useState(null);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    async function load() {
+      if (!servicioId) { setBudget(null); return; }
+      setLoading(true);
+      try {
+        const r = await api.get(`/services/${servicioId}/budget`);
+        if (alive) setBudget(r.data?.budget ?? null);
+      } catch {
+        if (alive) setBudget(null);
+      } finally { setLoading(false); }
+    }
+    load();
+    return () => { alive = false; };
+  }, [servicioId]);
+  return { budget, loading };
+}
 
 export default function Cart() {
   const { role } = useParams();
@@ -15,7 +35,20 @@ export default function Cart() {
   const [errorSend, setErrorSend] = useState("");
   const [remito, setRemito] = useState(null);
 
-  const userLabel = useMemo(() => user?.username || `Usuario ${user?.id || ""}`, [user]);
+  const userLabel = useMemo(() => {
+    if (!user) return "";
+    const u = user;
+    return [u?.nombre, u?.apellido, `(${u?.username || ""})`].filter(Boolean).join(" ");
+  }, [user]);
+
+  // usamos solo budget para evitar warnings de ESLint
+  const { budget } = useServiceBudget(service?.id);
+
+  const usagePct = useMemo(() => {
+    if (!budget || budget <= 0) return null;
+    return (Number(total) / Number(budget)) * 100;
+  }, [total, budget]);
+  const overLimit = usagePct != null && usagePct > 5;
 
   async function sendOrder() {
     setSending(true); setErrorSend(""); setRemito(null);
@@ -43,11 +76,9 @@ export default function Cart() {
       <section className="state" style={{ marginBottom: 12 }}>
         <div><strong>Usuario:</strong> {userLabel}</div>
         {service && (
-          <div style={{ marginTop: 6 }}>
-            <strong>Servicio:</strong> {service.name} <small>(ID: {service.id})</small>{" "}
-            {String(role).includes("super") && (
-              <>• <Link to="/app/supervisor/services">cambiar</Link></>
-            )}
+          <div>
+            <strong>Servicio:</strong> {service?.name} <small>(ID: {service?.id})</small>{" "}
+            {String(role).includes("super") && (<>• <Link to="/app/supervisor/services">cambiar</Link></>)}
           </div>
         )}
         {!service && String(role).includes("super") && (
@@ -55,10 +86,16 @@ export default function Cart() {
             <strong>Servicio:</strong> <em>no seleccionado</em> — <Link to="/app/supervisor/services">elegir</Link>
           </div>
         )}
+        {budget != null && service && (
+          <div>
+            <strong>Presupuesto del servicio:</strong>{" "}
+            {new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(budget || 0)}
+          </div>
+        )}
       </section>
 
       {items.length === 0 ? (
-        <div className="state">No hay productos en el carrito.</div>
+        <div className="state">No tenés productos en el carrito.</div>
       ) : (
         <>
           <table className="sup-table" style={{ marginBottom: 12 }}>
@@ -118,6 +155,26 @@ export default function Cart() {
               })}
             </tbody>
             <tfoot>
+              {usagePct != null && (
+                <tr>
+                  <td colSpan={3} style={{ textAlign: "right", fontWeight: 700 }}>
+                    Uso del presupuesto
+                  </td>
+                  <td colSpan={2}>
+                    <div className="budget-row">
+                      <span className={`budget-chip ${overLimit ? "over" : "ok"}`}>
+                        {usagePct.toFixed(2)}% <span className="limit">(límite 5%)</span>
+                      </span>
+                      <div className="budget-progress" aria-hidden="true">
+                        <div
+                          className={`budget-progress__bar ${overLimit ? "over" : "ok"}`}
+                          style={{ width: `${Math.min(usagePct, 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              )}
               <tr>
                 <td colSpan={3} style={{ textAlign: "right", fontWeight: 700 }}>Total</td>
                 <td className="mono" colSpan={2}>
@@ -129,8 +186,13 @@ export default function Cart() {
 
           <div style={{ display: "flex", gap: 10 }}>
             <button className="btn" onClick={clear}>Limpiar</button>
-            <button className="btn" onClick={sendOrder} disabled={sending || items.length === 0}>
-              {sending ? "Enviando…" : "Enviar pedido"}
+            <button
+              className="btn"
+              onClick={sendOrder}
+              disabled={sending || items.length === 0 || overLimit}
+              title={overLimit ? "El pedido excede el 5% del presupuesto del servicio" : ""}
+            >
+              {sending ? "Enviando…" : (overLimit ? "Excede 5% del presupuesto" : "Enviar pedido")}
             </button>
           </div>
 

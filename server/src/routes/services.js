@@ -1,7 +1,7 @@
-// server/src/routes/supervisor.js
+// server/src/routes/services.js
 import { Router } from "express";
 import { requireAuth, requireRole } from "../middleware/auth.js";
-import { db, ensureSupervisorPivot } from "../db.js";
+import { db, ensureSupervisorPivot, getBudgetByServiceId } from "../db.js";
 
 const router = Router();
 
@@ -20,15 +20,14 @@ const EMP_NAME = pick(empInfo, /username|nombre|email/i) || "Email";
 const SRV_ID   = (srvInfo.find(c => c.pk === 1)?.name) || "ServiciosID";
 const SRV_NAME = pick(srvInfo, /nombre|name/i) || "ServicioNombre";
 
-// GET /supervisor/services  → servicios asignados al usuario logueado
-router.get("/services", [requireAuth, requireRole("supervisor")], (req, res) => {
+// GET /services (supervisor): servicios asignados al usuario logueado
+router.get("/", [requireAuth, requireRole("supervisor")], (req, res) => {
   try {
     const userId = req.user?.id ?? null;
     if (!userId) return res.status(401).json({ error: "No autenticado" });
 
-    ensureSupervisorPivot(); // crea supervisor_services si falta
+    ensureSupervisorPivot();
 
-    // Traemos los servicios asignados por EmpleadoID
     const rows = db.prepare(`
       SELECT s.${SRV_ID}   AS id,
              s.${SRV_NAME} AS name
@@ -40,10 +39,16 @@ router.get("/services", [requireAuth, requireRole("supervisor")], (req, res) => 
 
     return res.json(rows || []);
   } catch (err) {
-    console.error("[supervisor] /services error:", err);
+    console.error("[services] / error:", err);
     return res.status(500).json({ error: "Error interno" });
   }
 });
 
-export default router;
+// GET /services/:id/budget → presupuesto (autenticado)
+router.get("/:id/budget", requireAuth, (req, res) => {
+  const id = req.params.id;
+  const budget = getBudgetByServiceId(id);
+  return res.json({ servicioId: id, budget });
+});
 
+export default router;

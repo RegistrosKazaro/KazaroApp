@@ -5,7 +5,9 @@ import {
   ensureSupervisorPivot,
   discoverCatalogSchema,
   adminListCategoriesForSelect,
-  adminGetProductById
+  adminGetProductById,
+  listServiceBudgets,
+  setBudgetForService,
 } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 
@@ -36,16 +38,13 @@ router.get("/products/_schema", mustBeAdmin, (_req, res) => {
   }
 });
 
-// NUEVO: lista para <select> de categorías (sirve tanto con tabla como con texto)
+// Lista para <select> de categorías
 router.get("/product-categories", mustBeAdmin, (_req, res) => {
-  try {
-    res.json(adminListCategoriesForSelect());
-  } catch (e) {
-    res.status(500).json({ error: "No se pudieron cargar las categorías" });
-  }
+  try { res.json(adminListCategoriesForSelect()); }
+  catch { res.status(500).json({ error: "No se pudieron cargar las categorías" }); }
 });
 
-// Listado / búsqueda (por nombre, código o ID)
+// Listado / búsqueda
 router.get("/products", mustBeAdmin, (req, res) => {
   try {
     const sch = prodSchemaOrThrow();
@@ -78,7 +77,7 @@ router.get("/products", mustBeAdmin, (req, res) => {
   }
 });
 
-// NUEVO: obtener un producto por id (incluye categoryId o categoryName según esquema)
+// Obtener un producto por id
 router.get("/products/:id", mustBeAdmin, (req, res) => {
   const id = req.params.id;
   try {
@@ -90,7 +89,7 @@ router.get("/products/:id", mustBeAdmin, (req, res) => {
   }
 });
 
-// Crear producto (ahora acepta catId/categoryId o categoryName)
+// Crear producto
 router.post("/products", mustBeAdmin, (req, res) => {
   try {
     const sch = prodSchemaOrThrow();
@@ -116,9 +115,6 @@ router.post("/products", mustBeAdmin, (req, res) => {
       cols.push(prodCode); vals.push(v);
     }
 
-    // categoría:
-    // - Si existe FK (prodCat): usar catId o categoryId
-    // - Si NO existe FK pero hay nombre de categoría en productos (prodCatName): usar categoryName
     if (prodCat) {
       const catId = (req.body?.catId !== undefined) ? req.body.catId : req.body?.categoryId;
       if (catId !== undefined) { cols.push(prodCat); vals.push((catId === "" || catId === null) ? null : catId); }
@@ -134,7 +130,7 @@ router.post("/products", mustBeAdmin, (req, res) => {
   }
 });
 
-// Editar producto (nombre / precio / stock / código / categoría)
+// Editar producto
 router.put("/products/:id", mustBeAdmin, (req, res) => {
   try {
     const sch = prodSchemaOrThrow();
@@ -173,7 +169,6 @@ router.put("/products/:id", mustBeAdmin, (req, res) => {
       vals.push(v);
     }
 
-    // categoría: soportar catId/categoryId o categoryName según esquema
     if (prodCat && (req.body?.catId !== undefined || req.body?.categoryId !== undefined)) {
       const v = (req.body.catId !== undefined) ? req.body.catId : req.body.categoryId;
       sets.push(`${prodCat} = ?`);
@@ -227,7 +222,7 @@ router.delete("/products/:id", mustBeAdmin, (req, res) => {
   }
 });
 
-// Sumar/restar stock (atómico)
+// Sumar/restar stock
 router.patch("/products/:id/stock", mustBeAdmin, (req, res) => {
   try {
     const sch = prodSchemaOrThrow();
@@ -397,140 +392,22 @@ router.delete("/assignments/:id", mustBeAdmin, (req, res) => {
   }
 });
 
-/* ===================== INFORMES MENSUALES (TOP 10) ===================== */
-/* Helpers locales para resolver tabla de Servicios (dinámico) */
-function _tinfo(table) {
-  try { return db.prepare(`PRAGMA table_info(${table})`).all(); } catch { return []; }
-}
-function _pickCol(info, candidates) {
-  const norm = (s) => String(s ?? "").normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
-  for (const cand of candidates) {
-    const hit = info.find(c => norm(c.name) === norm(cand));
-    if (hit) return hit.name;
-  }
-  return null;
-}
-function resolveServicesTableLocal() {
-  const tryTables = ["Servicios", "Servicos"];
-  for (const table of tryTables) {
-    try {
-      const exists = db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(table);
-      if (!exists) continue;
-      const info = _tinfo(table);
-      if (!info.length) continue;
+/* =================== PRESUPUESTOS POR SERVICIO (ADMIN) =================== */
+router.get("/service-budgets", mustBeAdmin, (_req, res) => {
+  try { res.json(listServiceBudgets()); }
+  catch (e) { res.status(500).json({ error: "Error al listar presupuestos" }); }
+});
 
-      const idCol =
-        _pickCol(info, ["ServiciosID","ServicioID","IdServicio","ID","Id","id"]) ||
-        (info.find(c => c.pk === 1)?.name) || "ServicioID";
-
-      const nameCol =
-        _pickCol(info, ["ServicioNombre","Nombre","Servicio","Descripcion","Detalle","Titulo","NombreServicio"]) ||
-        (info.find(c => /TEXT|CHAR/i.test(String(c.type)))?.name) || idCol;
-
-      const nameExpr = `COALESCE(NULLIF(TRIM(s.${nameCol}), ''), CAST(s.${idCol} AS TEXT))`;
-      return { table, idCol, nameCol, nameExpr };
-    } catch { /* ignore */ }
-  }
-  return null;
-}
-
-// GET /admin/reports/monthly?year=2025&month=9
-router.get("/reports/monthly", mustBeAdmin, (req, res) => {
+router.put("/service-budgets/:id", mustBeAdmin, (req, res) => {
+  const id = req.params.id;
+  const presupuesto = Number(req.body?.presupuesto ?? req.body?.budget ?? NaN);
+  if (!Number.isFinite(presupuesto) || presupuesto < 0) return res.status(400).json({ error: "Presupuesto inválido" });
   try {
-    const now = new Date();
-    const year  = Number(req.query.year ?? now.getFullYear());
-    const month = Number(req.query.month ?? (now.getMonth()+1)); // 1..12
-
-    if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
-      return res.status(400).json({ error: "Parámetros inválidos: year (YYYY) y month (1..12)" });
-    }
-
-    const start = new Date(Date.UTC(year, month-1, 1, 0, 0, 0));
-    const end   = new Date(Date.UTC(year, month,   1, 0, 0, 0));
-    const pad = (n) => String(n).padStart(2, "0");
-    const startIso = `${start.getUTCFullYear()}-${pad(start.getUTCMonth()+1)}-${pad(start.getUTCDate())} 00:00:00`;
-    const endIso   = `${end.getUTCFullYear()}-${pad(end.getUTCMonth()+1)}-${pad(end.getUTCDate())} 00:00:00`;
-
-    // Totales del período
-    const totals = db.prepare(`
-      SELECT
-        (SELECT COUNT(*) FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ?)               AS ordersCount,
-        (SELECT COALESCE(SUM(i.Cantidad),0)
-           FROM PedidoItems i JOIN Pedidos p ON p.PedidoID = i.PedidoID
-          WHERE p.Fecha >= ? AND p.Fecha < ?)                                            AS itemsCount,
-        (SELECT COALESCE(SUM(p.Total),0)
-           FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ?)                            AS amount
-    `).get(startIso, endIso, startIso, endIso, startIso, endIso);
-
-    // Top 10 Servicios
-    const spec = resolveServicesTableLocal(); // puede ser null si no hay tabla de servicios
-    let topServices = [];
-    if (spec) {
-      topServices = db.prepare(`
-        SELECT
-          p.ServicioID                              AS serviceId,
-          ${spec.nameExpr}                          AS serviceName,
-          COUNT(DISTINCT p.PedidoID)                AS pedidos,
-          COALESCE(SUM(i.Cantidad),0)               AS qty,
-          COALESCE(SUM(i.Subtotal),0)               AS amount
-        FROM Pedidos p
-        LEFT JOIN PedidoItems i ON i.PedidoID = p.PedidoID
-        LEFT JOIN ${spec.table} s
-               ON CAST(s.${spec.idCol} AS TEXT) = CAST(p.ServicioID AS TEXT)
-        WHERE p.Fecha >= ? AND p.Fecha < ?
-        GROUP BY p.ServicioID, serviceName
-        ORDER BY qty DESC, amount DESC
-        LIMIT 10
-      `).all(startIso, endIso);
-    } else {
-      // Sin tabla Servicios: mostramos ID como texto
-      topServices = db.prepare(`
-        SELECT
-          p.ServicioID                              AS serviceId,
-          'Servicio ' || COALESCE(CAST(p.ServicioID AS TEXT),'(sin)') AS serviceName,
-          COUNT(DISTINCT p.PedidoID)                AS pedidos,
-          COALESCE(SUM(i.Cantidad),0)               AS qty,
-          COALESCE(SUM(i.Subtotal),0)               AS amount
-        FROM Pedidos p
-        LEFT JOIN PedidoItems i ON i.PedidoID = p.PedidoID
-        WHERE p.Fecha >= ? AND p.Fecha < ?
-        GROUP BY p.ServicioID
-        ORDER BY qty DESC, amount DESC
-        LIMIT 10
-      `).all(startIso, endIso);
-    }
-
-    // Top 10 Productos (por unidades)
-    const topProducts = db.prepare(`
-      SELECT
-        i.ProductoID                                AS productId,
-        COALESCE(NULLIF(TRIM(i.Nombre),''),'(sin nombre)') AS name,
-        COALESCE(i.Codigo,'')                       AS code,
-        COUNT(DISTINCT i.PedidoID)                  AS pedidos,
-        COALESCE(SUM(i.Cantidad),0)                 AS qty,
-        COALESCE(SUM(i.Subtotal),0)                 AS amount
-      FROM PedidoItems i
-      JOIN Pedidos p ON p.PedidoID = i.PedidoID
-      WHERE p.Fecha >= ? AND p.Fecha < ?
-      GROUP BY i.ProductoID, name, code
-      ORDER BY qty DESC, amount DESC
-      LIMIT 10
-    `).all(startIso, endIso);
-
-    res.json({
-      ok: true,
-      period: {
-        year, month,
-        start: startIso,
-        end: endIso
-      },
-      totals,
-      top_services: topServices,
-      top_products: topProducts
-    });
+    const newVal = setBudgetForService(id, presupuesto);
+    return res.json({ servicioId: id, presupuesto: newVal });
   } catch (e) {
-    console.error("[admin] GET /reports/monthly error:", e);
-    res.status(500).json({ error: "No se pudo generar el informe" });
+    console.error("[admin] PUT /service-budgets/:id", e);
+    return res.status(500).json({ error: "Error interno" });
   }
 });
 

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.js";
-import { db, getFullOrder, createOrder, getProductForOrder, getEmployeeDisplayName } from "../db.js";
+import { db, getFullOrder, createOrder, getProductForOrder, getEmployeeDisplayName, getBudgetByServiceId } from "../db.js";
 import { generateRemitoPDF } from "../utils/remitoPdf.js";
 import { sendMail } from "../utils/mailer.js";
 
@@ -80,16 +80,26 @@ router.post("/", requireAuth, async (req, res) => {
       ({ pedidoId, total } = createOrder({ empleadoId, rol, nota, items, servicioId }));
     } catch (e) {
       if (e?.code === "OUT_OF_STOCK") {
-        // Validación dura de stock: 400 con mensaje claro
         return res.status(400).json({ error: e.message, ...e.extra });
       }
       throw e;
     }
 
+    // ===== Validación de presupuesto por servicio (máx 5% por pedido) =====
+    let usagePct = null;
+    if (servicioId != null) {
+      const budget = getBudgetByServiceId(servicioId);
+      if (Number(budget) > 0) {
+        usagePct = (Number(total) / Number(budget)) * 100;
+        if (usagePct > 5) {
+          return res.status(400).json({ error: `El pedido (${usagePct.toFixed(2)}%) excede el 5% del presupuesto del servicio.` });
+        }
+      }
+    }
+
     const { cab, items: fullItems } = getFullOrder(pedidoId);
     const empleado = getEmployeeDisplayName(empleadoId);
 
-    // Nombre del servicio (si aplica) sin depender de nada externo
     const servicioNombre = servicioId
       ? (getServiceNameByIdLocal(servicioId) || servicioNameIn || `Servicio ${servicioId}`)
       : null;
@@ -105,7 +115,6 @@ router.post("/", requireAuth, async (req, res) => {
 
     const { filePath, fileName } = await generateRemitoPDF({ remito, items: fullItems });
 
-    // Asunto del mail
     const subject = servicioId
       ? `NUEVO PEDIDO DE INSUMOS - "${servicioNombre}"`
       : `NUEVO PEDIDO DE INSUMOS - "${empleado}"`;
@@ -116,10 +125,12 @@ router.post("/", requireAuth, async (req, res) => {
         subject,
         html: `
           <p>Se generó el pedido <strong>#${remito.numero}</strong>.</p>
-          <p><strong>Empleado:</strong> ${empleado}<br/>
+          <p>
+             <strong>Empleado:</strong> ${empleado}<br/>
              <strong>Rol:</strong> ${rol || "-"}<br/>
              ${remito.servicio ? `<strong>Servicio:</strong> ${remito.servicio.name}<br/>` : ""}
-             <strong>Total:</strong> ${total}
+             <strong>Total:</strong> ${total}<br/>
+             ${usagePct != null ? `<strong>Uso del presupuesto:</strong> <span style="color:${usagePct>5?'#c1121f':'#2a9d8f'}">${usagePct.toFixed(2)}%</span> (límite 5%)<br/>` : ""}
           </p>
           <p>Se adjunta PDF del remito.</p>
         `,

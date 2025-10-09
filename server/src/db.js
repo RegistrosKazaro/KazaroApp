@@ -654,6 +654,61 @@ export function getServiceNameById(servicioId) {
   return row?.name || null;
 }
 
+/* =====================  PRESUPUESTOS POR SERVICIO (NUEVO) ===================== */
+/* Tabla simple: un presupuesto (monto base) por ServicioID */
+export function ensureServiceBudgetTable() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS service_budget (
+      ServicioID INTEGER PRIMARY KEY,
+      Presupuesto REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_srvbudget_serv ON service_budget(ServicioID);
+  `);
+}
+
+export function getBudgetByServiceId(servicioId) {
+  ensureServiceBudgetTable();
+  try {
+    const row = db.prepare(`
+      SELECT Presupuesto AS budget
+      FROM service_budget
+      WHERE CAST(ServicioID AS TEXT) = CAST(? AS TEXT)
+      LIMIT 1
+    `).get(servicioId);
+    return row?.budget ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function setBudgetForService(servicioId, presupuesto) {
+  ensureServiceBudgetTable();
+  db.prepare(`
+    INSERT INTO service_budget(ServicioID, Presupuesto)
+    VALUES(CAST(? AS TEXT), ?)
+    ON CONFLICT(ServicioID) DO UPDATE SET Presupuesto = excluded.Presupuesto
+  `).run(servicioId, Number(presupuesto));
+  return getBudgetByServiceId(servicioId);
+}
+
+export function listServiceBudgets() {
+  ensureServiceBudgetTable();
+  const spec = resolveServicesTable();
+  try {
+    return db.prepare(`
+      SELECT s.${spec.idCol} AS id,
+             ${spec.nameExpr} AS name,
+             b.Presupuesto AS budget
+      FROM ${spec.table} s
+      LEFT JOIN service_budget b
+        ON CAST(b.ServicioID AS TEXT) = CAST(s.${spec.idCol} AS TEXT)
+      ORDER BY name COLLATE NOCASE
+    `).all();
+  } catch {
+    return [];
+  }
+}
+
 /* =====================  Extras para órdenes  ===================== */
 export function getFullOrder(pedidoId) {
   const cab = db.prepare(`

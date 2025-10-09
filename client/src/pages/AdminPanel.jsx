@@ -1,5 +1,5 @@
 // client/src/pages/AdminPanel.jsx
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
@@ -553,6 +553,77 @@ function ServiceProductsSection() {
   );
 }
 
+/* =======================  PRESUPUESTOS  ======================= */
+function BudgetsSection() {
+  const [rows, setRows] = useState([]);
+  const [q, setQ] = useState("");
+  const [err, setErr] = useState("");
+  const [savingId, setSavingId] = useState(null);
+
+  const load = useCallback(async () => {
+    try { setRows((await api.get("/admin/service-budgets")).data || []); }
+    catch (e) { setErr(e?.response?.data?.error || e.message); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const filtered = useMemo(() => {
+    const k = q.trim().toLowerCase();
+    if (!k) return rows;
+    return rows.filter(r => String(r.name || "").toLowerCase().includes(k));
+  }, [rows, q]);
+
+  const onSave = async (id, val) => {
+    setSavingId(id);
+    try {
+      await api.put(`/admin/service-budgets/${id}`, { presupuesto: Number(val) });
+      await load();
+    } catch (e) {
+      setErr(e?.response?.data?.error || e.message);
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  return (
+    <section className="card">
+      <h2>Presupuestos por servicio</h2>
+      {err && <div className="alert error">{err}</div>}
+      <div className="toolbar">
+        <input className="input" placeholder="Buscar servicio…" value={q} onChange={(e) => setQ(e.target.value)} />
+      </div>
+      <div className="table">
+        <div className="thead">
+          <div>Servicio</div><div style={{textAlign:'right'}}>Presupuesto</div><div>Acciones</div>
+        </div>
+        <div className="tbody">
+          {filtered.map(r => {
+            const inputId = `b-${r.id}`;
+            return (
+              <div key={r.id} className="tr">
+                <div className="td">{r.name}</div>
+                <div className="td" style={{textAlign:'right'}}>
+                  <input id={inputId} type="number" step="0.01" defaultValue={r.budget ?? ""} className="input mono" style={{maxWidth:160}} />
+                </div>
+                <div className="td">
+                  <button className="btn" onClick={() => onSave(r.id, document.getElementById(inputId).value)} disabled={savingId===r.id}>
+                    {savingId===r.id ? "Guardando…" : "Guardar"}
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+          {filtered.length === 0 && (
+            <div className="tr"><div style={{ gridColumn: "1 / -1" }}>Sin resultados</div></div>
+          )}
+        </div>
+      </div>
+      <div className="hint small" style={{marginTop:8}}>
+        El pedido de un servicio no puede superar el <strong>5%</strong> de su presupuesto. Aquí definís el presupuesto base por servicio.
+      </div>
+    </section>
+  );
+}
+
 /* =======================  ORDERS  ======================= */
 function OrdersSection() {
   const [orders, setOrders] = useState([]);
@@ -643,6 +714,14 @@ export default function AdminPanel() {
           Servicio ↔ Productos
         </button>
         <button
+          className={`tab-btn ${tab==="budgets" ? "is-active" : ""}`}
+          onClick={()=>setTab("budgets")}
+          role="tab"
+          aria-selected={tab==="budgets"}
+        >
+          Presupuestos
+        </button>
+        <button
           className={`tab-btn ${tab==="orders" ? "is-active" : ""}`}
           onClick={()=>setTab("orders")}
           role="tab"
@@ -655,7 +734,9 @@ export default function AdminPanel() {
       {tab==="products" && <ProductsSection />}
       {tab==="services" && <AssignServicesSection />}
       {tab==="serviceProducts" && <ServiceProductsSection />}
+      {tab==="budgets" && <BudgetsSection />}
       {tab==="orders" && <OrdersSection />}
     </div>
   );
 }
+
