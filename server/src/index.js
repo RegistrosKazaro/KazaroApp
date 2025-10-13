@@ -99,7 +99,7 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 
 /* ===== SPA fallback ===== */
 app.get(
-  /^\/(?!auth|me|catalog|orders|supervisor|services|dev|health|remitos|assets|favicon\.ico|robots\.txt|manifest\.json).*/i,
+  /^\/((?!auth|me|catalog|orders|supervisor|services|dev|health|remitos|assets|favicon\.ico|robots\.txt|manifest\.json).)*$/i,
   (req, res) => {
     const file = path.join(PUBLIC_DIR, "index.html");
     if (fs.existsSync(file)) {
