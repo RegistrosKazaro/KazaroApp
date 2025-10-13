@@ -6,6 +6,9 @@ import { useAuth } from "../hooks/useAuth";
 import "../styles/admin-panel.css";
 import "../styles/a11y.css";
 
+// NUEVO: pestaña de reasignación masiva
+import MassReassignServicesSection from "./MassReassignServicesSection";
+
 /* =======================  PRODUCTS  ======================= */
 function ProductsSection() {
   const [schema, setSchema] = useState(null);
@@ -86,7 +89,6 @@ function ProductsSection() {
     catch (e) { setErr(e?.response?.data?.error || e.message); }
   };
 
-  const startStockEdit = (row) => setStockEdit({ id: row.id, value: row.stock ?? 0 });
   const cancelStockEdit = () => setStockEdit({ id: null, value: "" });
   const saveStock = async () => {
     try {
@@ -225,7 +227,7 @@ function ProductsSection() {
                 ) : (
                   <div className="stock-inline">
                     <span className="stock-value">{r.stock ?? "-"}</span>
-                    <button className="btn xs" type="button" onClick={() => startStockEdit(r)} aria-label={`Editar stock de ${r.name}`}>
+                    <button className="btn xs" type="button" onClick={() => setStockEdit({ id: r.id, value: r.stock ?? 0 })} aria-label={`Editar stock de ${r.name}`}>
                       Editar stock
                     </button>
                   </div>
@@ -248,7 +250,7 @@ function ProductsSection() {
   );
 }
 
-/* =======================  ASSIGN / REASSIGN SERVICES  ======================= */
+/* =======================  ASSIGN / REASSIGN SERVICES (unitario) ======================= */
 function AssignServicesSection() {
   const [supervisors, setSupervisors] = useState([]);
   const [selectedSupervisor, setSelectedSupervisor] = useState("");
@@ -279,7 +281,11 @@ function AssignServicesSection() {
 
   const searchServices = async () => {
     setMsg("");
-    if (q.trim().length < 2) { setServices([]); setMsg("Escribí al menos 2 letras para buscar."); return; }
+    if (q.trim().length < 2) {
+      setServices([]);
+      setMsg("Escribí al menos 2 letras para buscar.");
+      return;
+    }
     setLoading(true);
     try {
       const res = await api.get("/admin/services", { params: { q, limit: 25 } });
@@ -316,13 +322,27 @@ function AssignServicesSection() {
       {msg && <div className="alert error">{msg}</div>}
 
       <div className="assign-toolbar">
-        <select className="input" value={selectedSupervisor} onChange={(e) => { setSelectedSupervisor(e.target.value); setMsg(""); }}>
+        <select
+          className="input"
+          value={selectedSupervisor}
+          onChange={(e) => { setSelectedSupervisor(e.target.value); setMsg(""); }}
+        >
           <option value="">-- Elegir supervisor --</option>
-          {supervisors.map(s => (<option key={s.id} value={s.id}>{s.username || `Supervisor #${s.id}`}</option>))}
+          {supervisors.map(s => (
+            <option key={s.id} value={s.id}>{s.username || `Supervisor #${s.id}`}</option>
+          ))}
         </select>
 
-        <input className="input" placeholder="Buscar servicio… (mín. 2 letras)" value={q} onChange={(e) => { setQ(e.target.value); setMsg(""); }} onKeyDown={onKeyDownSearch} />
-        <button className="btn primary" onClick={searchServices} disabled={loading}>{loading ? "Buscando…" : "Buscar"}</button>
+        <input
+          className="input"
+          placeholder="Buscar servicio… (mín. 2 letras)"
+          value={q}
+          onChange={(e) => { setQ(e.target.value); setMsg(""); }}
+          onKeyDown={onKeyDownSearch}
+        />
+        <button className="btn primary" onClick={searchServices} disabled={loading}>
+          {loading ? "Buscando…" : "Buscar"}
+        </button>
       </div>
 
       {!selectedSupervisor ? (
@@ -332,7 +352,11 @@ function AssignServicesSection() {
           <div className="assign-list">
             {services.map(s => (
               <label key={s.id} className={`assign-item ${isAssigned(s.id) ? "assigned" : ""}`}>
-                <input type="checkbox" checked={isAssigned(s.id)} onChange={() => toggle(s.id)} />
+                <input
+                  type="checkbox"
+                  checked={isAssigned(s.id)}
+                  onChange={() => toggle(s.id)}
+                />
                 <div className="assign-content">
                   <div className="assign-title">{s.name}</div>
                   <div className="assign-badges">
@@ -358,7 +382,6 @@ function ServiceProductsSection() {
   const PAGE_SIZE = 12;
   const [step, setStep] = useState("pick");
   const [service, setService] = useState(null);
-
   const [qSrv, setQSrv] = useState("");
   const [srvResults, setSrvResults] = useState([]);
   const [srvMsg, setSrvMsg] = useState("");
@@ -372,8 +395,8 @@ function ServiceProductsSection() {
   const [allRows, setAllRows] = useState([]);
   const [rows, setRows] = useState([]);
   const [page, setPage] = useState(1);
-
   const [selected, setSelected] = useState(new Set());
+
   const [loading, setLoading] = useState(false);
   const [loadErr, setLoadErr] = useState("");
   const [saveErr, setSaveErr] = useState("");
@@ -615,15 +638,23 @@ export default function AdminPanel() {
         <button className={`tab-btn ${tab==="products" ? "is-active" : ""}`} onClick={()=>setTab("products")} role="tab" aria-selected={tab==="products"}>Productos</button>
         <button className={`tab-btn ${tab==="services" ? "is-active" : ""}`} onClick={()=>setTab("services")} role="tab" aria-selected={tab==="services"}>Asignar servicios</button>
         <button className={`tab-btn ${tab==="serviceProducts" ? "is-active" : ""}`} onClick={()=>setTab("serviceProducts")} role="tab" aria-selected={tab==="serviceProducts"}>Servicio ↔ Productos</button>
-        <button className={`tab-btn ${tab==="orders" ? "is-active" : ""}`} onClick={()=>setTab("orders")} role="tab" aria-selected={tab==="orders"}>Pedidos</button>
+
+        {/* NUEVO: pestaña Reasignación masiva */}
+        <button className={`tab-btn ${tab==="massReassign" ? "is-active" : ""}`} onClick={()=>setTab("massReassign")} role="tab" aria-selected={tab==="massReassign"}>
+          Reasignación masiva
+        </button>
 
         <div style={{flex:1}} />
-        
+        {/* Link corregido: relativo a /app/:role/admin → budgets */}
+        <Link className="tab-btn" to="budgets" role="link" aria-label="Ir a Presupuesto de servicios">
+          Presupuestos (ruta aparte)
+        </Link>
       </div>
 
       {tab==="products" && <ProductsSection />}
       {tab==="services" && <AssignServicesSection />}
       {tab==="serviceProducts" && <ServiceProductsSection />}
+      {tab==="massReassign" && <MassReassignServicesSection />}
       {tab==="orders" && <OrdersSection />}
     </div>
   );
