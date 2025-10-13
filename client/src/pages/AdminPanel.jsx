@@ -1,9 +1,10 @@
 // client/src/pages/AdminPanel.jsx
-import { useEffect, useState, useRef, useCallback, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState, useRef, useCallback } from "react";
+import { useNavigate, Link } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
-import "../styles/admin-panel.css"; // usa SOLO los estilos del panel
+import "../styles/admin-panel.css";
+import "../styles/a11y.css";
 
 /* =======================  PRODUCTS  ======================= */
 function ProductsSection() {
@@ -13,9 +14,12 @@ function ProductsSection() {
   const [form, setForm] = useState({ name: "", price: "", stock: "", code: "", catId: "" });
   const [editing, setEditing] = useState(null);
   const [err, setErr] = useState("");
+  const [statusMsg, setStatusMsg] = useState("");
 
-  // Edición inline de stock
   const [stockEdit, setStockEdit] = useState({ id: null, value: "" });
+
+  const nameRef = useRef(null);
+  const headingRef = useRef(null);
 
   const can = (k) => !!(schema?.cols?.[k]);
 
@@ -25,7 +29,7 @@ function ProductsSection() {
   }, []);
 
   const loadRows = useCallback(async () => {
-    try { setRows((await api.get("/admin/products", { params: { q } })).data || []); }
+    try { setRows((await api.get("/admin/products", { params: { q, limit: 200 } })).data || []); }
     catch (e) { setErr(e?.response?.data?.error || e.message); }
   }, [q]);
 
@@ -44,6 +48,7 @@ function ProductsSection() {
           ...(can("prodCode")  ? { code:  form.code  } : {}),
           ...(can("prodCat")   ? { catId: form.catId || null } : {}),
         });
+        setStatusMsg("Producto actualizado.");
       } else {
         await api.post("/admin/products", {
           name: form.name,
@@ -52,10 +57,12 @@ function ProductsSection() {
           ...(can("prodCode")  ? { code:  form.code  } : {}),
           ...(can("prodCat")   ? { catId: form.catId || null } : {}),
         });
+        setStatusMsg("Producto creado.");
       }
       setForm({ name: "", price: "", stock: "", code: "", catId: "" });
       setEditing(null);
       await loadRows();
+      headingRef.current?.focus();
     } catch (e) {
       setErr(e?.response?.data?.error || e.message);
     }
@@ -70,25 +77,26 @@ function ProductsSection() {
       code: row.code ?? "",
       catId: row.catId ?? "",
     });
+    setTimeout(() => nameRef.current?.focus(), 0);
   };
 
   const onDelete = async (id) => {
     if (!confirm("¿Eliminar producto?")) return;
-    try { await api.delete(`/admin/products/${id}`); await loadRows(); }
+    try { await api.delete(`/admin/products/${id}`); await loadRows(); setStatusMsg("Producto eliminado."); }
     catch (e) { setErr(e?.response?.data?.error || e.message); }
   };
 
-  // ====== Stock inline ======
   const startStockEdit = (row) => setStockEdit({ id: row.id, value: row.stock ?? 0 });
   const cancelStockEdit = () => setStockEdit({ id: null, value: "" });
   const saveStock = async () => {
-    if (!can("prodStock") || stockEdit.id == null) return;
     try {
       await api.put(`/admin/products/${stockEdit.id}`, { stock: Number(stockEdit.value) });
       await loadRows();
-      cancelStockEdit();
+      setStatusMsg("Stock actualizado.");
     } catch (e) {
       setErr(e?.response?.data?.error || e.message);
+    } finally {
+      cancelStockEdit();
     }
   };
   const onKeyDownStock = (e) => {
@@ -96,59 +104,114 @@ function ProductsSection() {
     if (e.key === "Escape") { e.preventDefault(); cancelStockEdit(); }
   };
 
+  const onSearchKeyDown = (e) => { if (e.key === "Enter") { e.preventDefault(); loadRows(); } };
+
   return (
-    <section className="card">
-      <h2>Productos</h2>
+    <section className="card" aria-labelledby="products-heading">
+      <h2 id="products-heading" ref={headingRef} tabIndex={-1}>Productos</h2>
+      <p className="sr-only" aria-live="polite">{statusMsg}</p>
+      {err && <div role="alert" className="alert error">{err}</div>}
 
-      {err && <div className="alert error">{err}</div>}
-
-      <div className="toolbar">
-        <input className="input" placeholder="Buscar…" value={q} onChange={(e) => setQ(e.target.value)} />
+      <div className="toolbar" role="region" aria-label="Búsqueda de productos">
+        <label htmlFor="prod-search" className="sr-only">Buscar productos</label>
+        <input
+          id="prod-search"
+          className="input"
+          placeholder="Buscar…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={onSearchKeyDown}
+        />
       </div>
 
-      <form onSubmit={submit} className="form-grid">
-        <input className="input" placeholder="Nombre *" value={form.name}
-               onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-        {can("prodPrice") && (
-          <input className="input" type="number" step="0.01" placeholder="Precio"
-                 value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
-        )}
-        {can("prodStock") && (
-          <input className="input" type="number" placeholder="Stock"
-                 value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} />
-        )}
-        {can("prodCode") && (
-          <input className="input" placeholder="Código"
-                 value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} />
-        )}
-        <div className="buttons">
-          <button className="btn primary" type="submit">{editing ? "Guardar cambios" : "Crear producto"}</button>
-          {editing && (
-            <button className="btn" type="button"
-                    onClick={() => { setEditing(null); setForm({ name:"", price:"", stock:"", code:"", catId:"" }); }}>
-              Cancelar
-            </button>
+      <form onSubmit={submit} className="form-grid" aria-describedby="prod-form-help">
+        <fieldset>
+          <legend>{editing ? "Editar producto" : "Crear producto"}</legend>
+          <p id="prod-form-help" className="sr-only">Los campos marcados con * son obligatorios.</p>
+
+          <div className="field">
+            <label htmlFor="prod-name">Nombre *</label>
+            <input
+              id="prod-name"
+              ref={nameRef}
+              className="input"
+              placeholder="Nombre *"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              required
+              aria-required="true"
+            />
+          </div>
+
+          {can("prodPrice") && (
+            <div className="field">
+              <label htmlFor="prod-price">Precio</label>
+              <input
+                id="prod-price" className="input" type="number" step="0.01" inputMode="decimal"
+                placeholder="Precio" value={form.price}
+                onChange={(e) => setForm({ ...form, price: e.target.value })}
+              />
+            </div>
           )}
-        </div>
+
+          {can("prodStock") && (
+            <div className="field">
+              <label htmlFor="prod-stock">Stock</label>
+              <input
+                id="prod-stock" className="input" type="number" inputMode="numeric"
+                placeholder="Stock" value={form.stock}
+                onChange={(e) => setForm({ ...form, stock: e.target.value })}
+              />
+            </div>
+          )}
+
+          {can("prodCode") && (
+            <div className="field">
+              <label htmlFor="prod-code">Código</label>
+              <input
+                id="prod-code" className="input" placeholder="Código"
+                value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })}
+              />
+            </div>
+          )}
+
+          <div className="buttons">
+            <button className="btn primary" type="submit">{editing ? "Guardar cambios" : "Crear producto"}</button>
+            {editing && (
+              <button className="btn" type="button" onClick={() => { setEditing(null); setForm({ name:"", price:"", stock:"", code:"", catId:"" }); }}>
+                Cancelar
+              </button>
+            )}
+          </div>
+        </fieldset>
       </form>
 
-      <div className="table table-products">
-        <div className="thead">
-          <div>ID</div><div>Nombre</div><div>Código</div><div className="num">Precio</div><div className="num">Stock</div><div>Acciones</div>
+      <div className="table table-products" role="table" aria-label="Listado de productos">
+        <div className="thead" role="rowgroup">
+          <div className="tr" role="row">
+            <div role="columnheader">ID</div>
+            <div role="columnheader">Nombre</div>
+            <div role="columnheader">Código</div>
+            <div role="columnheader" className="num">Precio</div>
+            <div role="columnheader" className="num">Stock</div>
+            <div role="columnheader">Acciones</div>
+          </div>
         </div>
-        <div className="tbody">
+        <div className="tbody" role="rowgroup">
           {rows.map(r => (
-            <div key={r.id} className="tr">
-              <div>{r.id}</div>
-              <div className="truncate-2">{r.name}</div>
-              <div>{r.code ?? "-"}</div>
-              <div className="num">{r.price ?? "-"}</div>
-
-              {/* STOCK: edición directa */}
-              <div>
+            <div key={r.id} className="tr" role="row">
+              <div role="cell">{r.id}</div>
+              <div role="cell" className="truncate-2">{r.name}</div>
+              <div role="cell">{r.code ?? "-"}</div>
+              <div role="cell" className="num">
+                {r.price == null ? "-" : new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(r.price)}
+              </div>
+              <div role="cell">
                 {stockEdit.id === r.id ? (
                   <div className="stock-inline">
+                    <label htmlFor={`stk-${r.id}`} className="sr-only">Stock para {r.name}</label>
                     <input
+                      id={`stk-${r.id}`}
                       className="input stock-input"
                       type="number"
                       value={stockEdit.value}
@@ -156,30 +219,27 @@ function ProductsSection() {
                       onKeyDown={onKeyDownStock}
                       autoFocus
                     />
-                    <button className="btn primary xs" type="button" onClick={saveStock}>Guardar</button>
+                    <button className="btn primary xs" type="button" onClick={saveStock} aria-label={`Guardar stock de ${r.name}`}>Guardar</button>
                     <button className="btn xs" type="button" onClick={cancelStockEdit}>Cancelar</button>
                   </div>
                 ) : (
                   <div className="stock-inline">
                     <span className="stock-value">{r.stock ?? "-"}</span>
-                    {can("prodStock") && (
-                      <button className="btn xs" type="button" onClick={() => startStockEdit(r)}>
-                        Editar stock
-                      </button>
-                    )}
+                    <button className="btn xs" type="button" onClick={() => startStockEdit(r)} aria-label={`Editar stock de ${r.name}`}>
+                      Editar stock
+                    </button>
                   </div>
                 )}
               </div>
-
-              <div className="actions">
-                <button className="btn tonal" onClick={() => onEdit(r)} type="button">Editar</button>
-                <button className="btn danger" onClick={() => onDelete(r.id)} type="button">Eliminar</button>
+              <div className="actions" role="cell">
+                <button className="btn tonal" onClick={() => onEdit(r)} type="button" aria-label={`Editar ${r.name}`}>Editar</button>
+                <button className="btn danger" onClick={() => onDelete(r.id)} type="button" aria-label={`Eliminar ${r.name}`}>Eliminar</button>
               </div>
             </div>
           ))}
           {rows.length === 0 && (
-            <div className="tr">
-              <div style={{ gridColumn: "1 / -1" }}>Sin productos</div>
+            <div className="tr" role="row">
+              <div role="cell" style={{ gridColumn: "1 / -1" }}>Sin productos</div>
             </div>
           )}
         </div>
@@ -219,11 +279,7 @@ function AssignServicesSection() {
 
   const searchServices = async () => {
     setMsg("");
-    if (q.trim().length < 2) {
-      setServices([]);
-      setMsg("Escribí al menos 2 letras para buscar.");
-      return;
-    }
+    if (q.trim().length < 2) { setServices([]); setMsg("Escribí al menos 2 letras para buscar."); return; }
     setLoading(true);
     try {
       const res = await api.get("/admin/services", { params: { q, limit: 25 } });
@@ -260,27 +316,13 @@ function AssignServicesSection() {
       {msg && <div className="alert error">{msg}</div>}
 
       <div className="assign-toolbar">
-        <select
-          className="input"
-          value={selectedSupervisor}
-          onChange={(e) => { setSelectedSupervisor(e.target.value); setMsg(""); }}
-        >
+        <select className="input" value={selectedSupervisor} onChange={(e) => { setSelectedSupervisor(e.target.value); setMsg(""); }}>
           <option value="">-- Elegir supervisor --</option>
-          {supervisors.map(s => (
-            <option key={s.id} value={s.id}>{s.username || `Supervisor #${s.id}`}</option>
-          ))}
+          {supervisors.map(s => (<option key={s.id} value={s.id}>{s.username || `Supervisor #${s.id}`}</option>))}
         </select>
 
-        <input
-          className="input"
-          placeholder="Buscar servicio… (mín. 2 letras)"
-          value={q}
-          onChange={(e) => { setQ(e.target.value); setMsg(""); }}
-          onKeyDown={onKeyDownSearch}
-        />
-        <button className="btn primary" onClick={searchServices} disabled={loading}>
-          {loading ? "Buscando…" : "Buscar"}
-        </button>
+        <input className="input" placeholder="Buscar servicio… (mín. 2 letras)" value={q} onChange={(e) => { setQ(e.target.value); setMsg(""); }} onKeyDown={onKeyDownSearch} />
+        <button className="btn primary" onClick={searchServices} disabled={loading}>{loading ? "Buscando…" : "Buscar"}</button>
       </div>
 
       {!selectedSupervisor ? (
@@ -290,11 +332,7 @@ function AssignServicesSection() {
           <div className="assign-list">
             {services.map(s => (
               <label key={s.id} className={`assign-item ${isAssigned(s.id) ? "assigned" : ""}`}>
-                <input
-                  type="checkbox"
-                  checked={isAssigned(s.id)}
-                  onChange={() => toggle(s.id)}
-                />
+                <input type="checkbox" checked={isAssigned(s.id)} onChange={() => toggle(s.id)} />
                 <div className="assign-content">
                   <div className="assign-title">{s.name}</div>
                   <div className="assign-badges">
@@ -315,14 +353,12 @@ function AssignServicesSection() {
   );
 }
 
-/* =======================  SERVICE ↔ PRODUCTS (confirmación al guardar)  ======================= */
+/* =======================  SERVICE ↔ PRODUCTS  ======================= */
 function ServiceProductsSection() {
   const PAGE_SIZE = 12;
-
-  const [step, setStep] = useState("pick"); // pick | assign
+  const [step, setStep] = useState("pick");
   const [service, setService] = useState(null);
 
-  // búsqueda incremental de servicios
   const [qSrv, setQSrv] = useState("");
   const [srvResults, setSrvResults] = useState([]);
   const [srvMsg, setSrvMsg] = useState("");
@@ -330,7 +366,6 @@ function ServiceProductsSection() {
   const debounceRef = useRef(null);
   const lastQueryRef = useRef("");
 
-  // cat / productos (desde /catalog)
   const [cats, setCats] = useState([]);
   const [catId, setCatId] = useState("__all__");
   const [q, setQ] = useState("");
@@ -338,26 +373,20 @@ function ServiceProductsSection() {
   const [rows, setRows] = useState([]);
   const [page, setPage] = useState(1);
 
-  // asignaciones
   const [selected, setSelected] = useState(new Set());
-
-  // estados
   const [loading, setLoading] = useState(false);
   const [loadErr, setLoadErr] = useState("");
   const [saveErr, setSaveErr] = useState("");
   const [saveOk, setSaveOk] = useState("");
   const [saving, setSaving] = useState(false);
 
-  /* ==== búsqueda incremental de servicios ==== */
   useEffect(() => {
     if (step !== "pick") return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
-
     debounceRef.current = setTimeout(async () => {
       const term = qSrv.trim();
       if (term === lastQueryRef.current) return;
       lastQueryRef.current = term;
-
       if (!term) { setSrvResults([]); setSrvMsg(""); return; }
       try {
         setSrvLoading(true);
@@ -370,95 +399,61 @@ function ServiceProductsSection() {
         setSrvLoading(false);
       }
     }, 250);
-
     return () => clearTimeout(debounceRef.current);
   }, [qSrv, step]);
 
-  /* ==== al pasar a 'assign': traer categorías y asignaciones ==== */
   useEffect(() => {
     if (step !== "assign" || !service) return;
     setPage(1);
     setSaveOk(""); setSaveErr(""); setLoadErr("");
-
-    api.get("/catalog/categories")
-      .then(({ data }) => setCats(Array.isArray(data) ? data : []))
-      .catch(() => setCats([]));
-
-    api.get(`/admin/sp/assignments/${service.id}`)
-      .then(({ data }) => setSelected(new Set((data?.productIds || []).map(String))))
-      .catch(() => setSelected(new Set()));
+    api.get("/catalog/categories").then(({ data }) => setCats(Array.isArray(data) ? data : [])).catch(() => setCats([]));
+    api.get(`/admin/sp/assignments/${service.id}`).then(({ data }) => setSelected(new Set((data?.productIds || []).map(String)))).catch(() => setSelected(new Set()));
   }, [step, service]);
 
-  /* ==== cargar artículos desde /catalog/products ==== */
   const loadProducts = useCallback(async () => {
     if (step !== "assign" || !service) return;
-    setLoadErr("");
-    setLoading(true);
+    setLoadErr(""); setLoading(true);
     try {
-      const { data } = await api.get("/catalog/products", {
-        params: { catId: catId || "__all__", q: q || "" }
-      });
-      setAllRows(Array.isArray(data) ? data : []);
-      setPage(1);
+      const { data } = await api.get("/catalog/products", { params: { catId: catId || "__all__", q: q || "" } });
+      setAllRows(Array.isArray(data) ? data : []); setPage(1);
     } catch (e) {
-      setAllRows([]);
-      setLoadErr(e?.response?.data?.error || "No se pudieron cargar los productos");
-    } finally {
-      setLoading(false);
-    }
+      setAllRows([]); setLoadErr(e?.response?.data?.error || "No se pudieron cargar los productos");
+    } finally { setLoading(false); }
   }, [step, service, catId, q]);
 
   useEffect(() => { loadProducts(); }, [loadProducts]);
 
-  /* ==== paginación (cliente) ==== */
   useEffect(() => {
     const start = (page - 1) * PAGE_SIZE;
     setRows(allRows.slice(start, start + PAGE_SIZE));
   }, [allRows, page]);
-  useEffect(() => { setPage(1); }, [catId]);
-  useEffect(() => { setPage(1); }, [q]);
+  useEffect(() => { setPage(1); }, [catId, q]);
 
-  /* ==== toggle asignado ==== */
   const toggle = (id, checked) => {
     const next = new Set(selected);
     if (checked) next.add(String(id)); else next.delete(String(id));
-    setSelected(next);
-    setSaveOk(""); setSaveErr("");
+    setSelected(next); setSaveOk(""); setSaveErr("");
   };
 
-  /* ==== guardar (con verificación y confirmación) ==== */
   const saveAll = async () => {
     if (!service) return;
-    setSaving(true);
-    setSaveErr("");
-    setSaveOk("");
-
+    setSaving(true); setSaveErr(""); setSaveOk("");
     const before = new Set(selected);
-
     try {
-      const res = await api.put(`/admin/sp/assignments/${service.id}`, {
-        productIds: Array.from(selected)
-      });
-
-      // Releer para confirmar
+      const res = await api.put(`/admin/sp/assignments/${service.id}`, { productIds: Array.from(selected) });
       const { data } = await api.get(`/admin/sp/assignments/${service.id}`);
       const afterIds = (data?.productIds || []).map(String);
       const afterSet = new Set(afterIds);
-
       let added = 0, removed = 0;
       for (const id of afterSet) if (!before.has(id)) added++;
       for (const id of before) if (!afterSet.has(id)) removed++;
-
       setSelected(new Set(afterSet));
-
       const stamp = new Date().toLocaleTimeString();
       const baseMsg = res?.data?.message || "Asignaciones guardadas";
       setSaveOk(`${baseMsg} ✓ — asignados: ${afterIds.length} ( +${added} / -${removed} ) — ${stamp}`);
     } catch (e) {
       setSaveErr(e?.response?.data?.error || e.message || "No se pudieron guardar");
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   };
 
   const totalPages = Math.max(1, Math.ceil(allRows.length / PAGE_SIZE));
@@ -553,77 +548,6 @@ function ServiceProductsSection() {
   );
 }
 
-/* =======================  PRESUPUESTOS  ======================= */
-function BudgetsSection() {
-  const [rows, setRows] = useState([]);
-  const [q, setQ] = useState("");
-  const [err, setErr] = useState("");
-  const [savingId, setSavingId] = useState(null);
-
-  const load = useCallback(async () => {
-    try { setRows((await api.get("/admin/service-budgets")).data || []); }
-    catch (e) { setErr(e?.response?.data?.error || e.message); }
-  }, []);
-  useEffect(() => { load(); }, [load]);
-
-  const filtered = useMemo(() => {
-    const k = q.trim().toLowerCase();
-    if (!k) return rows;
-    return rows.filter(r => String(r.name || "").toLowerCase().includes(k));
-  }, [rows, q]);
-
-  const onSave = async (id, val) => {
-    setSavingId(id);
-    try {
-      await api.put(`/admin/service-budgets/${id}`, { presupuesto: Number(val) });
-      await load();
-    } catch (e) {
-      setErr(e?.response?.data?.error || e.message);
-    } finally {
-      setSavingId(null);
-    }
-  };
-
-  return (
-    <section className="card">
-      <h2>Presupuestos por servicio</h2>
-      {err && <div className="alert error">{err}</div>}
-      <div className="toolbar">
-        <input className="input" placeholder="Buscar servicio…" value={q} onChange={(e) => setQ(e.target.value)} />
-      </div>
-      <div className="table">
-        <div className="thead">
-          <div>Servicio</div><div style={{textAlign:'right'}}>Presupuesto</div><div>Acciones</div>
-        </div>
-        <div className="tbody">
-          {filtered.map(r => {
-            const inputId = `b-${r.id}`;
-            return (
-              <div key={r.id} className="tr">
-                <div className="td">{r.name}</div>
-                <div className="td" style={{textAlign:'right'}}>
-                  <input id={inputId} type="number" step="0.01" defaultValue={r.budget ?? ""} className="input mono" style={{maxWidth:160}} />
-                </div>
-                <div className="td">
-                  <button className="btn" onClick={() => onSave(r.id, document.getElementById(inputId).value)} disabled={savingId===r.id}>
-                    {savingId===r.id ? "Guardando…" : "Guardar"}
-                  </button>
-                </div>
-              </div>
-            )
-          })}
-          {filtered.length === 0 && (
-            <div className="tr"><div style={{ gridColumn: "1 / -1" }}>Sin resultados</div></div>
-          )}
-        </div>
-      </div>
-      <div className="hint small" style={{marginTop:8}}>
-        El pedido de un servicio no puede superar el <strong>5%</strong> de su presupuesto. Aquí definís el presupuesto base por servicio.
-      </div>
-    </section>
-  );
-}
-
 /* =======================  ORDERS  ======================= */
 function OrdersSection() {
   const [orders, setOrders] = useState([]);
@@ -687,56 +611,20 @@ export default function AdminPanel() {
 
   return (
     <div className="admin-container">
-      {/* Barra superior de tabs (sticky y compacta) */}
       <div className="admin-topbar" role="tablist" aria-label="Secciones de administración">
-        <button
-          className={`tab-btn ${tab==="products" ? "is-active" : ""}`}
-          onClick={()=>setTab("products")}
-          role="tab"
-          aria-selected={tab==="products"}
-        >
-          Productos
-        </button>
-        <button
-          className={`tab-btn ${tab==="services" ? "is-active" : ""}`}
-          onClick={()=>setTab("services")}
-          role="tab"
-          aria-selected={tab==="services"}
-        >
-          Asignar servicios
-        </button>
-        <button
-          className={`tab-btn ${tab==="serviceProducts" ? "is-active" : ""}`}
-          onClick={()=>setTab("serviceProducts")}
-          role="tab"
-          aria-selected={tab==="serviceProducts"}
-        >
-          Servicio ↔ Productos
-        </button>
-        <button
-          className={`tab-btn ${tab==="budgets" ? "is-active" : ""}`}
-          onClick={()=>setTab("budgets")}
-          role="tab"
-          aria-selected={tab==="budgets"}
-        >
-          Presupuestos
-        </button>
-        <button
-          className={`tab-btn ${tab==="orders" ? "is-active" : ""}`}
-          onClick={()=>setTab("orders")}
-          role="tab"
-          aria-selected={tab==="orders"}
-        >
-          Pedidos
-        </button>
+        <button className={`tab-btn ${tab==="products" ? "is-active" : ""}`} onClick={()=>setTab("products")} role="tab" aria-selected={tab==="products"}>Productos</button>
+        <button className={`tab-btn ${tab==="services" ? "is-active" : ""}`} onClick={()=>setTab("services")} role="tab" aria-selected={tab==="services"}>Asignar servicios</button>
+        <button className={`tab-btn ${tab==="serviceProducts" ? "is-active" : ""}`} onClick={()=>setTab("serviceProducts")} role="tab" aria-selected={tab==="serviceProducts"}>Servicio ↔ Productos</button>
+        <button className={`tab-btn ${tab==="orders" ? "is-active" : ""}`} onClick={()=>setTab("orders")} role="tab" aria-selected={tab==="orders"}>Pedidos</button>
+
+        <div style={{flex:1}} />
+        
       </div>
 
       {tab==="products" && <ProductsSection />}
       {tab==="services" && <AssignServicesSection />}
       {tab==="serviceProducts" && <ServiceProductsSection />}
-      {tab==="budgets" && <BudgetsSection />}
       {tab==="orders" && <OrdersSection />}
     </div>
   );
 }
-

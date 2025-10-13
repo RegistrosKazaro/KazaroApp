@@ -1,0 +1,67 @@
+/* ===== Accesibilidad (helpers globales, livianos) ===== */
+:root {
+  --focus: #1a73e8;
+  --muted: #e5e7eb;
+  --primary: #2563eb;
+}
+
+/* Solo-lectura para lectores de pantalla */
+.sr-only {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0);
+  white-space: nowrap; border: 0;
+}
+
+/* Anillos de foco consistentes (teclado) */
+*:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--focus) 55%, transparent);
+  outline-offset: 2px;
+}
+.input:focus-visible,
+.btn:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--focus) 55%, transparent);
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+
+/* Números tabulares y monospace útil para importes/IDs */
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Variantes de botón utilitarias (reusadas en +/- y acciones secundarias) */
+.btn.small { min-height: 36px; padding: 0 10px; font-size: 13px; border-radius: 10px; }
+.btn.tonal { background: #f3f4f6; color: #0b1220; border: 1px solid #d1d5db; }
+.btn.danger { background: #b91c1c; color: #fff; border-color: #b91c1c; }
+.btn.xs { padding: 6px 10px; border-radius: 10px; }
+
+/* Edición inline compacta */
+.inline-edit { display: inline-flex; gap: 6px; align-items: center; }
+
+/* Barra interior de progreso (fallback genérico) */
+.progress-fill { background: var(--primary); }
+
+/* Alinear a la derecha celdas numéricas */
+.num,
+.table [role="row"] > [role="cell"].num {
+  text-align: right;
+}
+
+/* Truncado de 2 líneas (estándar + webkit para compatibilidad) */
+.truncate-2{
+  display: -webkit-box;            /* Safari/Chrome */
+  -webkit-line-clamp: 2;           /* prefijo */
+  line-clamp: 2;                   /* estándar */
+  -webkit-box-orient: vertical;    /* prefijo */
+  box-orient: vertical;            /* ignorado donde no aplica */
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Respetar preferencias del usuario (reduce motion) */
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}

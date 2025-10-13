@@ -1,42 +1,125 @@
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+.appbar{
+  background:#0b1220;
+  color:#fff;
+  padding:12px 16px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  position:sticky; top:0; z-index:50;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
+.appbar .brand{
+  font-weight:800;
+  font-size:20px;
+  color:#fff;
+  text-decoration:none;
+  letter-spacing:.2px;
 }
 
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.appbar-right{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
+.pill{
+  border:1px solid rgba(255,255,255,.45);
+  background:transparent;
+  color:#fff;
+  padding:8px 12px;
+  border-radius:999px;
+  cursor:pointer;
+  text-decoration:none;
+  line-height:1;
+  display:inline-flex;
+  align-items:center;
+  gap:.35rem;
+  transition: background .15s ease, color .15s ease, border-color .15s ease, transform .06s ease;
+}
+.pill:hover{
+  border-color:#ffffff;
+  background:rgba(255,255,255,.10);
+}
+.pill:active{ transform: translateY(1px); }
+.pill:focus-visible{
+  outline:3px solid rgba(143,211,255,.8);
+  outline-offset:2px;
 }
 
-.card {
-  padding: 2em;
+/* Estado activo (NavLink) */
+.pill.active,
+.pill[aria-current="page"]{
+  background:rgba(255,255,255,.18);
+  border-color:#ffffff;
 }
 
-.read-the-docs {
-  color: #888;
+/* Variantes */
+.pill.ghost{
+  border-color:rgba(255,255,255,.35);
+  background:transparent;
+}
+.pill.danger{
+  border-color:#fda4a4;
+  background:#ef4444;
+}
+.pill.danger:hover{
+  border-color:#fff;
+  background:#dc2626;
+}
+
+/* Contador del carrito */
+.count{
+  min-width: 18px; height: 18px;
+  padding: 0 6px;
+  border-radius:999px;
+  background:#2563eb;
+  color:#fff;
+  font-size:12px; font-weight:800;
+  display:inline-flex; align-items:center; justify-content:center;
+}
+
+/* Usuario (texto) */
+.user{ opacity:.9; }
+
+/* Contenido principal */
+.appmain{
+  padding:16px;
+}
+
+/* Estados */
+.state{
+  background:#f4f7ff;
+  border:1px solid #dbe3ff;
+  padding:12px;
+  border-radius:10px;
+}
+.state.error{
+  background:#fff4f4;
+  border-color:#ffd1d1;
+}
+
+/* Controles base */
+.btn{
+  border:1px solid #1d4ed8;
+  background:#2563eb;
+  color:#fff;
+  padding:8px 14px;
+  border-radius:10px;
+  cursor:pointer;
+}
+.input{
+  width:100%;
+  padding:10px 12px;
+  border:1px solid #d9dfeb;
+  border-radius:10px;
+}
+
+/* Responsive */
+@media (max-width: 560px){
+  .appbar{ padding:10px 12px; }
+  .appbar .brand{ font-size:18px; }
+  .appbar-right{ gap:8px; }
+  .pill{ padding:7px 10px; }
 }
