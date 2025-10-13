@@ -41,9 +41,14 @@ export default function Cart() {
     return [u?.nombre, u?.apellido, `(${u?.username || ""})`].filter(Boolean).join(" ");
   }, [user]);
 
-  // usamos solo budget para evitar warnings de ESLint
+  // Presupuesto del servicio
   const { budget } = useServiceBudget(service?.id);
+  const nf = useMemo(
+    () => new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }),
+    []
+  );
 
+  // % de uso
   const usagePct = useMemo(() => {
     if (!budget || budget <= 0) return null;
     return (Number(total) / Number(budget)) * 100;
@@ -73,23 +78,29 @@ export default function Cart() {
     <div className="catalog" style={{maxWidth: 960, marginInline: "auto"}}>
       <h2>Carrito</h2>
 
+      {/* Cabecera con usuario/servicio */}
       <section className="state" style={{ marginBottom: 12 }}>
         <div><strong>Usuario:</strong> {userLabel}</div>
+
         {service && (
           <div>
             <strong>Servicio:</strong> {service?.name} <small>(ID: {service?.id})</small>{" "}
             {String(role).includes("super") && (<>• <Link to="/app/supervisor/services">cambiar</Link></>)}
           </div>
         )}
+
         {!service && String(role).includes("super") && (
           <div style={{ marginTop: 6 }}>
             <strong>Servicio:</strong> <em>no seleccionado</em> — <Link to="/app/supervisor/services">elegir</Link>
           </div>
         )}
-        {budget != null && service && (
-          <div>
-            <strong>Presupuesto del servicio:</strong>{" "}
-            {new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(budget || 0)}
+
+        {/* % de presupuesto usado (verde/rojo) — justo debajo del servicio */}
+        {service && usagePct != null && (
+          <div style={{ marginTop: 8 }}>
+            <span className={`budget-chip ${overLimit ? "over" : "ok"}`}>
+              {usagePct.toFixed(2)}% 
+            </span>
           </div>
         )}
       </section>
@@ -124,9 +135,7 @@ export default function Cart() {
                         </div>
                       )}
                     </td>
-                    <td className="mono">
-                      {new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(Number(it.price || 0))}
-                    </td>
+                    <td className="mono">{nf.format(Number(it.price || 0))}</td>
                     <td>
                       <input
                         type="number"
@@ -144,9 +153,7 @@ export default function Cart() {
                         aria-label={`Cantidad de ${it.name}`}
                       />
                     </td>
-                    <td className="mono">
-                      {new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(sub)}
-                    </td>
+                    <td className="mono">{nf.format(sub)}</td>
                     <td>
                       <button className="btn" onClick={() => remove(it.productId)}>Quitar</button>
                     </td>
@@ -177,9 +184,7 @@ export default function Cart() {
               )}
               <tr>
                 <td colSpan={3} style={{ textAlign: "right", fontWeight: 700 }}>Total</td>
-                <td className="mono" colSpan={2}>
-                  {new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(total)}
-                </td>
+                <td className="mono" colSpan={2}>{nf.format(total)}</td>
               </tr>
             </tfoot>
           </table>
@@ -200,12 +205,21 @@ export default function Cart() {
 
           {remito && (
             <section className="state" style={{ marginTop: 12 }}>
+              {/* % arriba del remito */}
+              {usagePct != null && (
+                <div style={{ marginBottom: 6 }}>
+                  <span className={`budget-chip ${overLimit ? "over" : "ok"}`}>
+                    {usagePct.toFixed(2)}% del presupuesto usado
+                  </span>
+                </div>
+              )}
+
               <h3 style={{ marginTop: 0 }}>Remito generado</h3>
               <div><strong>Número:</strong> {remito.numero}</div>
               <div><strong>Fecha:</strong> {new Date(remito.fecha).toLocaleString("es-AR")}</div>
               <div><strong>Generado por:</strong> {remito.empleado}</div>
               {remito.servicio && <div><strong>Servicio:</strong> {remito.servicio.name}</div>}
-              <div><strong>Total:</strong> {new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(remito.total || 0)}</div>
+              <div><strong>Total:</strong> {nf.format(remito.total || 0)}</div>
               {remito.pdfUrl && (
                 <div style={{ marginTop: 8 }}>
                   <a className="pill" href={remito.pdfUrl} target="_blank" rel="noopener noreferrer">Descargar PDF</a>

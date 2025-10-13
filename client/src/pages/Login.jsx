@@ -20,7 +20,11 @@ export default function Login() {
     try {
       const { roles = [] } = await login(username, password);
       const rolesLower = roles.map((r) => String(r).toLowerCase());
-      if (rolesLower.length > 1) return nav("/role-select", { replace: true });
+
+      // Si el usuario tiene más de un rol -> pantalla de selección
+      if (rolesLower.length > 1) return nav("/roles", { replace: true });
+
+      // Si tiene un solo rol, lo mandamos a su landing directa
       if (rolesLower.some((r) => r.includes("super"))) {
         nav("/app/supervisor/services", { replace: true });
       } else {

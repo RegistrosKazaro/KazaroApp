@@ -20,7 +20,7 @@ import Cart from "./pages/Cart";
 import Services from "./pages/Services";
 import AdminPanel from "./pages/AdminPanel";
 import Reports from "./pages/Reports";
-import ServiceBudgets from "./pages/ServiceBudgets"; // página nueva (presupuestos en ruta propia)
+import ServiceBudgets from "./pages/ServiceBudgets";
 import "./styles/app.css";
 
 /** Protege todo lo que cuelga de /app/:role */
@@ -32,18 +32,43 @@ function Guarded() {
   return <Outlet />;
 }
 
-/** Layout con navbar, preservando el role en los links */
+/** Solo admins pueden ver las páginas de administración */
+function AdminOnly({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="state">Cargando…</div>;
+  const isAdmin = (user?.roles || [])
+    .map((r) => String(r).toLowerCase())
+    .includes("admin");
+  return isAdmin ? children : <Navigate to="/roles" replace />;
+}
+
+/** Redirección por defecto dentro de /app/:role según el rol */
+function RoleIndexRedirect() {
+  const { role } = useParams();
+  let target = "admin";
+  if (role === "administrativo") target = "products";
+  else if (role === "supervisor") target = "services";
+  return <Navigate to={target} replace />;
+}
+
+/** Navbar condicional por rol */
 function Layout() {
-  const { count } = useCart();
-  const { role } = useParams(); // administrativo / supervisor / etc
+  const { role } = useParams();
   const base = `/app/${role}`;
 
   const auth = useAuth();
   const navigate = useNavigate();
+  const { count } = useCart();
 
-  // compatibilidad con distintos nombres del método de logout
+  const roles = (auth?.user?.roles || []).map((r) => String(r).toLowerCase());
+  const isAdmin = roles.includes("admin");
+
+  const userLabel =
+    auth?.user?.username ||
+    [auth?.user?.nombre, auth?.user?.apellido].filter(Boolean).join(" ") ||
+    "Usuario";
+
   const doLogout = auth?.logout || auth?.signOut || auth?.logOut;
-
   const handleLogout = async () => {
     try {
       await Promise.resolve(doLogout?.());
@@ -53,47 +78,42 @@ function Layout() {
   };
 
   const navClass = ({ isActive }) => `pill${isActive ? " active" : ""}`;
-  const userLabel =
-    auth?.user?.username ||
-    [auth?.user?.nombre, auth?.user?.apellido].filter(Boolean).join(" ") ||
-    "Usuario";
 
   return (
     <div className="app">
       <nav className="appbar" role="navigation" aria-label="Navegación principal">
-        <Link to={`${base}/products`} className="brand">
+        {/* Brand: admin → admin; no admin → carrito */}
+        <Link to={isAdmin ? `${base}/admin` : `${base}/cart`} className="brand">
           Kazaro
         </Link>
 
         <div className="appbar-right">
-          <NavLink to={`${base}/products`} className={navClass}>
-            Productos
-          </NavLink>
-          <NavLink to={`${base}/services`} className={navClass}>
-            Servicios
-          </NavLink>
-          <NavLink to={`${base}/admin`} className={navClass}>
-            Admin
-          </NavLink>
-          <NavLink to={`${base}/admin/budgets`} className={navClass}>
-            Presupuestos
-          </NavLink>
-          <NavLink to={`${base}/cart`} className={navClass}>
-            Carrito <span className="count">{count}</span>
-          </NavLink>
-
-          <span className="user">{userLabel}</span>
-          <Link to="/roles" className="pill ghost" aria-label="Cambiar rol o usuario">
-            Cambiar rol
-          </Link>
-          <button
-            type="button"
-            className="pill danger"
-            onClick={handleLogout}
-            aria-label="Cerrar sesión"
-          >
-            Salir
-          </button>
+          {isAdmin ? (
+            <>
+              <NavLink to={`${base}/admin`} className={navClass}>Admin</NavLink>
+              <NavLink to={`${base}/admin/budgets`} className={navClass}>Presupuestos</NavLink>
+              <NavLink to={`${base}/reports`} className={navClass}>Informes</NavLink>
+              <NavLink to={`${base}/cart`} className={navClass}>
+                Carrito <span className="count">{count}</span>
+              </NavLink>
+              <button type="button" className="pill danger" onClick={handleLogout}>
+                Salir
+              </button>
+            </>
+          ) : (
+            <>
+              {/* Nombre del usuario */}
+              <span className="user">{userLabel}</span>
+              {/* Carrito (con contador) */}
+              <NavLink to={`${base}/cart`} className={navClass}>
+                Carrito <span className="count">{count}</span>
+              </NavLink>
+              {/* Salir */}
+              <button type="button" className="pill danger" onClick={handleLogout}>
+                Salir
+              </button>
+            </>
+          )}
         </div>
       </nav>
 
@@ -110,21 +130,56 @@ export default function App() {
       {/* Login accesible por ambas rutas */}
       <Route path="/" element={<Login />} />
       <Route path="/login" element={<Login />} />
+
+      {/* Pantalla para elegir entre Administrativo / Supervisor */}
       <Route path="/roles" element={<RoleSelect />} />
+
+      {/* Si entran a /app sin rol => mandamos a /roles */}
+      <Route path="/app" element={<Navigate to="/roles" replace />} />
 
       {/* TODAS las rutas de app con :role */}
       <Route path="/app/:role" element={<Guarded />}>
         <Route element={<Layout />}>
+          {/* Páginas de Admin (protegidas) */}
+          <Route
+            path="admin"
+            element={
+              <AdminOnly>
+                <AdminPanel />
+              </AdminOnly>
+            }
+          />
+          <Route
+            path="admin/budgets"
+            element={
+              <AdminOnly>
+                <ServiceBudgets />
+              </AdminOnly>
+            }
+          />
+          <Route
+            path="reports"
+            element={
+              <AdminOnly>
+                <Reports />
+              </AdminOnly>
+            }
+          />
+
+          {/* Rutas de uso general */}
           <Route path="products" element={<Products />} />
           <Route path="services" element={<Services />} />
-          <Route path="admin" element={<AdminPanel />} />
-          <Route path="admin/budgets" element={<ServiceBudgets />} />
-          <Route path="reports" element={<Reports />} />
           <Route path="cart" element={<Cart />} />
-          <Route index element={<Navigate to="products" replace />} />
+
+          {/* Índice por rol */}
+          <Route index element={<RoleIndexRedirect />} />
+
+          {/* Cualquier subruta inválida bajo /app/:role vuelve al índice por rol */}
+          <Route path="*" element={<RoleIndexRedirect />} />
         </Route>
       </Route>
 
+      {/* 404 global */}
       <Route
         path="*"
         element={<div className="state error" style={{ padding: 20 }}>Ruta no encontrada</div>}
