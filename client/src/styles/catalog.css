@@ -369,164 +369,12 @@
 }
 
 
-.admin-container {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 20px;
-}
+/* ===================================================== */
+/* ================  Admin (separado)  ================= */
+/* Este bloque va en admin-panel.css, pero lo dejaste   */
+/* aquí antes. Ahora lo migramos al archivo de admin.   */
+/* ===================================================== */
 
-.card {
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 14px;
-  padding: 18px;
-  margin-bottom: 16px;
-  box-shadow: 0 1px 2px rgba(0,0,0,.04);
-}
-
-h2 {
-  margin: 0 0 12px 0;
-  font-size: 22px;
-  font-weight: 700;
-}
-
-.tabs {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
-}
-.btn {
-  border: 1px solid #d1d5db;
-  background: #fff;
-  padding: 8px 14px;
-  border-radius: 9999px;
-  cursor: pointer;
-  font-weight: 500;
-}
-.btn.primary {
-  background: #111827;
-  color: #fff;
-  border-color: #111827;
-}
-.btn:disabled {
-  opacity: .6;
-  cursor: default;
-}
-
-.row {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
-}
-.col {
-  min-width: 240px;
-}
-.label {
-  display: block;
-  font-size: 12px;
-  color: #374151;
-  margin: 0 0 6px;
-}
-.input {
-  width: 100%;
-  border: 1px solid #d1d5db;
-  background: #fff;
-  border-radius: 10px;
-  padding: 10px 12px;
-  font-size: 14px;
-}
-.input-group {
-  display: flex;
-  gap: 8px;
-}
-.input:focus {
-  outline: none;
-  border-color: #111827;
-  box-shadow: 0 0 0 3px rgba(17,24,39,.15);
-}
-
-.table { width: 100%; }
-.thead, .tbody .tr {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0,1fr));
-  gap: 8px;
-  align-items: center;
-}
-.thead {
-  font-weight: 600;
-  border-bottom: 1px solid #e5e7eb;
-  padding: 8px 0;
-}
-.tbody .tr {
-  border-bottom: 1px solid #f3f4f6;
-  padding: 8px 0;
-}
-
-.alert {
-  border-radius: 10px;
-  padding: 10px 12px;
-  margin-bottom: 12px;
-  font-size: 14px;
-}
-.alert.error {
-  color: #991b1b;
-  border: 1px solid #fecaca;
-  background: #fee2e2;
-}
-.hint {
-  border: 1px dashed #cbd5e1;
-  background: #f8fafc;
-  padding: 10px 12px;
-  border-radius: 10px;
-  margin-top: 12px;
-}
-.hint.small { font-size: 12px; color: #475569; }
-
-.cards-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 12px;
-  margin-top: 6px;
-}
-.service-card {
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  padding: 12px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  transition: box-shadow .15s ease, border-color .15s ease;
-}
-.service-card:hover {
-  border-color: #111827;
-  box-shadow: 0 2px 8px rgba(0,0,0,.06);
-}
-.service-card.assigned {
-  border-color: #111827;
-  background: #f3f4f6;
-}
-.service-title {
-  font-weight: 600;
-  font-size: 14px;
-}
-
-.switch {
-  position: relative; display: inline-block; width: 44px; height: 24px;
-}
-.switch input { display:none; }
-.slider {
-  position: absolute; cursor: pointer; inset: 0;
-  background: #e5e7eb; transition: .2s; border-radius: 9999px;
-}
-.slider:before {
-  position: absolute; content: "";
-  height: 18px; width: 18px; left: 3px; top: 3px;
-  background: white; transition: .2s; border-radius: 9999px; box-shadow: 0 1px 2px rgba(0,0,0,.15);
-}
-.switch input:checked + .slider { background: #111827; }
-.switch input:checked + .slider:before { transform: translateX(20px); }
 
 /* ===================== */
 /*  Presupuesto (nuevo)  */
@@ -676,3 +524,30 @@ h2 {
   }
   .catalog .sup-table tfoot .budget-progress{ width: 100% !important; }
 }
+
+/* ======= Pequeños helpers extra para el Carrito ======= */
+
+/* Contenedor +/- input cantidad */
+.qty-control { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Variantes usadas en los botones +/- */
+.btn.small { min-height: 36px; padding: 0 10px; font-size: 13px; border-radius: 10px; }
+.btn.tonal { background: #f3f4f6; color: #0b1220; border: 1px solid #d1d5db; }
+
+/* Fallback por si no se carga a11y.css */
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-variant-numeric: tabular-nums; }
+
+/* Fallback de barra de presupuesto accesible */
+.progress-fill { background: var(--primary); }
+
+/* Pill (link de PDF del remito) */
+.pill {
+  display: inline-block;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  text-decoration: none;
+}
+.pill:hover { background: #f9fafb; }
