@@ -302,22 +302,53 @@ const EMP_NAME_EXPR = `
 const SRV_ID = "ServiciosID";
 const SRV_NAME = "ServicioNombre";
 
-// Buscar servicios
+// Buscar servicios (👁️ incluye estado de asignación para desactivar en el UI)
 router.get("/services", mustBeAdmin, (req, res) => {
   try {
+    ensureSupervisorPivotExclusive(); // asegura índice UNIQUE y depura duplicados
     const q = String(req.query.q ?? "").trim();
     const limit = Math.min(Math.max(parseInt(req.query.limit ?? "25", 10) || 25, 1), 100);
     if (!q) return res.json([]);
     const like = `%${q}%`;
+
     const rows = db.prepare(`
-      SELECT ${SRV_ID} AS id, ${SRV_NAME} AS name
+      SELECT 
+        s.${SRV_ID} AS id, 
+        s.${SRV_NAME} AS name,
+        -- 1 si ya tiene supervisor asignado (sirve para "disabled" en el front)
+        EXISTS (
+          SELECT 1 FROM supervisor_services a
+          WHERE CAST(a.ServicioID AS TEXT) = CAST(s.${SRV_ID} AS TEXT)
+        ) AS is_assigned,
+        -- Supervisor asignado (si hay)
+        (
+          SELECT a.EmpleadoID
+          FROM supervisor_services a
+          WHERE CAST(a.ServicioID AS TEXT) = CAST(s.${SRV_ID} AS TEXT)
+          LIMIT 1
+        ) AS assigned_to_id,
+        (
+          SELECT ${EMP_NAME_EXPR}
+          FROM supervisor_services a
+          JOIN Empleados e ON e.${EMP_ID} = a.EmpleadoID
+          WHERE CAST(a.ServicioID AS TEXT) = CAST(s.${SRV_ID} AS TEXT)
+          LIMIT 1
+        ) AS assigned_to
       FROM Servicios s
-      WHERE (${SRV_NAME} LIKE @like OR CAST(${SRV_ID} AS TEXT) LIKE @like)
-      ORDER BY ${SRV_NAME} COLLATE NOCASE
+      WHERE (s.${SRV_NAME} LIKE @like OR CAST(s.${SRV_ID} AS TEXT) LIKE @like)
+      ORDER BY s.${SRV_NAME} COLLATE NOCASE
       LIMIT ${limit}
     `).all({ like });
-    res.json(rows);
-  } catch {
+
+    // Normalizo is_assigned a booleano 0/1 (SQLite devuelve 0/1 pero por las dudas)
+    const normalized = rows.map(r => ({
+      ...r,
+      is_assigned: Number(r.is_assigned) === 1 ? 1 : 0
+    }));
+
+    res.json(normalized);
+  } catch (e) {
+    console.error("GET /admin/services error:", e);
     res.status(500).json({ error: "Error al listar servicios" });
   }
 });
@@ -365,7 +396,7 @@ router.get("/assignments", mustBeAdmin, (req, res) => {
   }
 });
 
-// Asignar (EXCLUSIVO: un servicio no puede estar en 2 supervisores)
+// Asignar (EXCLUSIVO) — devuelve también “a quién quedó asignado”
 router.post("/assignments", mustBeAdmin, (req, res) => {
   try {
     const EmpleadoID = Number(req.body?.EmpleadoID);
@@ -375,7 +406,22 @@ router.post("/assignments", mustBeAdmin, (req, res) => {
     }
 
     assignServiceToSupervisorExclusive(EmpleadoID, ServicioID);
-    return res.status(201).json({ ok: true });
+
+    const assigned = db.prepare(`
+      SELECT a.rowid AS id, a.EmpleadoID, a.ServicioID,
+             (${EMP_NAME_EXPR}) AS supervisor_username,
+             s.${SRV_NAME}      AS service_name
+      FROM supervisor_services a
+      LEFT JOIN Empleados e ON e.${EMP_ID} = a.EmpleadoID
+      LEFT JOIN Servicios s ON s.${SRV_ID} = a.ServicioID
+      WHERE CAST(a.ServicioID AS TEXT) = CAST(? AS TEXT)
+      LIMIT 1
+    `).get(ServicioID);
+
+    return res.status(201).json({
+      ok: true,
+      assignment: assigned || { EmpleadoID, ServicioID }
+    });
   } catch (e) {
     if (e?.status === 409 || e?.code === "SERVICE_TAKEN") {
       return res.status(409).json({ error: e.message });
@@ -389,7 +435,7 @@ router.post("/assignments", mustBeAdmin, (req, res) => {
   }
 });
 
-// (Opcional) Reasignar explícitamente un servicio a otro supervisor
+// Reasignar — también devuelve los nombres actualizados
 router.post("/assignments/reassign", mustBeAdmin, (req, res) => {
   try {
     const EmpleadoID = Number(req.body?.EmpleadoID);
@@ -398,7 +444,19 @@ router.post("/assignments/reassign", mustBeAdmin, (req, res) => {
       return res.status(400).json({ error: "EmpleadoID y ServicioID son requeridos" });
     }
     reassignServiceToSupervisor(EmpleadoID, ServicioID);
-    res.json({ ok: true });
+
+    const assigned = db.prepare(`
+      SELECT a.rowid AS id, a.EmpleadoID, a.ServicioID,
+             (${EMP_NAME_EXPR}) AS supervisor_username,
+             s.${SRV_NAME}      AS service_name
+      FROM supervisor_services a
+      LEFT JOIN Empleados e ON e.${EMP_ID} = a.EmpleadoID
+      LEFT JOIN Servicios s ON s.${SRV_ID} = a.ServicioID
+      WHERE CAST(a.ServicioID AS TEXT) = CAST(? AS TEXT)
+      LIMIT 1
+    `).get(ServicioID);
+
+    res.json({ ok: true, assignment: assigned || { EmpleadoID, ServicioID } });
   } catch (e) {
     console.error("POST /admin/assignments/reassign error:", e);
     res.status(500).json({ error: e?.message || "No se pudo reasignar" });
@@ -436,3 +494,4 @@ router.put("/service-budgets/:id", mustBeAdmin, (req, res) => {
 });
 
 export default router;
+

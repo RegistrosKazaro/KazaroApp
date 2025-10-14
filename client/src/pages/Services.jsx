@@ -17,8 +17,19 @@ export default function ServicesPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
-  // === NUEVO: buscador ===
+  // === Buscador ===
   const [q, setQ] = useState("");
+
+  // 👉 Nombre a mostrar al lado de “Asignado”
+  const assignedToName = useMemo(() => {
+    // Intentamos armar "Nombre Apellido", sino fullName, sino username, sino "ID X"
+    const composed =
+      [user?.Nombre, user?.Apellido].filter(Boolean).join(" ").trim() ||
+      user?.fullName ||
+      user?.nombreCompleto ||
+      user?.name;
+    return composed || user?.username || `ID ${user?.id ?? ""}`;
+  }, [user]);
 
   // Redirección si no es supervisor
   useEffect(() => {
@@ -33,7 +44,7 @@ export default function ServicesPage() {
     }
   }, [user, loadingUser, nav]);
 
-  // Cargar servicios desde backend (solo asignados en la BD)
+  // Cargar servicios del supervisor (asignados en la BD)
   useEffect(() => {
     if (loadingUser || !user) return;
 
@@ -49,7 +60,7 @@ export default function ServicesPage() {
 
         setServices(rows);
 
-        // auto-selección del primero si no hay ninguno
+        // auto-seleccionar el primero si no hay ninguno elegido
         if (rows.length && !service?.id) {
           setService({ id: rows[0].id, name: rows[0].name });
         }
@@ -68,30 +79,28 @@ export default function ServicesPage() {
     };
   }, [user, loadingUser, setService, service?.id]);
 
-  // === NUEVO: filtrar por nombre o ID (case-insensitive) ===
+  // Filtrado por nombre o ID
   const filtered = useMemo(() => {
     const term = String(q || "").trim().toLowerCase();
     if (!term) return services;
-    return services.filter(it => {
+    return services.filter((it) => {
       const name = String(it?.name ?? "").toLowerCase();
       const idStr = String(it?.id ?? "").toLowerCase();
       return name.includes(term) || idStr.includes(term);
     });
   }, [q, services]);
 
-  // Paginación sobre el filtrado
+  // Paginación
   const [page, setPage] = useState(1);
   const pageCount = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
   const start = (page - 1) * PER_PAGE;
   const pageItems = filtered.slice(start, start + PER_PAGE);
 
-  // Corrige página cuando cambian longitudes
   useEffect(() => {
     if (page > pageCount) setPage(pageCount);
     if (page < 1) setPage(1);
   }, [filtered.length, page, pageCount]);
 
-  // Al cambiar el término de búsqueda, volver a la primera página
   useEffect(() => { setPage(1); }, [q]);
 
   const handlePick = (it) => setService({ id: it.id, name: it.name });
@@ -118,7 +127,7 @@ export default function ServicesPage() {
         <div className="state">Cargando servicios…</div>
       ) : services.length ? (
         <>
-          {/* === NUEVO: barra de búsqueda === */}
+          {/* Barra de búsqueda */}
           <div
             className="catalog-toolbar"
             style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}
@@ -162,6 +171,9 @@ export default function ServicesPage() {
               <div className="services-grid">
                 {pageItems.map((it) => {
                   const selected = Number(service?.id) === Number(it.id);
+                  // Si la API algún día devuelve assigned_to, lo usamos; si no, mostramos al usuario actual
+                  const who = it.assigned_to || assignedToName;
+
                   return (
                     <button
                       key={String(it.id)}
@@ -169,7 +181,16 @@ export default function ServicesPage() {
                       onClick={() => handlePick(it)}
                       title={it.name}
                     >
-                      <div>{it.name}</div>
+                      <div className="service-card__row">
+                        <div className="service-card__name">{it.name}</div>
+
+                        {/* 👉 PILL: “Asignado a …” */}
+                        <span className="pill pill--assigned" title={`Asignado a ${who}`}>
+                          <strong>Asignado</strong>
+                          <span className="pill__who">&nbsp;a {who}</span>
+                        </span>
+                      </div>
+
                       {selected && <small>Seleccionado</small>}
                     </button>
                   );
@@ -236,6 +257,42 @@ export default function ServicesPage() {
           </div>
         </div>
       )}
+
+      {/* Estilos mínimos para el pill y fila — podés moverlos a services.css */}
+      <style>{`
+        .service-card__row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: .5rem;
+        }
+        .service-card__name {
+          font-weight: 600;
+          color: #0f172a;
+          text-align: left;
+        }
+        .pill {
+          border-radius: 999px;
+          padding: .25rem .5rem;
+          font-size: .75rem;
+          line-height: 1;
+          display: inline-flex;
+          align-items: center;
+          white-space: nowrap;
+        }
+        .pill--assigned {
+          background: #eef2ff;
+          color: #1d4ed8;
+          border: 1px solid #c7d2fe;
+        }
+        .pill--primary {
+          background: #ecfeff;
+          color: #0369a1;
+          border: 1px solid #bae6fd;
+        }
+        .pill__who { font-weight: 500; }
+      `}</style>
     </div>
   );
 }
+  
