@@ -8,6 +8,22 @@ import "../styles/services.css";
 
 const PER_PAGE = 15;
 
+function displayNameFromUser(u) {
+  if (!u) return "";
+  const parts = [u?.Nombre ?? u?.nombre, u?.Apellido ?? u?.apellido].filter(Boolean);
+  const full = parts.join(" ").trim();
+  return (
+    full ||
+    u?.fullName ||
+    u?.nombreCompleto ||
+    u?.displayName ||
+    u?.name ||
+    u?.username ||
+    u?.email ||
+    (u?.id != null ? `ID ${u.id}` : "")
+  );
+}
+
 export default function ServicesPage() {
   const nav = useNavigate();
   const { user, loading: loadingUser } = useAuth();
@@ -17,34 +33,29 @@ export default function ServicesPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
-  // === Buscador ===
   const [q, setQ] = useState("");
 
-  // 👉 Nombre a mostrar al lado de “Asignado”
-  const assignedToName = useMemo(() => {
-    // Intentamos armar "Nombre Apellido", sino fullName, sino username, sino "ID X"
-    const composed =
-      [user?.Nombre, user?.Apellido].filter(Boolean).join(" ").trim() ||
-      user?.fullName ||
-      user?.nombreCompleto ||
-      user?.name;
-    return composed || user?.username || `ID ${user?.id ?? ""}`;
-  }, [user]);
+  const roles = useMemo(() => (user?.roles || []).map((r) => String(r).toLowerCase()), [user]);
+  const isAdmin = roles.includes("admin");
+  const isSupervisor = roles.includes("supervisor");
 
-  // Redirección si no es supervisor
+  const assignedToName = useMemo(() => displayNameFromUser(user), [user]);
+
+  // Permitir esta pantalla a supervisor **o** admin. Redirigir solo si no es ninguno.
   useEffect(() => {
     if (loadingUser) return;
     if (!user) {
       nav("/login", { replace: true });
       return;
     }
-    const roles = (user?.roles || []).map((r) => String(r).toLowerCase());
-    if (!roles.includes("supervisor")) {
+    if (!isSupervisor && !isAdmin) {
       nav("/app/administrativo/products", { replace: true });
     }
-  }, [user, loadingUser, nav]);
+  }, [user, loadingUser, nav, isSupervisor, isAdmin]);
 
-  // Cargar servicios del supervisor (asignados en la BD)
+  // Carga de datos:
+  // - Admin: usa /admin/services?q=... (muestra Asignado a X / Disponible)
+  // - Supervisor: usa /supervisor/services (sus servicios)
   useEffect(() => {
     if (loadingUser || !user) return;
 
@@ -52,16 +63,23 @@ export default function ServicesPage() {
     (async () => {
       setLoading(true);
       setErr("");
+
       try {
-        const r = await api.get("/supervisor/services", { withCredentials: true });
-        const rows = Array.isArray(r.data) ? r.data : [];
+        let rows = [];
+        if (isAdmin) {
+          const r = await api.get("/admin/services", { params: { q: String(q || "").trim(), limit: 50 } });
+          rows = Array.isArray(r.data) ? r.data : [];
+        } else {
+          // supervisor
+          const r = await api.get("/supervisor/services", { withCredentials: true });
+          rows = Array.isArray(r.data) ? r.data : [];
+        }
 
         if (!alive) return;
-
         setServices(rows);
 
-        // auto-seleccionar el primero si no hay ninguno elegido
-        if (rows.length && !service?.id) {
+        // auto-seleccionar el primero si no hay ninguno elegido (solo para supervisor)
+        if (!isAdmin && rows.length && !service?.id) {
           setService({ id: rows[0].id, name: rows[0].name });
         }
 
@@ -69,7 +87,7 @@ export default function ServicesPage() {
       } catch (e) {
         console.error("[services] error:", e);
         if (!alive) return;
-        setErr("No se pudieron cargar tus servicios.");
+        setErr("No se pudieron cargar los servicios.");
         setLoading(false);
       }
     })();
@@ -77,9 +95,9 @@ export default function ServicesPage() {
     return () => {
       alive = false;
     };
-  }, [user, loadingUser, setService, service?.id]);
+  }, [user, loadingUser, isAdmin, q, setService, service?.id]);
 
-  // Filtrado por nombre o ID
+  // Filtrado por nombre o ID (sobre lo que ya trajo el endpoint)
   const filtered = useMemo(() => {
     const term = String(q || "").trim().toLowerCase();
     if (!term) return services;
@@ -118,16 +136,16 @@ export default function ServicesPage() {
   if (!user) return <Navigate to="/login" replace />;
 
   return (
-    <div className="catalog" style={{ maxWidth: 720, marginInline: "auto" }}>
-      <h2>Seleccioná tu servicio</h2>
+    <div className="catalog" style={{ maxWidth: 920, marginInline: "auto" }}>
+      <h2>{isAdmin ? "Servicios (Administrador)" : "Seleccioná tu servicio"}</h2>
 
       {err && <div className="state error">{err}</div>}
 
       {loading ? (
         <div className="state">Cargando servicios…</div>
-      ) : services.length ? (
+      ) : (
         <>
-          {/* Barra de búsqueda */}
+          {/* Barra de búsqueda (en admin es clave; en supervisor solo filtra local) */}
           <div
             className="catalog-toolbar"
             style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}
@@ -140,9 +158,9 @@ export default function ServicesPage() {
               className="input"
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Nombre o ID del servicio…"
+              placeholder={isAdmin ? "Buscá servicios para asignar… (nombre o ID)" : "Nombre o ID del servicio…"}
               autoComplete="off"
-              style={{ flex: 1, maxWidth: 360 }}
+              style={{ flex: 1, maxWidth: 420 }}
             />
             {q && (
               <button
@@ -159,39 +177,69 @@ export default function ServicesPage() {
           {/* Resultados */}
           {filtered.length === 0 ? (
             <div className="state">
-              No hay servicios que coincidan con “{q}”.
-              <div style={{ marginTop: 8 }}>
-                <button className="pill pill--primary" onClick={() => setQ("")}>
-                  Ver todos
-                </button>
-              </div>
+              {isAdmin
+                ? "No hay resultados. Escribí arriba para buscar."
+                : `No hay servicios que coincidan con “${q}”.`}
+              {q && (
+                <div style={{ marginTop: 8 }}>
+                  <button className="pill pill--primary" onClick={() => setQ("")}>
+                    Ver todos
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <>
               <div className="services-grid">
                 {pageItems.map((it) => {
                   const selected = Number(service?.id) === Number(it.id);
-                  // Si la API algún día devuelve assigned_to, lo usamos; si no, mostramos al usuario actual
-                  const who = it.assigned_to || assignedToName;
+
+                  // ADMIN: mostrar a quién está asignado (de /admin/services)
+                  // SUPERVISOR: mostrar su propio nombre (o el que venga si en un futuro se incluye).
+                  let who = assignedToName;
+                  if (isAdmin) {
+                    if (Number(it?.is_assigned) === 1 || it?.isAssigned) {
+                      who = it.assigned_to || it.assignedTo || (it.assigned_to_id ? `ID ${it.assigned_to_id}` : "otro supervisor");
+                    } else {
+                      who = null; // disponible
+                    }
+                  } else {
+                    // supervisor
+                    who = it.assigned_to || assignedToName;
+                  }
+
+                  const isAssigned =
+                    isAdmin
+                      ? (Number(it?.is_assigned) === 1 || !!it?.isAssigned)
+                      : true; // en supervisor, todos los que ve están asignados a él
 
                   return (
                     <button
                       key={String(it.id)}
                       className={`service-card${selected ? " selected" : ""}`}
-                      onClick={() => handlePick(it)}
+                      onClick={() => !isAdmin && handlePick(it)}
                       title={it.name}
+                      disabled={isAdmin && isAssigned} // en admin, deshabilito si ya está asignado
                     >
                       <div className="service-card__row">
                         <div className="service-card__name">{it.name}</div>
 
-                        {/* 👉 PILL: “Asignado a …” */}
-                        <span className="pill pill--assigned" title={`Asignado a ${who}`}>
-                          <strong>Asignado</strong>
-                          <span className="pill__who">&nbsp;a {who}</span>
-                        </span>
+                        {/* 👉 PILL */}
+                        {isAssigned ? (
+                          <span
+                            className="pill pill--assigned"
+                            title={who ? `Asignado a ${who}` : "Asignado"}
+                            style={{ whiteSpace: "nowrap" }}
+                          >
+                            <strong>Asignado</strong>
+                            {who && <span className="pill__who">&nbsp;a {who}</span>}
+                          </span>
+                        ) : (
+                          <span className="pill pill--free">Disponible</span>
+                        )}
                       </div>
 
-                      {selected && <small>Seleccionado</small>}
+                      {!isAdmin && selected && <small>Seleccionado</small>}
                     </button>
                   );
                 })}
@@ -208,8 +256,7 @@ export default function ServicesPage() {
                 }}
               >
                 <span style={{ fontSize: 12, opacity: 0.8 }}>
-                  Mostrando {start + 1}-{Math.min(start + PER_PAGE, filtered.length)} de{" "}
-                  {filtered.length}
+                  Mostrando {start + 1}-{Math.min(start + PER_PAGE, filtered.length)} de {filtered.length}
                 </span>
                 <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
                   <button className="pill pill--primary" onClick={goFirst} disabled={page === 1}>
@@ -221,18 +268,10 @@ export default function ServicesPage() {
                   <span style={{ padding: "4px 8px", fontSize: 16, color: "black" }}>
                     Página {page} / {pageCount}
                   </span>
-                  <button
-                    className="pill pill--primary"
-                    onClick={goNextP}
-                    disabled={page === pageCount}
-                  >
+                  <button className="pill pill--primary" onClick={goNextP} disabled={page === pageCount}>
                     Siguiente
                   </button>
-                  <button
-                    className="pill pill--primary"
-                    onClick={goLast}
-                    disabled={page === pageCount}
-                  >
+                  <button className="pill pill--primary" onClick={goLast} disabled={page === pageCount}>
                     &raquo;
                   </button>
                 </div>
@@ -241,21 +280,23 @@ export default function ServicesPage() {
           )}
 
           <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-            <button className="btn" onClick={() => nav("/role-select")}>
-              Cambiar modo (Administrativo / Supervisor)
-            </button>
-            <button className="btn" disabled={!service?.id} onClick={goNext}>
-              Continuar al catálogo
-            </button>
+            {!isAdmin && (
+              <>
+                <button className="btn" onClick={() => nav("/role-select")}>
+                  Cambiar modo (Administrativo / Supervisor)
+                </button>
+                <button className="btn" disabled={!service?.id} onClick={goNext}>
+                  Continuar al catálogo
+                </button>
+              </>
+            )}
+            {isAdmin && (
+              <button className="btn" onClick={() => nav("/app/administrativo/products")}>
+                Ir a Productos (Admin)
+              </button>
+            )}
           </div>
         </>
-      ) : (
-        <div className="state">
-          No tenés servicios asignados.
-          <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
-            (user.id={String(user?.id ?? "")} · user.username={String(user?.username ?? "")})
-          </div>
-        </div>
       )}
 
       {/* Estilos mínimos para el pill y fila — podés moverlos a services.css */}
@@ -285,6 +326,11 @@ export default function ServicesPage() {
           color: #1d4ed8;
           border: 1px solid #c7d2fe;
         }
+        .pill--free {
+          background: #ecfeff;
+          color: #0369a1;
+          border: 1px solid #bae6fd;
+        }
         .pill--primary {
           background: #ecfeff;
           color: #0369a1;
@@ -295,4 +341,3 @@ export default function ServicesPage() {
     </div>
   );
 }
-  
