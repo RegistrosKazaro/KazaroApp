@@ -1,123 +1,145 @@
 // server/src/routes/serviceProducts.js
 import { Router } from "express";
-import { requireAuth } from "../middleware/auth.js";
 import { db } from "../db.js";
 
 const router = Router();
 
-/* ===================== PIVOTE: detectar/crear ===================== */
-function detectOrCreatePivot() {
-  const t = db
-    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='service_products'")
-    .get();
+/* Utils */
+const uniq = (arr) =>
+  Array.from(new Set((arr || []).map((x) => Number(x)).filter((n) => Number.isInteger(n))));
+const ph = (n) => Array(n).fill("?").join(",");
 
-  if (!t) {
-    db.exec(`
-      CREATE TABLE service_products (
-        service_id  TEXT NOT NULL,
-        product_id  TEXT NOT NULL,
-        PRIMARY KEY (service_id, product_id)
-      );
-      CREATE INDEX IF NOT EXISTS idx_sp_srv  ON service_products(service_id);
-      CREATE INDEX IF NOT EXISTS idx_sp_prod ON service_products(product_id);
-    `);
-    return { srv: "service_id", prod: "product_id" };
-  }
-
-  const cols = db.prepare(`PRAGMA table_info('service_products')`).all();
-  const names = new Set(cols.map(c => c.name.toLowerCase()));
-
-  if (names.has("servicioid") && names.has("productoid")) {
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_sp_srv  ON service_products(ServicioID);
-      CREATE INDEX IF NOT EXISTS idx_sp_prod ON service_products(ProductoID);
-    `);
-    return { srv: "ServicioID", prod: "ProductoID" };
-  }
-  if (names.has("service_id") && names.has("product_id")) {
-    return { srv: "service_id", prod: "product_id" };
-  }
-  if (names.has("servicio_id") && names.has("producto_id")) {
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_sp_srv  ON service_products(servicio_id);
-      CREATE INDEX IF NOT EXISTS idx_sp_prod ON service_products(producto_id);
-    `);
-    return { srv: "servicio_id", prod: "producto_id" };
-  }
-
-  // Caso raro: agrego columnas estándar y uso esas
-  if (!names.has("service_id")) db.exec(`ALTER TABLE service_products ADD COLUMN service_id TEXT`);
-  if (!names.has("product_id")) db.exec(`ALTER TABLE service_products ADD COLUMN product_id TEXT`);
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_sp_srv  ON service_products(service_id);
-    CREATE INDEX IF NOT EXISTS idx_sp_prod ON service_products(product_id);
-  `);
-  return { srv: "service_id", prod: "product_id" };
+/* =========================
+   Helpers DB
+   ========================= */
+function getServicesAssignInfo(ids) {
+  if (!ids.length) return [];
+  const q = `
+    SELECT s.id,
+           COALESCE(s.nombre, s.name, 'Servicio '||s.id) AS name,
+           s.supervisorId AS assignedTo,
+           COALESCE(e.apellido||' '||e.nombre, e.username, e.email, '') AS supervisorName
+    FROM Services s
+    LEFT JOIN Empleados e ON e.id = s.supervisorId
+    WHERE s.id IN (${ph(ids.length)})
+  `;
+  return db.prepare(q).all(...ids);
 }
 
-const PIVOT = detectOrCreatePivot();
-
-/* ===================== helpers ===================== */
-function getAssignedIds(serviceId) {
-  const rows = db
-    .prepare(
-      `SELECT ${PIVOT.prod} AS id
-         FROM service_products
-        WHERE CAST(${PIVOT.srv} AS TEXT) = CAST(? AS TEXT)`
-    )
-    .all(String(serviceId));
-  return new Set(rows.map(r => String(r.id)));
+function searchServicesRaw(q) {
+  const term = (q || "").trim();
+  const like = `%${term.replace(/\s+/g, "%")}%`;
+  const sql = `
+    SELECT s.id,
+           COALESCE(s.nombre, s.name, 'Servicio '||s.id) AS name,
+           s.supervisorId AS assignedTo,
+           COALESCE(e.apellido||' '||e.nombre, e.username, e.email, '') AS supervisorName
+    FROM Services s
+    LEFT JOIN Empleados e ON e.id = s.supervisorId
+    WHERE ? = '' OR
+          LOWER(COALESCE(s.nombre, s.name)) LIKE LOWER(?)
+    ORDER BY name ASC
+    LIMIT 300
+  `;
+  return db.prepare(sql).all(term, like);
 }
 
-/* ===================== rutas (usadas por Admin) ===================== */
-
-/** IDs ya asignados */
-router.get("/assignments/:serviceId", requireAuth, (req, res) => {
-  try {
-    const set = getAssignedIds(req.params.serviceId);
-    res.json({ productIds: Array.from(set) });
-  } catch (e) {
-    console.error("[GET /admin/sp/assignments]", e);
-    res.status(500).json({ error: "Error leyendo asignaciones: " + e.message });
-  }
+/* =========================
+   GET /admin/sp/list?q=
+   (alias /admin/sp/search)
+   ========================= */
+router.get(["/list", "/search"], (req, res) => {
+  const q = String(req.query.q ?? "");
+  const items = searchServicesRaw(q).map((s) => ({
+    id: s.id,
+    name: s.name,
+    assignedTo: s.assignedTo,           // null => disponible
+    supervisorName: s.supervisorName,   // nombre de quien lo tiene
+  }));
+  res.json({ ok: true, items });
 });
 
-/** Guardado masivo (reemplaza todo el set) */
-router.put("/assignments/:serviceId", requireAuth, (req, res) => {
-  try {
-    const sid = String(req.params.serviceId ?? "").trim();
-    if (!sid) return res.status(400).json({ error: "serviceId requerido" });
-
-    const raw = req.body?.productIds;
-    if (!Array.isArray(raw)) return res.status(400).json({ error: "productIds debe ser un array" });
-
-    const ids = Array.from(new Set(raw.map(x => String(x)))); // normalizo + dedup
-
-    const tx = db.transaction(() => {
-      db.prepare(
-        `DELETE FROM service_products WHERE CAST(${PIVOT.srv} AS TEXT) = CAST(? AS TEXT)`
-      ).run(sid);
-
-      if (ids.length) {
-        const ins = db.prepare(
-          `INSERT OR IGNORE INTO service_products (${PIVOT.srv}, ${PIVOT.prod}) VALUES (?, ?)`
-        );
-        for (const pid of ids) ins.run(sid, pid);
-      }
-    });
-
-    tx();
-    res.json({
-      ok: true,
-      message: "Asignaciones guardadas",
-      serviceId: sid,
-      count: ids.length,
-      productIds: ids
-    });
-  } catch (e) {
-    console.error("[PUT /admin/sp/assignments] error:", e);
-    res.status(500).json({ error: "Error guardando asignaciones: " + e.message });
+/* =========================
+   POST /admin/sp/assign
+   { supervisorId, serviceIds[] }
+   - Bloquea si alguno está asignado a OTRO.
+   ========================= */
+router.post("/assign", (req, res) => {
+  const supervisorId = Number(req.body?.supervisorId);
+  const serviceIds = uniq(req.body?.serviceIds);
+  if (!Number.isInteger(supervisorId) || !serviceIds.length) {
+    return res.status(400).json({ error: "Parámetros inválidos (supervisorId, serviceIds)" });
   }
+
+  const info = getServicesAssignInfo(serviceIds);
+  const conflicts = info.filter((r) => r.assignedTo && r.assignedTo !== supervisorId);
+
+  if (conflicts.length) {
+    return res.status(409).json({
+      error: "Uno o más servicios ya están asignados a otro supervisor.",
+      conflicts, // [{id,name,assignedTo,supervisorName}]
+    });
+  }
+
+  const upd = db.prepare(
+    `UPDATE Services
+       SET supervisorId = ?
+     WHERE id = ?
+       AND (supervisorId IS NULL OR supervisorId = ?)`
+  );
+
+  const tx = db.transaction((ids) => {
+    let changes = 0;
+    for (const id of ids) changes += upd.run(supervisorId, id, supervisorId).changes;
+    return changes;
+  });
+
+  const updated = tx(serviceIds);
+  res.json({ ok: true, updated, total: serviceIds.length, skipped: serviceIds.length - updated });
+});
+
+/* =========================
+   POST /admin/sp/reassign-bulk
+   { fromSupervisorId, toSupervisorId, serviceIds[] }
+   - Bloquea si alguno está con un tercero.
+   ========================= */
+router.post("/reassign-bulk", (req, res) => {
+  const fromId = Number(req.body?.fromSupervisorId);
+  const toId = Number(req.body?.toSupervisorId);
+  const serviceIds = uniq(req.body?.serviceIds);
+
+  if (!Number.isInteger(fromId) || !Number.isInteger(toId) || !serviceIds.length) {
+    return res.status(400).json({ error: "Parámetros inválidos (fromSupervisorId, toSupervisorId, serviceIds)" });
+  }
+  if (fromId === toId) {
+    return res.status(400).json({ error: "El supervisor de origen y destino no pueden ser el mismo." });
+  }
+
+  const info = getServicesAssignInfo(serviceIds);
+  const conflicts = info.filter((r) => r.assignedTo != null && r.assignedTo !== fromId);
+
+  if (conflicts.length) {
+    return res.status(409).json({
+      error: "Hay servicios asignados a otro supervisor. No se realizó la reasignación.",
+      conflicts,
+    });
+  }
+
+  const upd = db.prepare(
+    `UPDATE Services
+       SET supervisorId = ?
+     WHERE id = ?
+       AND (supervisorId IS NULL OR supervisorId = ?)`
+  );
+
+  const tx = db.transaction((ids) => {
+    let changes = 0;
+    for (const id of ids) changes += upd.run(toId, id, fromId).changes;
+    return changes;
+  });
+
+  const updated = tx(serviceIds);
+  res.json({ ok: true, updated, total: serviceIds.length, skipped: serviceIds.length - updated });
 });
 
 export default router;

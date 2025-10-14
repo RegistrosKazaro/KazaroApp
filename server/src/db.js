@@ -280,9 +280,9 @@ export function ensureVisibilitySchema() {
       role       TEXT    NOT NULL CHECK (LOWER(role) IN ('administrativo','supervisor')),
       PRIMARY KEY (product_id, role)
     );
-    CREATE INDEX IF NOT EXISTS idx_prv_role ON ProductRoleVisibility(role);
-    CREATE INDEX IF NOT EXISTS idx_prv_product ON ProductRoleVisibility(product_id);
   `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_prv_role ON ProductRoleVisibility(role);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_prv_product ON ProductRoleVisibility(product_id);`);
 }
 
 export function assignVisibility(productId, roleName) {
@@ -598,7 +598,11 @@ export function createOrder({ empleadoId, rol, nota, items, servicioId = null })
 }
 
 /* =====================  Servicios / Pivote  ===================== */
-// No tocamos tu tabla real (supervisor_services) que tiene PK compuesta y usa rowid.
+
+/**
+ * Crea la pivote si no existe (sin UNIQUE todavía).
+ * Dejamos PK compuesta para no duplicar (EmpleadoID, ServicioID).
+ */
 export function ensureSupervisorPivot() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS supervisor_services (
@@ -606,9 +610,122 @@ export function ensureSupervisorPivot() {
       ServicioID  INTEGER NOT NULL,
       PRIMARY KEY (EmpleadoID, ServicioID)
     );
-    CREATE INDEX IF NOT EXISTS idx_supserv_emp ON supervisor_services(EmpleadoID);
-    CREATE INDEX IF NOT EXISTS idx_supserv_srv ON supervisor_services(ServicioID);
   `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_supserv_emp ON supervisor_services(EmpleadoID);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_supserv_srv ON supervisor_services(ServicioID);`);
+}
+
+/**
+ * Deduplica servicios con >1 supervisor (conserva la fila MÁS RECIENTE)
+ * y crea UNIQUE(ServicioID) para garantizar exclusividad a futuro.
+ */
+export function ensureSupervisorPivotExclusive() {
+  ensureSupervisorPivot();
+
+  const tx = db.transaction(() => {
+    // Detectar servicios duplicados
+    const dups = db.prepare(`
+      SELECT ServicioID, COUNT(*) AS c
+      FROM supervisor_services
+      GROUP BY ServicioID
+      HAVING c > 1
+    `).all();
+
+    // Para cada servicio, conservar rowid más nuevo y borrar el resto
+    const selRows = db.prepare(`
+      SELECT rowid AS rid
+      FROM supervisor_services
+      WHERE CAST(ServicioID AS TEXT) = CAST(? AS TEXT)
+      ORDER BY rid DESC
+    `);
+    const delOld = db.prepare(`DELETE FROM supervisor_services WHERE rowid = ?`);
+
+    for (const d of dups) {
+      const rows = selRows.all(d.ServicioID); // rid DESC => primero es el más reciente
+      for (let i = 1; i < rows.length; i++) {
+        delOld.run(rows[i].rid);
+      }
+    }
+
+    // Crear índice único: un Servicio solo puede estar una vez en la pivote
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_supervisor_services_service
+      ON supervisor_services (ServicioID);
+
+      -- Opcional: evitar repetir el mismo par por descuido
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_supervisor_services_pair
+      ON supervisor_services (EmpleadoID, ServicioID);
+    `);
+  });
+
+  tx();
+}
+
+/** Listado de asignaciones para panel admin (simple) */
+export function listSupervisorAssignments() {
+  ensureSupervisorPivot();
+  return db.prepare(`
+    SELECT rowid AS id, EmpleadoID, ServicioID
+    FROM supervisor_services
+    ORDER BY ServicioID
+  `).all();
+}
+
+/**
+ * Asigna de forma estricta: error 409 si el servicio ya está tomado por otro.
+ * Inserta idempotente si es el mismo par (no duplica).
+ */
+export function assignServiceToSupervisorExclusive(EmpleadoID, ServicioID) {
+  ensureSupervisorPivotExclusive();
+
+  const existing = db.prepare(`
+    SELECT EmpleadoID FROM supervisor_services
+    WHERE CAST(ServicioID AS TEXT) = CAST(? AS TEXT)
+    LIMIT 1
+  `).get(ServicioID);
+
+  if (existing && Number(existing.EmpleadoID) !== Number(EmpleadoID)) {
+    const err = new Error(`El servicio ${ServicioID} ya está asignado al supervisor ${existing.EmpleadoID}`);
+    err.status = 409;
+    err.code = "SERVICE_TAKEN";
+    throw err;
+  }
+
+  db.prepare(`
+    INSERT OR IGNORE INTO supervisor_services (EmpleadoID, ServicioID)
+    VALUES (?, ?)
+  `).run(EmpleadoID, ServicioID);
+
+  return true;
+}
+
+/**
+ * Reasigna explícitamente un servicio a otro supervisor
+ * (borra el dueño actual y asigna el nuevo).
+ */
+export function reassignServiceToSupervisor(EmpleadoID, ServicioID) {
+  ensureSupervisorPivotExclusive();
+  const tx = db.transaction(() => {
+    db.prepare(`DELETE FROM supervisor_services WHERE CAST(ServicioID AS TEXT) = CAST(? AS TEXT)`).run(ServicioID);
+    db.prepare(`INSERT INTO supervisor_services (EmpleadoID, ServicioID) VALUES (?, ?)`).run(EmpleadoID, ServicioID);
+  });
+  tx();
+  return true;
+}
+
+/** Quita asignación por rowid o por par */
+export function unassignService({ id, EmpleadoID, ServicioID }) {
+  ensureSupervisorPivotExclusive();
+  if (id != null) {
+    const r = db.prepare(`DELETE FROM supervisor_services WHERE rowid = ?`).run(Number(id));
+    return r.changes > 0;
+  }
+  if (EmpleadoID != null && ServicioID != null) {
+    const r = db.prepare(`DELETE FROM supervisor_services WHERE EmpleadoID = ? AND ServicioID = ?`)
+      .run(Number(EmpleadoID), Number(ServicioID));
+    return r.changes > 0;
+  }
+  return false;
 }
 
 // Resolver tabla/columnas de Servicios (basado en tu BD real)
@@ -623,7 +740,7 @@ function resolveServicesTable() {
 
 // Lista { id, name } de servicios asignados al usuario
 export function listServicesByUser(userId) {
-  ensureSupervisorPivot();
+  ensureSupervisorPivotExclusive();
   const spec = resolveServicesTable();
   const rows = db.prepare(`
     SELECT s.${spec.idCol} AS sid,
@@ -641,7 +758,7 @@ export function getAssignedServices(userId) {
   return listServicesByUser(userId);
 }
 
-/* === NUEVO: nombre de servicio por ID para asunto del mail === */
+/* === nombre de servicio por ID para asunto del mail === */
 export function getServiceNameById(servicioId) {
   const spec = resolveServicesTable();
   if (!spec) return null;
@@ -654,6 +771,9 @@ export function getServiceNameById(servicioId) {
   return row?.name || null;
 }
 
+// ✅ activar exclusividad al cargar el módulo
+ensureSupervisorPivotExclusive();
+
 /* =====================  PRESUPUESTOS POR SERVICIO (NUEVO) ===================== */
 /* Tabla simple: un presupuesto (monto base) por ServicioID */
 export function ensureServiceBudgetTable() {
@@ -662,8 +782,8 @@ export function ensureServiceBudgetTable() {
       ServicioID INTEGER PRIMARY KEY,
       Presupuesto REAL NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_srvbudget_serv ON service_budget(ServicioID);
   `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_srvbudget_serv ON service_budget(ServicioID);`);
 }
 
 export function getBudgetByServiceId(servicioId) {
@@ -828,14 +948,6 @@ export function adminCreateProduct(fields = {}) {
 
   const sql = `INSERT INTO ${products} (${cols.join(",")}) VALUES (${vals.join(",")})`;
   const info = db.prepare(sql).run(...args);
-
-  // (Opcional) visibilidad por defecto:
-  // assignVisibility(info.lastInsertRowid, 'supervisor');           // solo supervisores
-  // if (Array.isArray(fields.visibleFor)) {
-  //   for (const r of fields.visibleFor) assignVisibility(info.lastInsertRowid, r);
-  // } else if (fields.role) {
-  //   assignVisibility(info.lastInsertRowid, fields.role);
-  // }
 
   const selCols = [
     `${prodId} AS id`,

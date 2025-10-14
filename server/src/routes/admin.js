@@ -2,12 +2,16 @@
 import { Router } from "express";
 import {
   db,
-  ensureSupervisorPivot,
   discoverCatalogSchema,
   adminListCategoriesForSelect,
   adminGetProductById,
   listServiceBudgets,
   setBudgetForService,
+  // Exclusividad Servicio ↔ Supervisor
+  ensureSupervisorPivotExclusive,
+  assignServiceToSupervisorExclusive,
+  reassignServiceToSupervisor,
+  unassignService,
 } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 
@@ -338,10 +342,10 @@ router.get("/supervisors", mustBeAdmin, (_req, res) => {
   }
 });
 
-// Asignaciones
+// Asignaciones (listado)
 router.get("/assignments", mustBeAdmin, (req, res) => {
   try {
-    ensureSupervisorPivot();
+    ensureSupervisorPivotExclusive(); // asegura exclusividad y limpia duplicados al vuelo
     const EmpleadoID = req.query.EmpleadoID ? Number(req.query.EmpleadoID) : null;
     const base = `
       SELECT a.rowid AS id, a.EmpleadoID, a.ServicioID,
@@ -361,31 +365,51 @@ router.get("/assignments", mustBeAdmin, (req, res) => {
   }
 });
 
+// Asignar (EXCLUSIVO: un servicio no puede estar en 2 supervisores)
 router.post("/assignments", mustBeAdmin, (req, res) => {
   try {
-    ensureSupervisorPivot();
     const EmpleadoID = Number(req.body?.EmpleadoID);
     const ServicioID = Number(req.body?.ServicioID);
-    if (!EmpleadoID || !ServicioID) return res.status(400).json({ error: "EmpleadoID y ServicioID son requeridos" });
-    const r = db.prepare(`INSERT OR IGNORE INTO supervisor_services (EmpleadoID, ServicioID) VALUES (?, ?)`)
-      .run(EmpleadoID, ServicioID);
-    res.status(201).json({ ok: true, id: r.lastInsertRowid || null });
+    if (!Number.isFinite(EmpleadoID) || !Number.isFinite(ServicioID)) {
+      return res.status(400).json({ error: "EmpleadoID y ServicioID son requeridos" });
+    }
+
+    assignServiceToSupervisorExclusive(EmpleadoID, ServicioID);
+    return res.status(201).json({ ok: true });
   } catch (e) {
+    if (e?.status === 409 || e?.code === "SERVICE_TAKEN") {
+      return res.status(409).json({ error: e.message });
+    }
+    const isUnique = /UNIQUE constraint failed: supervisor_services\.ServicioID/i.test(String(e?.message || ""));
+    if (isUnique) {
+      return res.status(409).json({ error: "El servicio ya está asignado a otro supervisor" });
+    }
     console.error("POST /admin/assignments error:", e);
     res.status(500).json({ error: "Error al crear asignación" });
   }
 });
 
+// (Opcional) Reasignar explícitamente un servicio a otro supervisor
+router.post("/assignments/reassign", mustBeAdmin, (req, res) => {
+  try {
+    const EmpleadoID = Number(req.body?.EmpleadoID);
+    const ServicioID = Number(req.body?.ServicioID);
+    if (!Number.isFinite(EmpleadoID) || !Number.isFinite(ServicioID)) {
+      return res.status(400).json({ error: "EmpleadoID y ServicioID son requeridos" });
+    }
+    reassignServiceToSupervisor(EmpleadoID, ServicioID);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("POST /admin/assignments/reassign error:", e);
+    res.status(500).json({ error: e?.message || "No se pudo reasignar" });
+  }
+});
+
+// Eliminar asignación
 router.delete("/assignments/:id", mustBeAdmin, (req, res) => {
   try {
-    ensureSupervisorPivot();
-    const id = Number(req.params.id);
-    let r = db.prepare(`DELETE FROM supervisor_services WHERE rowid = ?`).run(id);
-    if (!r.changes && (req.query.EmpleadoID && req.query.ServicioID)) {
-      r = db.prepare(`DELETE FROM supervisor_services WHERE EmpleadoID = ? AND ServicioID = ?`)
-        .run(Number(req.query.EmpleadoID), Number(req.query.ServicioID));
-    }
-    if (!r.changes) return res.status(404).json({ error: "Asignación no encontrada" });
+    const ok = unassignService({ id: Number(req.params.id) });
+    if (!ok) return res.status(404).json({ error: "Asignación no encontrada" });
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Error al eliminar asignación" });

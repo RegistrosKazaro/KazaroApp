@@ -21,7 +21,7 @@ import servicesRoutes from "./routes/services.js";
 import devRoutes from "./routes/dev.js";
 import adminRoutes from "./routes/admin.js";
 import serviceProductsRoutes from "./routes/serviceProducts.js";
-import reportsRoutes from "./routes/reports.js"; // ⬅️ NUEVO
+import reportsRoutes from "./routes/reports.js";
 
 import { DB_RESOLVED_PATH, db, ensureStockColumn } from "./db.js";
 import { verifyMailTransport } from "./utils/mailer.js";
@@ -116,6 +116,7 @@ app.use(csrfProtection);
 
 // Endpoint para obtener token (DEBE estar luego de csurf)
 app.get("/csrf-token", (req, res) => {
+  res.set("Cache-Control", "no-store");
   res.json({ csrfToken: req.csrfToken() });
 });
 
@@ -129,7 +130,7 @@ if (process.env.NODE_ENV !== "production") {
 }
 app.use("/admin", adminLimiter, adminRoutes);
 app.use("/admin/sp", adminLimiter, serviceProductsRoutes);
-app.use("/admin/reports", adminLimiter, reportsRoutes); // ⬅️ NUEVO
+app.use("/admin/reports", adminLimiter, reportsRoutes);
 
 // Salud
 app.get("/health", (_req, res) => res.json({ ok: true }));
