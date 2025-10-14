@@ -3,6 +3,10 @@ import express from "express";
 import cors from "cors";
 import morgan from "morgan";
 import cookieParser from "cookie-parser";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import csurf from "csurf";
+
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -14,10 +18,10 @@ import catalogRoutes from "./routes/catalog.js";
 import ordersRoutes from "./routes/orders.js";
 import supervisorRoutes from "./routes/supervisor.js";
 import servicesRoutes from "./routes/services.js";
-import meRoutes from "./routes/me.js";
 import devRoutes from "./routes/dev.js";
 import adminRoutes from "./routes/admin.js";
 import serviceProductsRoutes from "./routes/serviceProducts.js";
+import reportsRoutes from "./routes/reports.js"; // ⬅️ NUEVO
 
 import { DB_RESOLVED_PATH, db, ensureStockColumn } from "./db.js";
 import { verifyMailTransport } from "./utils/mailer.js";
@@ -46,7 +50,10 @@ try {
 
 const app = express();
 
-/* ===== Middlewares base (orden IMPORTA) ===== */
+// Seguridad básica
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+
+/* ===== Middlewares base ===== */
 app.use(morgan("dev"));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -66,40 +73,70 @@ const allowed = new Set(
 
 const corsOptions = {
   origin(origin, cb) {
-    if (!origin) return cb(null, true);           // Postman/curl sin Origin
+    if (!origin) return cb(null, true); // Postman/curl sin Origin
     if (allowed.has(origin)) return cb(null, true);
     return cb(new Error(`Origen no permitido por CORS: ${origin}`));
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "Cache-Control", "Pragma", "Expires", "X-Requested-With"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "Cache-Control",
+    "Pragma",
+    "Expires",
+    "X-Requested-With",
+    "X-CSRF-Token",
+  ],
 };
-app.use(cors(corsOptions)); // <-- esto ya maneja el preflight; NO usar app.options("*", ...)
+app.use(cors(corsOptions));
 
-/* ===== Cookie -> req.user ===== */
+/* ===== Sesión desde cookie → req.user ===== */
 app.use(cookies);
 
-/* ===== Archivos estáticos ===== */
-app.use(express.static(PUBLIC_DIR));
-app.use("/remitos", express.static(path.join(PUBLIC_DIR, "remitos")));
+/* ===== Rate limiters ===== */
+const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20 });
+const adminLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 200 });
 
-/* ===== API ===== */
-app.use("/auth", authRoutes);
-app.use("/me", meRoutes);
+/* ===== Rutas SIN CSRF (auth) ===== */
+app.use("/auth", loginLimiter, authRoutes);
+
+/* ===== CSRF desde acá en adelante (todo lo demás protegido) ===== */
+const isProd = process.env.NODE_ENV === "production";
+const csrfProtection = csurf({
+  cookie: {
+    key: "csrf",
+    httpOnly: true,
+    sameSite: isProd ? "none" : "lax",
+    secure: isProd,
+    path: "/",
+  },
+});
+app.use(csrfProtection);
+
+// Endpoint para obtener token (DEBE estar luego de csurf)
+app.get("/csrf-token", (req, res) => {
+  res.json({ csrfToken: req.csrfToken() });
+});
+
+/* ===== Rutas API protegidas por CSRF ===== */
 app.use("/catalog", catalogRoutes);
 app.use("/orders", ordersRoutes);
 app.use("/supervisor", supervisorRoutes);
 app.use("/services", servicesRoutes);
-app.use("/admin", adminRoutes);
+if (process.env.NODE_ENV !== "production") {
+  app.use("/dev", devRoutes);
+}
+app.use("/admin", adminLimiter, adminRoutes);
+app.use("/admin/sp", adminLimiter, serviceProductsRoutes);
+app.use("/admin/reports", adminLimiter, reportsRoutes); // ⬅️ NUEVO
 
-// MUY IMPORTANTE: /admin/sp DESPUÉS de cors() y cookies
-app.use("/admin/sp", serviceProductsRoutes);
-
+// Salud
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 /* ===== SPA fallback ===== */
 app.get(
-  /^\/((?!auth|me|catalog|orders|supervisor|services|dev|health|remitos|assets|favicon\.ico|robots\.txt|manifest\.json).)*$/i,
+  /^\/(?!auth|me|catalog|orders|supervisor|services|dev|health|remitos|assets|favicon\.ico|robots\.txt|manifest\.json|admin).*/i,
   (req, res) => {
     const file = path.join(PUBLIC_DIR, "index.html");
     if (fs.existsSync(file)) {
@@ -110,6 +147,15 @@ app.get(
   }
 );
 
+// Errores de CSRF
+app.use((err, _req, res, next) => {
+  if (err && err.code === "EBADCSRFTOKEN") {
+    return res.status(403).json({ error: "CSRF token inválido o ausente" });
+  }
+  return next(err);
+});
+
+// 404
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));
 
 const PORT = Number(env.PORT || process.env.PORT || 10000);
