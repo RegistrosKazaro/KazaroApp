@@ -5,8 +5,14 @@ import { z } from "zod";
 import { getUserForLogin, getUserRoles, listServicesByUser } from "../db.js";
 import { issueSession, clearSession, requireAuth } from "../middleware/auth.js";
 import { env } from "../utils/env.js";
+import { loginLimiter, meLimiter } from "../middleware/rateLimit.js"; // ← rate limit
 
 const router = express.Router();
+
+// Aplica rate-limit antes de definir las rutas
+router.use("/login", loginLimiter); // protege contra brute-force
+router.use("/me", meLimiter);       // suave (alto en dev)
+
 
 // Aceptamos identifier | username | email y password
 const LoginSchema = z.object({
@@ -41,7 +47,6 @@ async function verifyPassword({ password, password_hash, password_plain }) {
   if (hash && !/^\$2[aby]\$/.test(hash) && !/^\$argon2/i.test(hash)) {
     if (hash === pwd) return true;
   }
-
 
   if (plain !== null && plain === pwd) return true;
 
