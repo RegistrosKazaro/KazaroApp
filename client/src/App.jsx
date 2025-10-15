@@ -133,6 +133,8 @@ export default function App() {
 
       {/* Pantalla para elegir entre Administrativo / Supervisor */}
       <Route path="/roles" element={<RoleSelect />} />
+      {/* Alias para compatibilidad con enlaces viejos del botón */}
+      <Route path="/role-select" element={<Navigate to="/roles" replace />} />
 
       {/* Si entran a /app sin rol => mandamos a /roles */}
       <Route path="/app" element={<Navigate to="/roles" replace />} />
