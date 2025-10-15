@@ -61,13 +61,13 @@ function getServiceNameByIdLocal(servicioId) {
 /**
  * POST /orders
  * body: { rol, nota, items:[{productId,qty}], servicioId?, servicioName? }
- * resp: { ok, pedidoId, remito:{ numero, fecha, total, empleado, rol, servicio?, pdfUrl } }
+ * resp: { ok, pedidoId, remito:{ numero, fecha, total, empleado, rol, servicio?, nota?, pdfUrl } }
  */
 router.post("/", requireAuth, async (req, res) => {
   try {
     const empleadoId = Number(req.user.id);
     const rol = String(req.body?.rol || "");
-    const nota = String(req.body?.nota || "");
+    const nota = String(req.body?.nota || ""); // ← tomamos la nota del body
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
     const servicioId = req.body?.servicioId != null ? Number(req.body.servicioId) : null;
     const servicioNameIn = req.body?.servicioName || null;
@@ -111,6 +111,7 @@ router.post("/", requireAuth, async (req, res) => {
       empleado,
       rol,
       servicio: servicioId ? { id: servicioId, name: servicioNombre } : null,
+      nota, // ← incluimos la nota en el remito
     };
 
     const { filePath, fileName } = await generateRemitoPDF({ remito, items: fullItems });
@@ -118,6 +119,12 @@ router.post("/", requireAuth, async (req, res) => {
     const subject = servicioId
       ? `NUEVO PEDIDO DE INSUMOS - "${servicioNombre}"`
       : `NUEVO PEDIDO DE INSUMOS - "${empleado}"`;
+
+    // Sanitizar la nota para HTML del correo
+    const notaSafe = String(nota || "")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;");
 
     try {
       await sendMail({
@@ -131,6 +138,7 @@ router.post("/", requireAuth, async (req, res) => {
              ${remito.servicio ? `<strong>Servicio:</strong> ${remito.servicio.name}<br/>` : ""}
              <strong>Total:</strong> ${total}<br/>
              ${usagePct != null ? `<strong>Uso del presupuesto:</strong> <span style="color:${usagePct>5?'#c1121f':'#2a9d8f'}">${usagePct.toFixed(2)}%</span> (límite 5%)<br/>` : ""}
+             ${notaSafe ? `<strong>Nota:</strong> ${notaSafe}<br/>` : ""} <!-- ← nota en el mail -->
           </p>
           <p>Se adjunta PDF del remito.</p>
         `,
@@ -191,6 +199,7 @@ router.get("/pdf/:id", requireAuth, async (req, res) => {
       empleado,
       rol: cab.Rol || "",
       servicio: cab.ServicioID ? { id: cab.ServicioID, name: servicioNombre } : null,
+      nota: cab.Nota || cab.nota || "", // ← incluir nota desde la DB si está guardada
     };
 
     const { filePath, fileName } = await generateRemitoPDF({ remito, items });

@@ -34,6 +34,7 @@ export default function Cart() {
   const [sending, setSending] = useState(false);
   const [errorSend, setErrorSend] = useState("");
   const [remito, setRemito] = useState(null);
+  const [note, setNote] = useState("");              // ← NUEVO: estado de la nota
 
   const userLabel = useMemo(() => {
     if (!user) return "";
@@ -48,7 +49,7 @@ export default function Cart() {
     []
   );
 
-  // % de uso
+  // % de uso (SE MANTIENE IGUAL)
   const usagePct = useMemo(() => {
     if (!budget || budget <= 0) return null;
     return (Number(total) / Number(budget)) * 100;
@@ -60,13 +61,14 @@ export default function Cart() {
     try {
       const payload = {
         rol: role,
-        nota: "",
+        nota: String(note || "").trim(),             // ← NUEVO: enviamos la nota
         items: items.map(it => ({ productId: it.productId, qty: it.qty })),
         servicioId: service?.id ?? null,
         servicioName: service?.name ?? null,
       };
       const res = await api.post("/orders", payload);
       setRemito(res.data?.remito || null);
+      setNote("");                                   // opcional: limpiar nota tras enviar
     } catch (e) {
       setErrorSend(e?.response?.data?.error || "No se pudo enviar el pedido");
     } finally {
@@ -95,7 +97,7 @@ export default function Cart() {
           </div>
         )}
 
-        {/* % de presupuesto usado (verde/rojo) — justo debajo del servicio */}
+        {/* % de presupuesto usado (SE MANTIENE IGUAL) */}
         {service && usagePct != null && (
           <div style={{ marginTop: 8 }}>
             <span className={`budget-chip ${overLimit ? "over" : "ok"}`}>
@@ -165,20 +167,10 @@ export default function Cart() {
               {usagePct != null && (
                 <tr>
                   <td colSpan={3} style={{ textAlign: "right", fontWeight: 700 }}>
-                    Uso del presupuesto
+                    
                   </td>
                   <td colSpan={2}>
-                    <div className="budget-row">
-                      <span className={`budget-chip ${overLimit ? "over" : "ok"}`}>
-                        {usagePct.toFixed(2)}% <span className="limit">(límite 5%)</span>
-                      </span>
-                      <div className="budget-progress" aria-hidden="true">
-                        <div
-                          className={`budget-progress__bar ${overLimit ? "over" : "ok"}`}
-                          style={{ width: `${Math.min(usagePct, 100)}%` }}
-                        />
-                      </div>
-                    </div>
+                   
                   </td>
                 </tr>
               )}
@@ -188,6 +180,21 @@ export default function Cart() {
               </tr>
             </tfoot>
           </table>
+
+          {/* NOTA DEL PEDIDO (opcional) */}
+          <div className="state" style={{ marginTop: 12 }}>
+            <label htmlFor="order-note" style={{ display: "block", fontWeight: 600, marginBottom: 6 }}>
+              Nota del pedido (opcional)
+            </label>
+            <textarea
+              id="order-note"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Ej.: Entregar en guardia, embalaje especial, referencias internas, etc."
+              rows={3}
+              style={{ width: "100%", resize: "vertical" }}
+            />
+          </div>
 
           <div style={{ display: "flex", gap: 10 }}>
             <button className="btn" onClick={clear}>Limpiar</button>
@@ -205,7 +212,7 @@ export default function Cart() {
 
           {remito && (
             <section className="state" style={{ marginTop: 12 }}>
-              {/* % arriba del remito */}
+              {/* % arriba del remito (SE MANTIENE) */}
               {usagePct != null && (
                 <div style={{ marginBottom: 6 }}>
                   <span className={`budget-chip ${overLimit ? "over" : "ok"}`}>
@@ -219,6 +226,12 @@ export default function Cart() {
               <div><strong>Fecha:</strong> {new Date(remito.fecha).toLocaleString("es-AR")}</div>
               <div><strong>Generado por:</strong> {remito.empleado}</div>
               {remito.servicio && <div><strong>Servicio:</strong> {remito.servicio.name}</div>}
+              {/* Mostrar la nota si vino del backend */}
+              {remito.nota && remito.nota.trim() && (
+                <div style={{ whiteSpace: "pre-wrap" }}>
+                  <strong>Nota:</strong> {remito.nota}
+                </div>
+              )}
               <div><strong>Total:</strong> {nf.format(remito.total || 0)}</div>
               {remito.pdfUrl && (
                 <div style={{ marginTop: 8 }}>
