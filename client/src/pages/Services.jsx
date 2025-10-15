@@ -8,22 +8,6 @@ import "../styles/services.css";
 
 const PER_PAGE = 15;
 
-function displayNameFromUser(u) {
-  if (!u) return "";
-  const parts = [u?.Nombre ?? u?.nombre, u?.Apellido ?? u?.apellido].filter(Boolean);
-  const full = parts.join(" ").trim();
-  return (
-    full ||
-    u?.fullName ||
-    u?.nombreCompleto ||
-    u?.displayName ||
-    u?.name ||
-    u?.username ||
-    u?.email ||
-    (u?.id != null ? `ID ${u.id}` : "")
-  );
-}
-
 export default function ServicesPage() {
   const nav = useNavigate();
   const { user, loading: loadingUser } = useAuth();
@@ -39,8 +23,6 @@ export default function ServicesPage() {
   const isAdmin = roles.includes("admin");
   const isSupervisor = roles.includes("supervisor");
 
-  const assignedToName = useMemo(() => displayNameFromUser(user), [user]);
-
   // Permitir esta pantalla a supervisor **o** admin. Redirigir solo si no es ninguno.
   useEffect(() => {
     if (loadingUser) return;
@@ -54,8 +36,8 @@ export default function ServicesPage() {
   }, [user, loadingUser, nav, isSupervisor, isAdmin]);
 
   // Carga de datos:
-  // - Admin: usa /admin/services?q=... (muestra Asignado a X / Disponible)
-  // - Supervisor: usa /supervisor/services (sus servicios)
+  // - Admin: /admin/services?q=...  (muestra Asignado / Disponible)
+  // - Supervisor: /supervisor/services (sus servicios)
   useEffect(() => {
     if (loadingUser || !user) return;
 
@@ -70,7 +52,6 @@ export default function ServicesPage() {
           const r = await api.get("/admin/services", { params: { q: String(q || "").trim(), limit: 50 } });
           rows = Array.isArray(r.data) ? r.data : [];
         } else {
-          // supervisor
           const r = await api.get("/supervisor/services", { withCredentials: true });
           rows = Array.isArray(r.data) ? r.data : [];
         }
@@ -145,7 +126,7 @@ export default function ServicesPage() {
         <div className="state">Cargando servicios…</div>
       ) : (
         <>
-          {/* Barra de búsqueda (en admin es clave; en supervisor solo filtra local) */}
+          {/* Barra de búsqueda */}
           <div
             className="catalog-toolbar"
             style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}
@@ -194,20 +175,7 @@ export default function ServicesPage() {
                 {pageItems.map((it) => {
                   const selected = Number(service?.id) === Number(it.id);
 
-                  // ADMIN: mostrar a quién está asignado (de /admin/services)
-                  // SUPERVISOR: mostrar su propio nombre (o el que venga si en un futuro se incluye).
-                  let who = assignedToName;
-                  if (isAdmin) {
-                    if (Number(it?.is_assigned) === 1 || it?.isAssigned) {
-                      who = it.assigned_to || it.assignedTo || (it.assigned_to_id ? `ID ${it.assigned_to_id}` : "otro supervisor");
-                    } else {
-                      who = null; // disponible
-                    }
-                  } else {
-                    // supervisor
-                    who = it.assigned_to || assignedToName;
-                  }
-
+                  // ¿Está asignado?
                   const isAssigned =
                     isAdmin
                       ? (Number(it?.is_assigned) === 1 || !!it?.isAssigned)
@@ -224,15 +192,10 @@ export default function ServicesPage() {
                       <div className="service-card__row">
                         <div className="service-card__name">{it.name}</div>
 
-                        {/* 👉 PILL */}
+                        {/* 👉 PILL sin nombre del supervisor */}
                         {isAssigned ? (
-                          <span
-                            className="pill pill--assigned"
-                            title={who ? `Asignado a ${who}` : "Asignado"}
-                            style={{ whiteSpace: "nowrap" }}
-                          >
+                          <span className="pill pill--assigned">
                             <strong>Asignado</strong>
-                            {who && <span className="pill__who">&nbsp;a {who}</span>}
                           </span>
                         ) : (
                           <span className="pill pill--free">Disponible</span>
@@ -299,7 +262,7 @@ export default function ServicesPage() {
         </>
       )}
 
-      {/* Estilos mínimos para el pill y fila — podés moverlos a services.css */}
+      {/* Estilos mínimos para los pills — podés moverlos a services.css */}
       <style>{`
         .service-card__row {
           display: flex;
@@ -336,7 +299,6 @@ export default function ServicesPage() {
           color: #0369a1;
           border: 1px solid #bae6fd;
         }
-        .pill__who { font-weight: 500; }
       `}</style>
     </div>
   );
