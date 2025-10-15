@@ -113,6 +113,9 @@
   font-size: 16px;
   letter-spacing: .2px;
 }
+.product-stock{
+  color: #00000098;
+}
 
 .product-card .actions{
   display: flex;
