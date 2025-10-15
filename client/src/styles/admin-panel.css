@@ -133,11 +133,11 @@
 
 .admin-container .assign-toolbar .input,
 .admin-container .assign-toolbar select{
-  width:100%;min-height:40px;padding:10px;border-radius:8px;border:1px solid var(--ap-border);background:#fff;outline:none
+  width:100%;min-height:40px;padding:10px;border-radius:8px;border:1px solid var(--ap-border);background:#fff;outline:none;
 }
 .admin-container .assign-toolbar .input::placeholder{color:var(--ap-muted)}
 .admin-container .assign-toolbar .input:focus,
-.admin-container .assign-toolbar select:focus{border-color:var(--ap-primary-600);box-shadow:0 0 0 3px rgba(37,99,235,.28)}
+.admin-container .assign-toolbar select:focus{border-color:var(--ap-primary-600);box-shadow:0 0 0 3px rgba(37,99,235,.28);}
 
 
 .admin-container .assign-list{
@@ -155,7 +155,7 @@
 }
 
 .admin-container .assign-item input[type="checkbox"]{
-  inline-size:20px; block-size:20px; margin-top:1px; cursor:pointer;
+  inline-size:20px; block-size:20px; margin-top:1px; cursor:pointer; margin-bottom: 12px;
 }
 
 .admin-container .assign-content{flex:1;min-width:0}
@@ -173,7 +173,7 @@
 .admin-container .assign-item.assigned .badge{background:#DBEAFE;border-color:#BFDBFE;color:#1E40AF}
 
 .admin-container .assign-item:hover{border-color:#C9D6EA;box-shadow:var(--ap-shadow)}
-.admin-container .assign-item:has(input[type="checkbox"]:focus-visible){outline:3px solid rgba(37,99,235,.28);outline-offset:2px}
+.admin-container .assign-item:has(input[type="checkbox"]:focus-visible){outline:3px solid rgba(37,99,235,.28);outline-offset:2px;}
 
 .admin-container .alert{
   border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:14px;

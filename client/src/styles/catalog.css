@@ -55,6 +55,7 @@
   transition: border-color .15s, box-shadow .15s, background .15s;
   font-size: 16px;
   line-height: 1.2;
+  margin-bottom: 12px;
 }
 .input::placeholder{ color: rgb(37, 37, 37); }
 
@@ -154,6 +155,7 @@
   font-weight: 800;
   cursor: pointer;
   transition: filter .15s ease, transform .06s ease;
+  margin-bottom: 12px;
 }
 .btn:hover{ filter: brightness(1.05); }
 .btn:active{ transform: translateY(1px); }

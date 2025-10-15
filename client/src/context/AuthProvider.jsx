@@ -37,6 +37,7 @@ export default function AuthProvider({ children }) {
     window.location.replace("/login");
   }
 
+
   return (
     <AuthContext.Provider value={{ user, loading, login, logout }}>
       {children}

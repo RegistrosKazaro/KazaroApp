@@ -646,9 +646,7 @@ export default function AdminPanel() {
 
         <div style={{flex:1}} />
         {/* Link corregido: relativo a /app/:role/admin → budgets */}
-        <Link className="tab-btn" to="budgets" role="link" aria-label="Ir a Presupuesto de servicios">
-          Presupuestos (ruta aparte)
-        </Link>
+       
       </div>
 
       {tab==="products" && <ProductsSection />}

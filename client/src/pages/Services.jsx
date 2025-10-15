@@ -242,7 +242,8 @@ export default function ServicesPage() {
             </>
           )}
 
-          <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+          <div className="actions-row">
+
             {!isAdmin && (
               <>
                 <button className="btn" onClick={() => nav("/role-select")}>
