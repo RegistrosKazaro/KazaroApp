@@ -1,4 +1,4 @@
-// server/src/routes/orders.js
+// routes/orders.js
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.js";
 import {
@@ -14,21 +14,12 @@ import { sendMail } from "../utils/mailer.js";
 
 const router = Router();
 
-/* ===================== Helpers locales (no tocan db.js) ===================== */
+/* ===== Helpers para nombre de servicio sin tocar db.js ===== */
 function _tinfo(table) {
-  try {
-    return db.prepare(`PRAGMA table_info(${table})`).all();
-  } catch {
-    return [];
-  }
+  try { return db.prepare(`PRAGMA table_info(${table})`).all(); } catch { return []; }
 }
 function _pickCol(info, candidates) {
-  const norm = (s) =>
-    String(s ?? "")
-      .normalize("NFD")
-      .replace(/\p{Diacritic}/gu, "")
-      .toLowerCase()
-      .trim();
+  const norm = (s) => String(s ?? "").normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
   for (const cand of candidates) {
     const hit = info.find((c) => norm(c.name) === norm(cand));
     if (hit) return hit.name;
@@ -39,41 +30,22 @@ function resolveServicesTableLocal() {
   const tryTables = ["Servicios", "Servicos"];
   for (const table of tryTables) {
     try {
-      const exists = db
-        .prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`)
-        .get(table);
+      const exists = db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(table);
       if (!exists) continue;
       const info = _tinfo(table);
       if (!info.length) continue;
 
       const idCol =
-        _pickCol(info, [
-          "ServiciosID",
-          "ServicioID",
-          "IdServicio",
-          "ID",
-          "Id",
-          "id",
-        ]) || info.find((c) => c.pk === 1)?.name || "ServicioID";
+        _pickCol(info, ["ServiciosID","ServicioID","IdServicio","ID","Id","id"]) ||
+        info.find((c) => c.pk === 1)?.name || "ServicioID";
 
       const nameCol =
-        _pickCol(info, [
-          "ServicioNombre",
-          "Nombre",
-          "Servicio",
-          "Descripcion",
-          "Detalle",
-          "Titulo",
-          "NombreServicio",
-        ]) ||
-        info.find((c) => /TEXT|CHAR/i.test(String(c.type)))?.name ||
-        idCol;
+        _pickCol(info, ["ServicioNombre","Nombre","Servicio","Descripcion","Detalle","Titulo","NombreServicio"]) ||
+        info.find((c) => /TEXT|CHAR/i.test(String(c.type)))?.name || idCol;
 
       const nameExpr = `COALESCE(NULLIF(TRIM(s.${nameCol}), ''), CAST(s.${idCol} AS TEXT))`;
       return { table, idCol, nameCol, nameExpr };
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   }
   return null;
 }
@@ -81,52 +53,32 @@ function getServiceNameByIdLocal(servicioId) {
   const spec = resolveServicesTableLocal();
   if (!spec) return null;
   try {
-    const row = db
-      .prepare(
-        `
+    const row = db.prepare(`
       SELECT ${spec.nameExpr} AS name
       FROM ${spec.table} s
       WHERE CAST(s.${spec.idCol} AS TEXT) = CAST(? AS TEXT)
       LIMIT 1
-    `
-      )
-      .get(servicioId);
+    `).get(servicioId);
     return row?.name || null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
-/* ========================================================================== */
 
-/**
- * POST /orders
- * body: { rol, nota, items:[{productId,qty}], servicioId?, servicioName? }
- * resp: { ok, pedidoId, remito:{ numero, fecha, total, empleado, rol, servicio?, nota?, pdfUrl } }
- */
+/* ================== Crear pedido + enviar correo ================== */
 router.post("/", requireAuth, async (req, res) => {
   try {
     const empleadoId = Number(req.user.id);
-    const rol = String(req.body?.rol || "");
-    const nota = String(req.body?.nota || ""); // ← tomamos la nota del body
+    const rol  = String(req.body?.rol || "");
+    const nota = String(req.body?.nota || "");
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
-    const servicioId =
-      req.body?.servicioId != null ? Number(req.body.servicioId) : null;
+    const servicioId = req.body?.servicioId != null ? Number(req.body.servicioId) : null;
     const servicioNameIn = req.body?.servicioName || null;
 
-    if (!empleadoId)
-      return res.status(400).json({ error: "Empleado inválido" });
-    if (!items.length)
-      return res.status(400).json({ error: "El pedido no tiene items" });
+    if (!empleadoId) return res.status(400).json({ error: "Empleado inválido" });
+    if (!items.length) return res.status(400).json({ error: "El pedido no tiene items" });
 
     let pedidoId, total;
     try {
-      ({ pedidoId, total } = createOrder({
-        empleadoId,
-        rol,
-        nota,
-        items,
-        servicioId,
-      }));
+      ({ pedidoId, total } = createOrder({ empleadoId, rol, nota, items, servicioId }));
     } catch (e) {
       if (e?.code === "OUT_OF_STOCK") {
         return res.status(400).json({ error: e.message, ...e.extra });
@@ -134,7 +86,7 @@ router.post("/", requireAuth, async (req, res) => {
       throw e;
     }
 
-    // ===== Validación de presupuesto por servicio (máx 5% por pedido) =====
+    // Presupuesto: máx 5%
     let usagePct = null;
     if (servicioId != null) {
       const budget = getBudgetByServiceId(servicioId);
@@ -142,9 +94,7 @@ router.post("/", requireAuth, async (req, res) => {
         usagePct = (Number(total) / Number(budget)) * 100;
         if (usagePct > 5) {
           return res.status(400).json({
-            error: `El pedido (${usagePct.toFixed(
-              2
-            )}%) excede el 5% del presupuesto del servicio.`,
+            error: `El pedido (${usagePct.toFixed(2)}%) excede el 5% del presupuesto del servicio.`,
           });
         }
       }
@@ -152,11 +102,8 @@ router.post("/", requireAuth, async (req, res) => {
 
     const { cab, items: fullItems } = getFullOrder(pedidoId);
     const empleado = getEmployeeDisplayName(empleadoId);
-
     const servicioNombre = servicioId
-      ? getServiceNameByIdLocal(servicioId) ||
-        servicioNameIn ||
-        `Servicio ${servicioId}`
+      ? getServiceNameByIdLocal(servicioId) || servicioNameIn || `Servicio ${servicioId}`
       : null;
 
     const remito = {
@@ -166,27 +113,22 @@ router.post("/", requireAuth, async (req, res) => {
       empleado,
       rol,
       servicio: servicioId ? { id: servicioId, name: servicioNombre } : null,
-      nota, // ← incluimos la nota en el remito
+      nota,
     };
 
-    const { filePath, fileName } = await generateRemitoPDF({
-      remito,
-      items: fullItems,
-    });
+    // PDF adjunto (tu util existente)
+    const { filePath, fileName } = await generateRemitoPDF({ remito, items: fullItems });
 
     const subject = servicioId
       ? `NUEVO PEDIDO DE INSUMOS - "${servicioNombre}"`
       : `NUEVO PEDIDO DE INSUMOS - "${empleado}"`;
 
-    // Sanitizar la nota para HTML del correo
     const notaSafe = String(nota || "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;");
+      .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
+    // Envío de email (si falla NO rompe el pedido)
     try {
       await sendMail({
-        // Destinatario forzado (o desde .env si está configurado)
         to: process.env.MAIL_TO || "nicolas.barcena@kazaro.com.ar",
         subject,
         html: `
@@ -194,11 +136,7 @@ router.post("/", requireAuth, async (req, res) => {
           <p>
              <strong>Empleado:</strong> ${empleado}<br/>
              <strong>Rol:</strong> ${rol || "-"}<br/>
-             ${
-               remito.servicio
-                 ? `<strong>Servicio:</strong> ${remito.servicio.name}<br/>`
-                 : ""
-             }
+             ${remito.servicio ? `<strong>Servicio:</strong> ${remito.servicio.name}<br/>` : ""}
              <strong>Total:</strong> ${total}<br/>
              ${
                usagePct != null
@@ -212,27 +150,25 @@ router.post("/", requireAuth, async (req, res) => {
           <p>Se adjunta PDF del remito.</p>
         `,
         attachments: [{ filename: fileName, path: filePath }],
-        fromName: empleado,                    // nombre visible del remitente (usuario logueado)
-        replyTo: req.user?.email || undefined, // opcional: respuestas al mail del usuario
+        fromName: empleado,
+        replyTo: req.user?.email || undefined,
       });
     } catch (e) {
       console.warn("[orders] sendMail falló:", e?.message || e);
     }
 
     const pdfUrl = `/orders/pdf/${pedidoId}`;
-    return res
-      .status(201)
-      .json({ ok: true, pedidoId, remito: { ...remito, pdfUrl } });
+    return res.status(201).json({ ok: true, pedidoId, remito: { ...remito, pdfUrl } });
   } catch (e) {
     console.error("[orders] POST / error:", e);
     return res.status(500).json({ error: "Error interno" });
   }
 });
 
+/* ========= Rutas auxiliares que no rompen nada ========= */
 router.get("/:id", requireAuth, (req, res) => {
   const id = Number(req.params.id);
-  if (!Number.isFinite(id))
-    return res.status(400).json({ error: "id inválido" });
+  if (!Number.isFinite(id)) return res.status(400).json({ error: "id inválido" });
   try {
     const data = getFullOrder(id);
     if (!data?.cab) return res.status(404).json({ error: "Pedido no encontrado" });
@@ -243,10 +179,22 @@ router.get("/:id", requireAuth, (req, res) => {
   }
 });
 
+router.get("/product/:id", requireAuth, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: "id inválido" });
+  try {
+    const p = getProductForOrder(id);
+    if (!p) return res.status(404).json({ error: "Producto no encontrado" });
+    return res.json(p);
+  } catch (e) {
+    console.error("[orders] GET /product/:id error:", e);
+    return res.status(500).json({ error: "Error interno" });
+  }
+});
+
 router.get("/pdf/:id", requireAuth, async (req, res) => {
   const id = Number(req.params.id);
-  if (!Number.isFinite(id))
-    return res.status(400).json({ error: "id inválido" });
+  if (!Number.isFinite(id)) return res.status(400).json({ error: "id inválido" });
   try {
     const { cab, items } = getFullOrder(id);
     if (!cab) return res.status(404).json({ error: "Pedido no encontrado" });
@@ -262,22 +210,34 @@ router.get("/pdf/:id", requireAuth, async (req, res) => {
       total: cab.Total || 0,
       empleado,
       rol: cab.Rol || "",
-      servicio: cab.ServicioID
-        ? { id: cab.ServicioID, name: servicioNombre }
-        : null,
+      servicio: cab.ServicioID ? { id: cab.ServicioID, name: servicioNombre } : null,
       nota: cab.Nota || cab.nota || "",
     };
 
     const { filePath, fileName } = await generateRemitoPDF({ remito, items });
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${fileName}"`
-    );
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
     return res.sendFile(filePath);
   } catch (e) {
     console.error("[orders] GET /pdf/:id error:", e);
     return res.status(500).json({ error: "No se pudo generar el PDF" });
+  }
+});
+
+// Test SMTP rápido (opcional)
+router.get("/_mail/test", requireAuth, async (req, res) => {
+  try {
+    const empleado = getEmployeeDisplayName(Number(req.user.id)) || "Kazaro App";
+    const info = await sendMail({
+      to: process.env.MAIL_TO || "nicolas.barcena@kazaro.com.ar",
+      subject: "TEST SMTP — Kazaro",
+      html: "<p>Prueba de correo OK ✅</p>",
+      fromName: empleado,
+      replyTo: req.user?.email || undefined,
+    });
+    return res.json({ ok: true, accepted: info.accepted, response: info.response });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 

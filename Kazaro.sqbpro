@@ -1,60 +1,20 @@
-<?xml version="1.0" encoding="UTF-8"?><sqlb_project><db path="Kazaro.db" readonly="0" foreign_keys="1" case_sensitive_like="0" temp_store="0" wal_autocheckpoint="1000" synchronous="2"/><attached/><window><main_tabs open="structure browser pragmas query" current="1"/></window><tab_structure><column_width id="0" width="300"/><column_width id="1" width="0"/><column_width id="2" width="100"/><column_width id="3" width="3184"/><column_width id="4" width="0"/><expanded_item id="0" parent="1"/><expanded_item id="1" parent="1"/><expanded_item id="2" parent="1"/><expanded_item id="3" parent="1"/></tab_structure><tab_browse><table title="Productos" custom_title="0" dock_id="1" table="4,9:mainProductos"/><dock_state state="000000ff00000000fd0000000100000002000005f20000029efc0100000001fb000000160064006f0063006b00420072006f00770073006500310100000000000005f20000011100ffffff0000028d0000000000000004000000040000000800000008fc00000000"/><default_encoding codec=""/><browse_table_settings><table schema="main" name="Categorias" show_row_id="0" encoding="" plot_x_axis="" unlock_view_pk="_rowid_" freeze_columns="0"><sort/><column_widths><column index="1" value="85"/><column index="2" value="120"/></column_widths><filter_values/><conditional_formats/><row_id_formats/><display_formats/><hidden_columns/><plot_y_axes/><global_filter/></table><table schema="main" name="Productos" show_row_id="0" encoding="" plot_x_axis="" unlock_view_pk="_rowid_" freeze_columns="0"><sort/><column_widths><column index="1" value="78"/><column index="2" value="300"/><column index="3" value="87"/><column index="4" value="78"/><column index="5" value="41"/><column index="6" value="85"/><column index="7" value="67"/><column index="8" value="48"/></column_widths><filter_values><column index="5" value="222"/></filter_values><conditional_formats/><row_id_formats/><display_formats/><hidden_columns/><plot_y_axes/><global_filter/></table><table schema="main" name="Roles" show_row_id="0" encoding="" plot_x_axis="" unlock_view_pk="_rowid_" freeze_columns="0"><sort/><column_widths><column index="1" value="49"/><column index="2" value="117"/></column_widths><filter_values/><conditional_formats/><row_id_formats/><display_formats/><hidden_columns/><plot_y_axes/><global_filter/></table></browse_table_settings></tab_browse><tab_sql><sql name="SQL 1*">
+<?xml version="1.0" encoding="UTF-8"?><sqlb_project><db path="Kazaro.db" readonly="0" foreign_keys="1" case_sensitive_like="0" temp_store="0" wal_autocheckpoint="1000" synchronous="2"/><attached/><window><main_tabs open="structure browser pragmas query" current="3"/></window><tab_structure><column_width id="0" width="300"/><column_width id="1" width="0"/><column_width id="2" width="100"/><column_width id="3" width="3184"/><column_width id="4" width="0"/><expanded_item id="0" parent="1"/><expanded_item id="1" parent="1"/><expanded_item id="2" parent="1"/><expanded_item id="3" parent="1"/></tab_structure><tab_browse><table title="Categorias" custom_title="0" dock_id="1" table="4,10:mainCategorias"/><dock_state state="000000ff00000000fd00000001000000020000000000000000fc0100000001fb000000160064006f0063006b00420072006f00770073006500310100000000ffffffff0000011300ffffff000000000000000000000004000000040000000800000008fc00000000"/><default_encoding codec=""/><browse_table_settings/></tab_browse><tab_sql><sql name="SQL 1*">-- Ver cuáles están duplicados
+SELECT ServicioID, COUNT(*) AS cnt
+FROM supervisor_services
+GROUP BY ServicioID
+HAVING COUNT(*) &gt; 1;
 
-WITH ids(id) AS (
-  VALUES
-  (4),(7),(8),(11),(13),(14),(15),(32),(35),(36),(37),(38),(39),(41),(43),
-  (47),(52),(53),(55),(56),(58),(59),(64),(65),(67),(68),(71),(79),(81),
-  (205),(206),(207),(208),(213),(216),(219),(225),
-  (251),(253),(255),(256),(257),(264),(268),(269),(270),(275),(276),(277),
-  (281),(295),(298),(300),(301),(303),(582),(1008),(1009),(1020),(1045),
-  (1048),(1049),(1065),(1098),(1197),(1285),(1287),(1298),(1312),(1325),
-  (1373),(1419),(1422),(1424),(1425),(1428),(1431),(1462),(1562),(1719),
-  (1729),(1733),(1734),(1738),(1746),(1754),(1786),(1818),(1847),(1873),
-  (1874),(1875),(1885),(1927),(2006),(2043),(2056),
-  (100000025),(100000026),(100000027),(100000032),(100000033),(100000036),
-  (100000037),(100000040),(100000041),(100000043),(100000048),(100000049),
-  (100000050),(100000149),(100000150),(100000151),(100000153),(100000164),
-  (100000165),(100000190),(100000250),(100000253),(100000254),(100000292),
-  (100000306),(100000313),(100000316),(100000459),(100000514),(100000515),
-  (100000516),(100000560),(100000561),
-  (100000579),(100000580),(100000581),(100000582),(100000583),(100000584),
-  (100000585),(100000586),(100000587),(100000588),(100000589),(100000590),
-  (100000591),(100000592),(100000593),(100000594),(100000595),(100000596),
-  (100000597),(100000598),(100000599),(100000600),(100000601),(100000602),
-  (100000603),(100000604),(100000605),(100000606),(100000607),(100000608),
-  (100000609),(100000610),(100000611),(100000612),(100000613),(100000614),
-  (100000615),(100000616),(100000617),(100000618),(100000619),(100000620),
-  (100000621),(100000622),(100000623),(100000624),(100000625),(100000626),
-  (100000627),(100000628),(100000629),(100000630),(100000631),(100000632),
-  (100000633),(100000634),(100000635),(100000636),(100000637),(100000638),
-  (100000639),(100000640),(100000641),(100000642),(100000643),(100000644),
-  (100000645),(100000646),(100000647),(100000648),(100000649),(100000650),
-  (100000651),(100000652),(100000653),(100000654),(100000655),(100000656),
-  (100000657),(100000658),(100000659),(100000660),(100000661),(100000662),
-  (100000663),(100000664),(100000665),(100000666),(100000667),(100000668),
-  (100000669),(100000670),(100000671),(100000672),(100000673),(100000674),
-  (100000675),(100000676),(100000677),(100000678),(100000679),(100000680),
-  (100000681),(100000682),(100000683),(100000684),(100000685),(100000686),
-  (100000687),(100000688),(100000689),(100000690),(100000691),(100000692),
-  (100000693),(100000694),(100000695),(100000696),(100000697),(100000698),
-  (100000699),(100000700),(100000701),(100000703),(100000704),(100000705),
-  (100000706),(100000708),(100000709),(100000710),(100000711),(100000712),
-  (100000713),(100000714),(100000715),(100000716),(100000717),(100000718),
-  (100000719),(100000720),(100000721),(100000722),(100000723),(100000724),
-  (100000725),(100000726),(100000727),(100000728),(100000729),(100000730),
-  (100000731),(100000732),(100000733),(100000734),(100000735),(100000736),
-  (100000737),(100000738),(100000739),(100000740),(100000741),(100000742),
-  (100000743),(100000744),(100000745),(100000746),(100000747),(100000748),
-  (100000749),(100000750),(100000751),(100000752),(100000753),(100000754),
-  (100000755),(100000756),(100000757),(100000758),(100000759),(100000760),
-  (100000761),(100000762),(100000763),(100000764),(100000765),(100000766),
-  (100000767),(100000768),(100000769),(100000770),(100000771),(100000772),
-  (100000773),(100000774)
-)
-INSERT OR IGNORE INTO ProductRoleVisibility (product_id, role)
-SELECT p.ProductID, 'supervisor'
-FROM Productos p
-JOIN ids ON ids.id = p.ProductID;
+-- Borrar duplicados y dejar UN registro por ServicioID (el más nuevo)
+DELETE FROM supervisor_services
+WHERE rowid NOT IN (
+  SELECT MAX(rowid)
+  FROM supervisor_services
+  GROUP BY ServicioID
+);
 
-COMMIT;
+-- Verificar que ya no queden duplicados
+SELECT ServicioID, COUNT(*) AS cnt
+FROM supervisor_services
+GROUP BY ServicioID
+HAVING COUNT(*) &gt; 1;
 </sql><current_tab id="0"/></tab_sql></sqlb_project>
