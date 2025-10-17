@@ -18,16 +18,16 @@ function resolveDbPath() {
     try { if (p && fs.existsSync(p)) return p; } catch {}
   }
   // si no existe ninguno, devolvemos el primero para que se cree
-  return candidates[0];
+  return candidates[0] || path.resolve(process.cwd(), "Kazaro.db");
 }
 
 const dbPath = resolveDbPath();
 export const DB_RESOLVED_PATH = dbPath;
 
 export const db = new Database(dbPath, { fileMustExist: fs.existsSync(dbPath) });
-db.pragma("foreign_keys = ON");
-db.pragma("journal_mode = WAL");
-db.pragma("busy_timeout = 5000");
+try { db.pragma("foreign_keys = ON"); } catch {}
+try { db.pragma("journal_mode = WAL"); } catch {}
+try { db.pragma("busy_timeout = 5000"); } catch {}
 
 /* =====================  Helpers base e introspección  ===================== */
 function norm(s) {
@@ -37,7 +37,6 @@ function norm(s) {
     .toLowerCase()
     .trim();
 }
-
 export function tinfo(table) {
   try { return db.prepare(`PRAGMA table_info(${table})`).all(); }
   catch { return []; }
@@ -121,6 +120,7 @@ export function getUserForLogin(userOrEmailInput) {
     SELECT
       ${idCol} AS id,
       COALESCE(${userCol || "NULL"}, ${emailCol || "NULL"}) AS username,
+      ${emailCol || "NULL"} AS email,
       ${hashCol   ? hashCol   : "NULL"} AS password_hash,
       ${plainCol  ? plainCol  : "NULL"} AS password_plain,
       ${activeCol ? activeCol : "1"}    AS is_active
@@ -137,9 +137,23 @@ export function getUserByUsername(username) {
   return {
     id: u.id,
     username: u.username,
+    email: u.email,
     password_hash: u.password_hash,
     is_active: u.is_active
   };
+}
+
+export function getUserById(id) {
+  try {
+    return db.prepare(`
+      SELECT ${empleadoIdCol} AS id, username, Email AS email, Nombre, Apellido, 1 AS is_active
+      FROM Empleados
+      WHERE ${empleadoIdCol} = ?
+      LIMIT 1
+    `).get(id) || null;
+  } catch {
+    return null;
+  }
 }
 
 export function getUserRoles(userId) {
@@ -150,6 +164,14 @@ export function getUserRoles(userId) {
     JOIN Roles r ON r.${rolesIdCol} = re.${reRolIdCol}
     WHERE re.${reEmpleadoIdCol} = ?
   `).all(userId).map(r => r.role);
+}
+
+export function getRoleNameForEmployee(userId) {
+  const roles = getUserRoles(userId);
+  // devolvemos el primer rol con preferencia por "supervisor" y "administrativo"
+  const pref = ["supervisor","Supervisor","administrativo","Administrativo"];
+  const hit = roles.find(r => pref.includes(String(r)));
+  return hit || roles[0] || null;
 }
 
 /* =====================  Catálogo (descubrimiento dinámico)  ===================== */
@@ -180,7 +202,7 @@ function scoreProductTable(tbl) {
   const hasPrice = !!pickCol(info, PRICE_CANDIDATES);
   const hasCode  = !!pickCol(info, CODE_CANDIDATES);
   const maybeCat = !!pickCol(info, CAT_CANDIDATES) || !!pickCol(info, CATNAME_CANDIDATES);
-  const blacklist = ["Empleados","Roles","Roles_Empleados","Pedidos","PedidoItems","Usuarios","Logs","supervisor_services","service_products","Ordenes","OrdenesDetalles","remitos","remito_items","email_log","Stock","sequences","service_emails"];
+  const blacklist = ["Empleados","Roles","Roles_Empleados","Pedidos","PedidoItems","Usuarios","Logs","supervisor_services","service_products","Ordenes","OrdenesDetalles","remitos","remito_items","email_log","Stock","sequences","service_emails","service_budget"];
   if (blacklist.includes(tbl)) return { score: 0 };
   let score = 0;
   if (hasName)  score += 4;
@@ -219,7 +241,7 @@ function chooseCategoryTable(products, prodCatCol) {
     if (t === products) continue;
     const info = tinfo(t);
     if (!info.length || !hasRows(t)) continue;
-    const black = ["Empleados","Roles","Roles_Empleados","Pedidos","PedidoItems","Usuarios","Logs","supervisor_services","service_products","Ordenes","OrdenesDetalles","remitos","remito_items","email_log","Stock","sequences","service_emails"];
+    const black = ["Empleados","Roles","Roles_Empleados","Pedidos","PedidoItems","Usuarios","Logs","supervisor_services","service_products","Ordenes","OrdenesDetalles","remitos","remito_items","email_log","Stock","sequences","service_emails","service_budget"];
     if (black.includes(t)) continue;
 
     const catId   = pickCol(info, ["CategoriaID","IdCategoria","categoria_id","RubroID","FamiliaID","ServicioID","SeccionID","GrupoID","TipoID","ClasificacionID","id","ID"]);
@@ -272,7 +294,6 @@ export function discoverCatalogSchema() {
 }
 
 /* =====================  Visibilidad por Rol (NUEVO)  ===================== */
-// Relación muchos-a-muchos: Producto × Rol ('administrativo' | 'supervisor')
 export function ensureVisibilitySchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS ProductRoleVisibility (
@@ -284,7 +305,6 @@ export function ensureVisibilitySchema() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_prv_role ON ProductRoleVisibility(role);`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_prv_product ON ProductRoleVisibility(product_id);`);
 }
-
 export function assignVisibility(productId, roleName) {
   const role = String(roleName || "").toLowerCase();
   if (!["administrativo","supervisor"].includes(role)) {
@@ -295,7 +315,6 @@ export function assignVisibility(productId, roleName) {
     VALUES (?, ?)
   `).run(productId, role);
 }
-
 export function revokeVisibility(productId, roleName) {
   const role = String(roleName || "").toLowerCase();
   return db.prepare(`
@@ -340,7 +359,7 @@ export function listCategories() {
   return [{ id: "__all__", name: "Todos", count: total }];
 }
 
-/** ⬇️⬇️  ACTUALIZADA: ahora acepta { q, serviceId, role, roles } y filtra por ProductRoleVisibility  */
+/** Acepta { q, serviceId, role, roles } y filtra por ProductRoleVisibility */
 export function listProductsByCategory(categoryId, { q = "", serviceId = null, role = null, roles = null } = {}) {
   ensureVisibilitySchema();
 
@@ -353,7 +372,7 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
   const hasPrice = !!prodPrice;
   const hasStock = !!prodStock;
 
-  // Detectar pivote service_products (lo conservamos)
+  // Detectar pivote service_products (opcional)
   let pivot = null;
   try {
     const spTbl = db.prepare(`
@@ -366,7 +385,7 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
       else if (names.has("servicio_id") && names.has("producto_id")) pivot = { srv: "servicio_id", prod: "producto_id" };
       else if (names.has("service_id") && names.has("product_id"))    pivot = { srv: "service_id",  prod: "product_id"  };
     }
-  } catch { /* noop */ }
+  } catch {}
 
   const cols = [
     `p.${prodId}   AS id`,
@@ -377,7 +396,6 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
     hasStock ? `p.${prodStock} AS stock` : `NULL AS stock`,
   ].join(", ");
 
-  // ====== Filtro por ROL ======
   const normRoles = []
     .concat(roles ?? [])
     .concat(role ?? [])
@@ -437,8 +455,7 @@ export function debugCatalogSchema() {
   return { ...sch, sample };
 }
 
-/* =====================  **NUEVO**: asegurar columna 'stock'  ===================== */
-/* Se llama al iniciar el server. No toca datos existentes. */
+/* =====================  Stock helper (opcional)  ===================== */
 export function ensureStockColumn() {
   try {
     const sch = discoverCatalogSchema();
@@ -449,7 +466,6 @@ export function ensureStockColumn() {
 
     if (!hasStock) {
       db.prepare(`ALTER TABLE ${products} ADD COLUMN Stock INTEGER NOT NULL DEFAULT 0`).run();
-      // normalizamos posibles NULL en filas existentes
       db.prepare(`UPDATE ${products} SET Stock = 0 WHERE Stock IS NULL`).run();
       console.log(`[db] Columna 'Stock' agregada en tabla ${products}`);
     }
@@ -457,8 +473,6 @@ export function ensureStockColumn() {
     console.error("[db] ensureStockColumn error:", e?.message || e);
   }
 }
-
-/* Helper opcional para saber tabla/columna */
 export function productsMeta() {
   const sch = discoverCatalogSchema();
   if (!sch.ok) return { table: null, hasStock: false };
@@ -494,115 +508,176 @@ function ensureOrdersSchema() {
   `);
 }
 ensureOrdersSchema();
-ensureVisibilitySchema(); // ⬅️ importante: crear/asegurar pivote de visibilidad al iniciar
+ensureVisibilitySchema();
 
-export function getProductForOrder(productId) {
+/* =====================  Helpers de Productos / Servicios  ===================== */
+export function getProductById(productId) {
   const sch = discoverCatalogSchema();
-  if (!sch.ok) throw new Error(sch.reason);
+  if (!sch.ok) return null;
   const { products } = sch.tables;
   const { prodId, prodName, prodPrice, prodCode } = sch.cols;
 
   const cols = [
-    `${prodId}   AS id`,
+    `${prodId} AS id`,
     `${prodName} AS name`,
-    prodPrice ? `${prodPrice} AS price` : `NULL AS price`,
-    prodCode  ? `${prodCode}  AS code`  : `' ' AS code`
+    prodPrice ? `${prodPrice} AS Precio` : `NULL AS Precio`,
+    prodCode  ? `${prodCode}  AS Code`   : `NULL AS Code`,
+    `1 AS is_active`
   ].join(", ");
 
-  return db.prepare(`SELECT ${cols} FROM ${products} WHERE ${prodId} = ? LIMIT 1`).get(productId);
+  return db.prepare(`SELECT ${cols} FROM ${products} WHERE ${prodId} = ? LIMIT 1`).get(productId) || null;
 }
 
-/* =====================  NUEVO: createOrder con validación de stock ===================== */
-export function createOrder({ empleadoId, rol, nota, items, servicioId = null }) {
+function resolveServicesTable() {
+  const table = "Servicios";
+  const info = tinfo(table);
+  const idCol = pickCol(info, ["ServiciosID","ServicioID","IdServicio","ID","Id","id"]) || (info.find(c => c.pk === 1)?.name) || "ServiciosID";
+  const nameCol = pickCol(info, ["ServicioNombre","Nombre","Servicio","Descripcion","Detalle","Titulo","NombreServicio"]) || "ServicioNombre";
+  const nameExpr = `COALESCE(NULLIF(TRIM(s.${nameCol}), ''), CAST(s.${idCol} AS TEXT))`;
+  return { table, idCol, nameExpr, nameCol };
+}
+
+export function getServiceById(serviceId) {
+  try {
+    const spec = resolveServicesTable();
+    const row = db.prepare(`
+      SELECT s.${spec.idCol} AS id,
+             ${spec.nameExpr} AS name
+      FROM ${spec.table} s
+      WHERE CAST(s.${spec.idCol} AS TEXT) = CAST(? AS TEXT)
+      LIMIT 1
+    `).get(serviceId);
+    if (!row) return null;
+    return { id: Number(row.id), name: String(row.name) };
+  } catch {
+    return null;
+  }
+}
+
+/* =====================  createOrder (compatible con /orders)  ===================== */
+export function createOrder({ empleadoId, servicioId, nota, items }) {
+  if (!empleadoId || !Array.isArray(items) || items.length === 0) {
+    throw new Error("Datos de pedido inválidos");
+  }
+  const rol = getRoleNameForEmployee(empleadoId) || "";
+
   const tx = db.transaction(() => {
     let total = 0;
 
-    // Descubrir esquema de productos (incluye columna de stock si existe)
+    // Descubrimos esquema de productos
     const sch = discoverCatalogSchema();
     if (!sch.ok) throw new Error(sch.reason);
     const { products } = sch.tables;
     const { prodId, prodName, prodPrice, prodCode, prodStock } = sch.cols;
     const hasStock = !!prodStock;
 
-    // Cabecera
+    // Crear cabecera
     const insPedido = db.prepare(`
       INSERT INTO Pedidos (EmpleadoID, Rol, Nota, ServicioID, Total)
       VALUES (?, ?, ?, ?, 0)
     `);
-    const pedidoId = insPedido.run(empleadoId, String(rol || ""), String(nota || ""), servicioId).lastInsertRowid;
+    const pedidoId = insPedido.run(empleadoId, String(rol), String(nota || ""), servicioId || null).lastInsertRowid;
 
-    // Detalle
+    // Insertar items con validación de stock si existe
     const insItem = db.prepare(`
       INSERT INTO PedidoItems (PedidoID, ProductoID, Nombre, Precio, Cantidad, Subtotal, Codigo)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
-    for (const it of items || []) {
+    for (const it of items) {
       const pid = Number(it.productId);
-      const qty = Math.max(1, Number(it.qty || 1));
+      const cantidad = Math.max(1, Number(it.cantidad ?? it.qty ?? 1));
 
-      // Datos del producto
       const row = db.prepare(`
         SELECT
           ${prodName} AS name,
           ${prodPrice ? prodPrice : "NULL"} AS price,
-          ${prodCode ? prodCode : "''"} AS code
+          ${prodCode ? prodCode : "''"}  AS code
           ${hasStock ? `, COALESCE(${prodStock},0) AS stock` : ""}
         FROM ${products}
         WHERE ${prodId} = ?
         LIMIT 1
       `).get(pid);
 
-      if (!row) {
-        const err = new Error(`Producto ${pid} no encontrado`);
-        err.code = "PRODUCT_NOT_FOUND";
-        throw err;
-      }
+      if (!row) throw new Error(`Producto inválido: ${pid}`);
 
-      const price = row.price != null ? Number(row.price) : 0;
+      const precio = row.price != null ? Number(row.price) : 0;
 
       if (hasStock) {
-        // Descuento atómico solo si hay stock suficiente
         const upd = db.prepare(`
           UPDATE ${products}
           SET ${prodStock} = ${prodStock} - ?
           WHERE ${prodId} = ? AND COALESCE(${prodStock},0) >= ?
-        `).run(qty, pid, qty);
-
+        `).run(cantidad, pid, cantidad);
         if (upd.changes !== 1) {
-          const available = db.prepare(`
-            SELECT COALESCE(${prodStock},0) AS stock FROM ${products} WHERE ${prodId} = ? LIMIT 1
-          `).get(pid)?.stock ?? 0;
-
-          const err = new Error(
-            available <= 0
-              ? `Sin stock: ${row.name}`
-              : `Stock insuficiente: ${row.name} (máx ${available})`
-          );
-          err.code = "OUT_OF_STOCK";
-          err.extra = { productId: pid, name: row.name, available };
-          throw err;
+          const available = db.prepare(`SELECT COALESCE(${prodStock},0) AS stock FROM ${products} WHERE ${prodId} = ? LIMIT 1`).get(pid)?.stock ?? 0;
+          throw new Error(available <= 0 ? `Sin stock: ${row.name}` : `Stock insuficiente: ${row.name} (máx ${available})`);
         }
       }
 
-      const sub = price * qty;
-      total += sub;
-      insItem.run(pedidoId, pid, row.name, price, qty, sub, row.code || "");
+      const subtotal = precio * cantidad;
+      total += subtotal;
+      insItem.run(pedidoId, pid, row.name, precio, cantidad, subtotal, row.code || "");
     }
 
     db.prepare(`UPDATE Pedidos SET Total = ? WHERE PedidoID = ?`).run(total, pedidoId);
-    return { pedidoId, total };
+    return pedidoId;
   });
 
   return tx();
 }
 
-/* =====================  Servicios / Pivote  ===================== */
+/* =====================  Pedido / Lecturas  ===================== */
+export function getFullOrder(pedidoId) {
+  const ped = db.prepare(`
+    SELECT p.PedidoID AS id, p.EmpleadoID, p.Rol, p.Nota, p.Total, p.Fecha, p.ServicioID
+    FROM Pedidos p WHERE p.PedidoID = ?
+  `).get(pedidoId);
+  if (!ped) return null;
+  const items = db.prepare(`
+    SELECT PedidoItemID AS id, ProductoID AS productId, Nombre AS name,
+           Precio AS price, Cantidad AS qty, Subtotal AS subtotal, Codigo AS code
+    FROM PedidoItems WHERE PedidoID = ? ORDER BY PedidoItemID
+  `).all(pedidoId);
 
-/**
- * Crea la pivote si no existe (sin UNIQUE todavía).
- * Dejamos PK compuesta para no duplicar (EmpleadoID, ServicioID).
- */
+  const user = getUserById(ped.EmpleadoID);
+  const servicio = ped.ServicioID ? getServiceById(ped.ServicioID) : null;
+  return { ...ped, items, user, servicio };
+}
+
+/* =====================  Emails por Servicio y Log de Emails  ===================== */
+export function getServiceEmails(serviceId) {
+  if (!serviceId) return [];
+  try {
+    const rows = db.prepare(`SELECT email FROM service_emails WHERE CAST(service_id AS TEXT) = CAST(? AS TEXT)`).all(serviceId);
+    return rows.map(r => r.email).filter(Boolean);
+  } catch { return []; }
+}
+export function logEmail({ entityType, entityId, to, subject, status, providerId, error }) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS email_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_type TEXT,
+        entity_id   TEXT,
+        to_email    TEXT,
+        subject     TEXT,
+        status      TEXT,
+        provider_id TEXT,
+        error       TEXT,
+        created_at  TEXT DEFAULT (datetime('now'))
+      );
+    `);
+    db.prepare(`
+      INSERT INTO email_log (entity_type, entity_id, to_email, subject, status, provider_id, error, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `).run(entityType, entityId, String(to || ""), String(subject || ""), String(status || ""), providerId || null, error || null);
+  } catch (e) {
+    console.warn("[email_log] no se pudo insertar:", e?.message || e);
+  }
+}
+
+/* =====================  Supervisor ↔ Servicio (exclusivo)  ===================== */
 export function ensureSupervisorPivot() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS supervisor_services (
@@ -614,16 +689,10 @@ export function ensureSupervisorPivot() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_supserv_emp ON supervisor_services(EmpleadoID);`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_supserv_srv ON supervisor_services(ServicioID);`);
 }
-
-/**
- * Deduplica servicios con >1 supervisor (conserva la fila MÁS RECIENTE)
- * y crea UNIQUE(ServicioID) para garantizar exclusividad a futuro.
- */
 export function ensureSupervisorPivotExclusive() {
   ensureSupervisorPivot();
 
   const tx = db.transaction(() => {
-    // Detectar servicios duplicados
     const dups = db.prepare(`
       SELECT ServicioID, COUNT(*) AS c
       FROM supervisor_services
@@ -631,7 +700,6 @@ export function ensureSupervisorPivotExclusive() {
       HAVING c > 1
     `).all();
 
-    // Para cada servicio, conservar rowid más nuevo y borrar el resto
     const selRows = db.prepare(`
       SELECT rowid AS rid
       FROM supervisor_services
@@ -641,18 +709,13 @@ export function ensureSupervisorPivotExclusive() {
     const delOld = db.prepare(`DELETE FROM supervisor_services WHERE rowid = ?`);
 
     for (const d of dups) {
-      const rows = selRows.all(d.ServicioID); // rid DESC => primero es el más reciente
-      for (let i = 1; i < rows.length; i++) {
-        delOld.run(rows[i].rid);
-      }
+      const rows = selRows.all(d.ServicioID);
+      for (let i = 1; i < rows.length; i++) delOld.run(rows[i].rid);
     }
 
-    // Crear índice único: un Servicio solo puede estar una vez en la pivote
     db.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS ux_supervisor_services_service
       ON supervisor_services (ServicioID);
-
-      -- Opcional: evitar repetir el mismo par por descuido
       CREATE UNIQUE INDEX IF NOT EXISTS ux_supervisor_services_pair
       ON supervisor_services (EmpleadoID, ServicioID);
     `);
@@ -660,8 +723,8 @@ export function ensureSupervisorPivotExclusive() {
 
   tx();
 }
+ensureSupervisorPivotExclusive();
 
-/** Listado de asignaciones para panel admin (simple) */
 export function listSupervisorAssignments() {
   ensureSupervisorPivot();
   return db.prepare(`
@@ -670,11 +733,6 @@ export function listSupervisorAssignments() {
     ORDER BY ServicioID
   `).all();
 }
-
-/**
- * Asigna de forma estricta: error 409 si el servicio ya está tomado por otro.
- * Inserta idempotente si es el mismo par (no duplica).
- */
 export function assignServiceToSupervisorExclusive(EmpleadoID, ServicioID) {
   ensureSupervisorPivotExclusive();
 
@@ -698,11 +756,6 @@ export function assignServiceToSupervisorExclusive(EmpleadoID, ServicioID) {
 
   return true;
 }
-
-/**
- * Reasigna explícitamente un servicio a otro supervisor
- * (borra el dueño actual y asigna el nuevo).
- */
 export function reassignServiceToSupervisor(EmpleadoID, ServicioID) {
   ensureSupervisorPivotExclusive();
   const tx = db.transaction(() => {
@@ -712,8 +765,6 @@ export function reassignServiceToSupervisor(EmpleadoID, ServicioID) {
   tx();
   return true;
 }
-
-/** Quita asignación por rowid o por par */
 export function unassignService({ id, EmpleadoID, ServicioID }) {
   ensureSupervisorPivotExclusive();
   if (id != null) {
@@ -727,18 +778,6 @@ export function unassignService({ id, EmpleadoID, ServicioID }) {
   }
   return false;
 }
-
-// Resolver tabla/columnas de Servicios (basado en tu BD real)
-function resolveServicesTable() {
-  const table = "Servicios";
-  const info = tinfo(table);
-  const idCol = pickCol(info, ["ServiciosID","ServicioID","IdServicio","ID","Id","id"]) || (info.find(c => c.pk === 1)?.name) || "ServiciosID";
-  const nameCol = pickCol(info, ["ServicioNombre","Nombre","Servicio","Descripcion","Detalle","Titulo","NombreServicio"]) || "ServicioNombre";
-  const nameExpr = `COALESCE(NULLIF(TRIM(s.${nameCol}), ''), CAST(s.${idCol} AS TEXT))`;
-  return { table, idCol, nameExpr, nameCol };
-}
-
-// Lista { id, name } de servicios asignados al usuario
 export function listServicesByUser(userId) {
   ensureSupervisorPivotExclusive();
   const spec = resolveServicesTable();
@@ -753,12 +792,7 @@ export function listServicesByUser(userId) {
   `).all(userId);
   return rows.map(r => ({ id: Number(r.sid), name: String(r.sname) }));
 }
-
-export function getAssignedServices(userId) {
-  return listServicesByUser(userId);
-}
-
-/* === nombre de servicio por ID para asunto del mail === */
+export function getAssignedServices(userId) { return listServicesByUser(userId); }
 export function getServiceNameById(servicioId) {
   const spec = resolveServicesTable();
   if (!spec) return null;
@@ -771,11 +805,7 @@ export function getServiceNameById(servicioId) {
   return row?.name || null;
 }
 
-// ✅ activar exclusividad al cargar el módulo
-ensureSupervisorPivotExclusive();
-
-/* =====================  PRESUPUESTOS POR SERVICIO (NUEVO) ===================== */
-/* Tabla simple: un presupuesto (monto base) por ServicioID */
+/* =====================  PRESUPUESTOS POR SERVICIO ===================== */
 export function ensureServiceBudgetTable() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS service_budget (
@@ -785,7 +815,6 @@ export function ensureServiceBudgetTable() {
   `);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_srvbudget_serv ON service_budget(ServicioID);`);
 }
-
 export function getBudgetByServiceId(servicioId) {
   ensureServiceBudgetTable();
   try {
@@ -800,7 +829,6 @@ export function getBudgetByServiceId(servicioId) {
     return null;
   }
 }
-
 export function setBudgetForService(servicioId, presupuesto) {
   ensureServiceBudgetTable();
   db.prepare(`
@@ -810,7 +838,6 @@ export function setBudgetForService(servicioId, presupuesto) {
   `).run(servicioId, Number(presupuesto));
   return getBudgetByServiceId(servicioId);
 }
-
 export function listServiceBudgets() {
   ensureServiceBudgetTable();
   const spec = resolveServicesTable();
@@ -829,33 +856,7 @@ export function listServiceBudgets() {
   }
 }
 
-/* =====================  Extras para órdenes  ===================== */
-export function getFullOrder(pedidoId) {
-  const cab = db.prepare(`
-    SELECT p.PedidoID, p.EmpleadoID, p.Rol, p.Nota, p.Total, p.Fecha, p.ServicioID
-    FROM Pedidos p WHERE p.PedidoID = ? LIMIT 1
-  `).get(pedidoId);
-
-  if (!cab) return { cab: null, items: [] };
-
-  const items = db.prepare(`
-    SELECT 
-      i.PedidoItemID AS id,
-      i.PedidoID,
-      i.ProductoID   AS productId,
-      i.Nombre       AS nombre,
-      i.Precio       AS precio,
-      i.Cantidad     AS cantidad,
-      i.Subtotal     AS subtotal,
-      COALESCE(i.Codigo, '') AS codigo
-    FROM PedidoItems i
-    WHERE i.PedidoID = ?
-    ORDER BY i.PedidoItemID
-  `).all(pedidoId);
-
-  return { cab, items };
-}
-
+/* =====================  Otros helpers  ===================== */
 export function getEmployeeDisplayName(userId) {
   try {
     const row = db.prepare(`
@@ -902,7 +903,6 @@ export function adminListCategoriesForSelect() {
 
   return [];
 }
-
 export function adminGetProductById(id) {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
@@ -921,13 +921,12 @@ export function adminGetProductById(id) {
 
   return db.prepare(`SELECT ${cols} FROM ${products} WHERE ${prodId} = ? OR rowid = ? LIMIT 1`).get(id, id);
 }
-
 export function adminCreateProduct(fields = {}) {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
 
   const { products } = sch.tables;
-  const { prodId, prodName, prodPrice, prodStock, prodCode, prodCat, prodCatName } = sch.cols;
+  const { prodName, prodPrice, prodStock, prodCode, prodCat, prodCatName, prodId } = sch.cols;
 
   if (!prodName) throw new Error("No se detectó columna de nombre en productos.");
 
@@ -960,7 +959,6 @@ export function adminCreateProduct(fields = {}) {
 
   return db.prepare(`SELECT ${selCols} FROM ${products} WHERE ${prodId} = ?`).get(info.lastInsertRowid);
 }
-
 export function adminUpdateProduct(id, fields = {}) {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);

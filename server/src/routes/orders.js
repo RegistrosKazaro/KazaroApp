@@ -1,243 +1,97 @@
-// routes/orders.js
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.js";
-import {
-  db,
-  getFullOrder,
-  createOrder,
-  getProductForOrder,
-  getEmployeeDisplayName,
-  getBudgetByServiceId,
-} from "../db.js";
+import { db, createOrder, getFullOrder, getEmployeeDisplayName, getServiceById, getServiceEmails } from "../db.js";
 import { generateRemitoPDF } from "../utils/remitoPdf.js";
 import { sendMail } from "../utils/mailer.js";
+import path from "path";
+import fs from "fs";
 
 const router = Router();
 
-/* ===== Helpers para nombre de servicio sin tocar db.js ===== */
-function _tinfo(table) {
-  try { return db.prepare(`PRAGMA table_info(${table})`).all(); } catch { return []; }
-}
-function _pickCol(info, candidates) {
-  const norm = (s) => String(s ?? "").normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
-  for (const cand of candidates) {
-    const hit = info.find((c) => norm(c.name) === norm(cand));
-    if (hit) return hit.name;
-  }
-  return null;
-}
-function resolveServicesTableLocal() {
-  const tryTables = ["Servicios", "Servicos"];
-  for (const table of tryTables) {
-    try {
-      const exists = db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(table);
-      if (!exists) continue;
-      const info = _tinfo(table);
-      if (!info.length) continue;
-
-      const idCol =
-        _pickCol(info, ["ServiciosID","ServicioID","IdServicio","ID","Id","id"]) ||
-        info.find((c) => c.pk === 1)?.name || "ServicioID";
-
-      const nameCol =
-        _pickCol(info, ["ServicioNombre","Nombre","Servicio","Descripcion","Detalle","Titulo","NombreServicio"]) ||
-        info.find((c) => /TEXT|CHAR/i.test(String(c.type)))?.name || idCol;
-
-      const nameExpr = `COALESCE(NULLIF(TRIM(s.${nameCol}), ''), CAST(s.${idCol} AS TEXT))`;
-      return { table, idCol, nameCol, nameExpr };
-    } catch {}
-  }
-  return null;
-}
-function getServiceNameByIdLocal(servicioId) {
-  const spec = resolveServicesTableLocal();
-  if (!spec) return null;
-  try {
-    const row = db.prepare(`
-      SELECT ${spec.nameExpr} AS name
-      FROM ${spec.table} s
-      WHERE CAST(s.${spec.idCol} AS TEXT) = CAST(? AS TEXT)
-      LIMIT 1
-    `).get(servicioId);
-    return row?.name || null;
-  } catch { return null; }
-}
-
-/* ================== Crear pedido + enviar correo ================== */
 router.post("/", requireAuth, async (req, res) => {
   try {
-    const empleadoId = Number(req.user.id);
-    const rol  = String(req.body?.rol || "");
-    const nota = String(req.body?.nota || "");
-    const items = Array.isArray(req.body?.items) ? req.body.items : [];
-    const servicioId = req.body?.servicioId != null ? Number(req.body.servicioId) : null;
-    const servicioNameIn = req.body?.servicioName || null;
+    const empleadoId = req.user.id;
+    const { servicioId, nota, items } = req.body || {};
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: "Faltan items" });
+    }
 
-    if (!empleadoId) return res.status(400).json({ error: "Empleado inválido" });
-    if (!items.length) return res.status(400).json({ error: "El pedido no tiene items" });
+    const pedidoId = createOrder({ empleadoId, servicioId, nota, items });
+    const pedido = getFullOrder(pedidoId);
 
-    let pedidoId, total;
+    // PDF
+    let pdfPath = null;
     try {
-      ({ pedidoId, total } = createOrder({ empleadoId, rol, nota, items, servicioId }));
+      pdfPath = await generateRemitoPDF({ pedido, outDir: path.resolve(process.cwd(), "tmp") });
     } catch (e) {
-      if (e?.code === "OUT_OF_STOCK") {
-        return res.status(400).json({ error: e.message, ...e.extra });
-      }
-      throw e;
+      console.warn("[orders] No se pudo generar PDF:", e?.message || e);
     }
 
-    // Presupuesto: máx 5%
-    let usagePct = null;
-    if (servicioId != null) {
-      const budget = getBudgetByServiceId(servicioId);
-      if (Number(budget) > 0) {
-        usagePct = (Number(total) / Number(budget)) * 100;
-        if (usagePct > 5) {
-          return res.status(400).json({
-            error: `El pedido (${usagePct.toFixed(2)}%) excede el 5% del presupuesto del servicio.`,
-          });
-        }
-      }
-    }
-
-    const { cab, items: fullItems } = getFullOrder(pedidoId);
-    const empleado = getEmployeeDisplayName(empleadoId);
-    const servicioNombre = servicioId
-      ? getServiceNameByIdLocal(servicioId) || servicioNameIn || `Servicio ${servicioId}`
-      : null;
-
-    const remito = {
-      numero: String(pedidoId).padStart(8, "0"),
-      fecha: cab?.Fecha || new Date().toISOString(),
-      total,
-      empleado,
-      rol,
-      servicio: servicioId ? { id: servicioId, name: servicioNombre } : null,
-      nota,
-    };
-
-    // PDF adjunto (tu util existente)
-    const { filePath, fileName } = await generateRemitoPDF({ remito, items: fullItems });
-
-    const subject = servicioId
-      ? `NUEVO PEDIDO DE INSUMOS - "${servicioNombre}"`
-      : `NUEVO PEDIDO DE INSUMOS - "${empleado}"`;
-
-    const notaSafe = String(nota || "")
-      .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-
-    // Envío de email (si falla NO rompe el pedido)
+    // Email
     try {
+      const service = pedido.servicio || (servicioId ? getServiceById(servicioId) : null);
+      const toArr = getServiceEmails(servicioId) || [];
+      const to = (toArr.length ? toArr.join(",") : undefined);
+      const subject = `Pedido #${pedidoId}${service?.name ? " - " + service.name : ""}`;
+      const html = `
+        <p>Se ha generado un nuevo pedido.</p>
+        <p><b>Pedido:</b> #${pedidoId}<br/>
+           <b>Servicio:</b> ${service?.name || "-"}<br/>
+           <b>Solicitante:</b> ${getEmployeeDisplayName(empleadoId) || empleadoId}</p>
+        <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">
+          <thead><tr><th>Código</th><th>Producto</th><th>Cant.</th><th>Precio</th><th>Subtotal</th></tr></thead>
+          <tbody>
+            ${pedido.items.map(i => `
+              <tr>
+                <td>${i.code || "-"}</td>
+                <td>${i.name || ""}</td>
+                <td style="text-align:right">${i.qty}</td>
+                <td style="text-align:right">${i.price}</td>
+                <td style="text-align:right">${i.subtotal}</td>
+              </tr>
+            `).join("")}
+            <tr><td colspan="4" style="text-align:right"><b>Total</b></td><td style="text-align:right"><b>${pedido.Total}</b></td></tr>
+          </tbody>
+        </table>
+        ${pedido.Nota ? `<p><b>Notas:</b> ${pedido.Nota}</p>` : ""}
+      `;
+
+      const attachments = pdfPath && fs.existsSync(pdfPath) ? [{
+        filename: path.basename(pdfPath),
+        path: pdfPath,
+        contentType: "application/pdf",
+      }] : undefined;
+
       await sendMail({
-        to: process.env.MAIL_TO || "nicolas.barcena@kazaro.com.ar",
+        to,
         subject,
-        html: `
-          <p>Se generó el pedido <strong>#${remito.numero}</strong>.</p>
-          <p>
-             <strong>Empleado:</strong> ${empleado}<br/>
-             <strong>Rol:</strong> ${rol || "-"}<br/>
-             ${remito.servicio ? `<strong>Servicio:</strong> ${remito.servicio.name}<br/>` : ""}
-             <strong>Total:</strong> ${total}<br/>
-             ${
-               usagePct != null
-                 ? `<strong>Uso del presupuesto:</strong> <span style="color:${
-                     usagePct > 5 ? "#c1121f" : "#2a9d8f"
-                   }">${usagePct.toFixed(2)}%</span> (límite 5%)<br/>`
-                 : ""
-             }
-             ${notaSafe ? `<strong>Nota:</strong> ${notaSafe}<br/>` : ""}
-          </p>
-          <p>Se adjunta PDF del remito.</p>
-        `,
-        attachments: [{ filename: fileName, path: filePath }],
-        fromName: empleado,
-        replyTo: req.user?.email || undefined,
+        html,
+        attachments,
+        entityType: "pedido",
+        entityId: pedidoId,
       });
     } catch (e) {
       console.warn("[orders] sendMail falló:", e?.message || e);
     }
 
     const pdfUrl = `/orders/pdf/${pedidoId}`;
-    return res.status(201).json({ ok: true, pedidoId, remito: { ...remito, pdfUrl } });
+    return res.status(201).json({ ok: true, pedidoId, remito: { pdfUrl } });
   } catch (e) {
     console.error("[orders] POST / error:", e);
     return res.status(500).json({ error: "Error interno" });
   }
 });
 
-/* ========= Rutas auxiliares que no rompen nada ========= */
-router.get("/:id", requireAuth, (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isFinite(id)) return res.status(400).json({ error: "id inválido" });
-  try {
-    const data = getFullOrder(id);
-    if (!data?.cab) return res.status(404).json({ error: "Pedido no encontrado" });
-    return res.json(data);
-  } catch (e) {
-    console.error("[orders] GET /:id error:", e);
-    return res.status(500).json({ error: "Error interno" });
-  }
-});
-
-router.get("/product/:id", requireAuth, (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isFinite(id)) return res.status(400).json({ error: "id inválido" });
-  try {
-    const p = getProductForOrder(id);
-    if (!p) return res.status(404).json({ error: "Producto no encontrado" });
-    return res.json(p);
-  } catch (e) {
-    console.error("[orders] GET /product/:id error:", e);
-    return res.status(500).json({ error: "Error interno" });
-  }
-});
-
 router.get("/pdf/:id", requireAuth, async (req, res) => {
   const id = Number(req.params.id);
-  if (!Number.isFinite(id)) return res.status(400).json({ error: "id inválido" });
+  const pedido = getFullOrder(id);
+  if (!pedido) return res.status(404).end();
   try {
-    const { cab, items } = getFullOrder(id);
-    if (!cab) return res.status(404).json({ error: "Pedido no encontrado" });
-
-    const empleado = getEmployeeDisplayName(cab.EmpleadoID);
-    const servicioNombre = cab.ServicioID
-      ? getServiceNameByIdLocal(cab.ServicioID) || `Servicio ${cab.ServicioID}`
-      : null;
-
-    const remito = {
-      numero: String(cab.PedidoID).padStart(8, "0"),
-      fecha: cab.Fecha,
-      total: cab.Total || 0,
-      empleado,
-      rol: cab.Rol || "",
-      servicio: cab.ServicioID ? { id: cab.ServicioID, name: servicioNombre } : null,
-      nota: cab.Nota || cab.nota || "",
-    };
-
-    const { filePath, fileName } = await generateRemitoPDF({ remito, items });
+    const pdfPath = await generateRemitoPDF({ pedido, outDir: path.resolve(process.cwd(), "tmp") });
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
-    return res.sendFile(filePath);
+    return res.send(fs.readFileSync(pdfPath));
   } catch (e) {
-    console.error("[orders] GET /pdf/:id error:", e);
     return res.status(500).json({ error: "No se pudo generar el PDF" });
-  }
-});
-
-// Test SMTP rápido (opcional)
-router.get("/_mail/test", requireAuth, async (req, res) => {
-  try {
-    const empleado = getEmployeeDisplayName(Number(req.user.id)) || "Kazaro App";
-    const info = await sendMail({
-      to: process.env.MAIL_TO || "nicolas.barcena@kazaro.com.ar",
-      subject: "TEST SMTP — Kazaro",
-      html: "<p>Prueba de correo OK ✅</p>",
-      fromName: empleado,
-      replyTo: req.user?.email || undefined,
-    });
-    return res.json({ ok: true, accepted: info.accepted, response: info.response });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 

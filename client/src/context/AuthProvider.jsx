@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../api/client";
+import { api, ensureCsrf } from "../api/client";
 import { AuthContext } from "./auth-context";
 
 export default function AuthProvider({ children }) {
@@ -9,24 +9,37 @@ export default function AuthProvider({ children }) {
   // Cargar sesión al montar
   useEffect(() => {
     let alive = true;
-    api.get("/auth/me")
-      .then((res) => { if (alive) setUser(res.data); })
-      .catch(() => { if (alive) setUser(null); })
-      .finally(() => { if (alive) setLoading(false); });
-    return () => { alive = false; };
+    api
+      .get("/auth/me")
+      .then((res) => {
+        if (alive) setUser(res.data);
+      })
+      .catch(() => {
+        if (alive) setUser(null);
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
   }, []);
 
+  // 🔐 Login con CSRF asegurado
   async function login(username, password) {
+    await ensureCsrf(); // cookie csrf_token + header X-CSRF-Token
     const res = await api.post("/auth/login", { username, password });
-    setUser(res.data); // { id, username, roles: [...] }
-    return res.data;
+    const payload = res.data?.user || res.data; // soporta {user} o usuario directo
+    setUser(payload);
+    return payload;
   }
 
   async function logout() {
     try {
       await api.post("/auth/logout");
-    } catch {
-      /* no-op */
+    } catch (e) {
+      // Evita eslint(no-empty) y eslint(no-unused-vars)
+      void e;
     }
     // limpiar carrito/servicio y notificar al CartProvider
     localStorage.removeItem("cart");
@@ -36,7 +49,6 @@ export default function AuthProvider({ children }) {
     setUser(null);
     window.location.replace("/login");
   }
-
 
   return (
     <AuthContext.Provider value={{ user, loading, login, logout }}>

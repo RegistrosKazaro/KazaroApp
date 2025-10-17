@@ -1,51 +1,40 @@
-// utils/mailer.js
 import nodemailer from "nodemailer";
 import { env } from "./env.js";
+import { logEmail } from "../db.js";
 
 let transporter;
-
 function getTransporter() {
   if (env.MAIL_DISABLE) return null;
   if (transporter) return transporter;
-
-  const t = nodemailer.createTransport({
+  transporter = nodemailer.createTransport({
     host: env.SMTP_HOST,
     port: env.SMTP_PORT,
-    secure: env.SMTP_SECURE, // false => STARTTLS
-    auth: (env.SMTP_USER && env.SMTP_PASS) ? {
-      user: env.SMTP_USER,
-      pass: env.SMTP_PASS,
-    } : undefined,
-    tls: { servername: env.SMTP_HOST },
+    secure: env.SMTP_SECURE,
+    auth: (env.SMTP_USER && env.SMTP_PASS) ? { user: env.SMTP_USER, pass: env.SMTP_PASS } : undefined,
   });
-
-  transporter = t;
   return transporter;
 }
 
-export async function sendMail({ to, subject, html, attachments = [], fromName, replyTo }) {
-  if (env.MAIL_DISABLE) {
-    console.log("[mail] MAIL_DISABLE=true → no se envía");
-    return { accepted: [], response: "MAIL_DISABLED" };
-  }
-
+export async function sendMail({ to, subject, html, attachments, entityType, entityId, replyTo }) {
   const t = getTransporter();
-  if (!t) throw new Error("Mailer inhabilitado (MAIL_DISABLE=true)");
-
-  const from =
-    fromName && env.MAIL_FROM
-      ? `"${fromName.replace(/"/g, "'")}" <${env.MAIL_FROM}>`
-      : (env.MAIL_FROM || env.SMTP_USER);
-
-  const info = await t.sendMail({
-    from,
-    to: to || env.MAIL_TO || env.SMTP_USER,
-    subject,
-    html,
-    attachments,
-    ...(replyTo ? { replyTo } : {}),
-  });
-
-  console.log("[mail] sent:", { accepted: info.accepted, response: info.response });
-  return info;
+  if (!t) {
+    logEmail({ entityType, entityId, to, subject, status: "disabled", providerId: null, error: "MAIL_DISABLE=1" });
+    return { disabled: true };
+  }
+  const from = env.MAIL_FROM || env.SMTP_USER || "no-reply@example.com";
+  try {
+    const info = await t.sendMail({
+      from,
+      to: to || env.MAIL_TO || env.SMTP_USER,
+      subject,
+      html,
+      attachments,
+      ...(replyTo ? { replyTo } : {}),
+    });
+    logEmail({ entityType, entityId, to, subject, status: "sent", providerId: info.messageId || info.response, error: null });
+    return info;
+  } catch (e) {
+    logEmail({ entityType, entityId, to, subject, status: "error", providerId: null, error: e?.message || String(e) });
+    throw e;
+  }
 }

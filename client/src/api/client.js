@@ -2,24 +2,24 @@
 import axios from "axios";
 
 /**
- * Base URL:
- * - Usa VITE_API_URL si está definida.
- * - Si no, usa el mismo origen donde se sirve la app.
+ * Base URL del backend:
+ * - Usa VITE_API_URL si está definida (recomendado).
+ * - Si no, por defecto http://localhost:4000 (server Express).
  */
 const BASE_URL =
   (import.meta?.env && import.meta.env.VITE_API_URL) ||
-  (typeof window !== "undefined" ? window.location.origin : "http://localhost:10000");
+  "http://localhost:4000";
 
 export const api = axios.create({
   baseURL: BASE_URL,
-  withCredentials: true, // 👈 necesario para que viajen cookies (sid + secreto CSRF)
+  withCredentials: true, // cookies (token / csrf_token)
   headers: { "Content-Type": "application/json" },
 });
 
 let _csrf = null;
 let _pending = null;
 
-/** Pide el token al backend (requiere que el server tenga /csrf-token detrás de csurf) */
+/** Pide/renueva el token CSRF (el server setea cookie csrf_token) */
 async function fetchCsrf() {
   if (_pending) return _pending;
   _pending = api
@@ -34,7 +34,7 @@ async function fetchCsrf() {
   return _pending;
 }
 
-/** Forzá la obtención/renovación del token (la llamamos al arrancar la app) */
+/** Forzar obtención/renovación del token (útil al iniciar app o antes de un POST) */
 export async function ensureCsrf() {
   _csrf = null;
   return fetchCsrf();
@@ -53,7 +53,7 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
-/* ===== Interceptor de respuesta: si falla por 403 CSRF, renueva y reintenta 1 vez ===== */
+/* ===== Interceptor de respuesta: si 403 CSRF, renueva y reintenta 1 vez ===== */
 api.interceptors.response.use(
   (res) => res,
   async (error) => {
@@ -68,8 +68,9 @@ api.interceptors.response.use(
         const cfg = { ...error.config, _csrfRetried: true };
         cfg.headers = { ...(cfg.headers || {}), "X-CSRF-Token": _csrf };
         return api(cfg);
-      } catch {
-        // sin uso de variable -> no dispara no-unused-vars
+      } catch (e) {
+        // Evita eslint(no-empty) y eslint(no-unused-vars)
+        void e;
       }
     }
     return Promise.reject(error);
