@@ -1,128 +1,168 @@
 // server/src/middleware/auth.js
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
 import { env } from "../utils/env.js";
-import { getUserForLogin, getUserRoles } from "../db.js";
+import { getUserForLogin, getUserById, getUserRoles, listServicesByUser } from "../db.js";
 
+/* ================== Password compare (argon2 / bcrypt / md5 / sha1 / plano) ================== */
 async function comparePassword(input, userRow) {
-  const hash = userRow?.password_hash || "";
+  const pass = String(input ?? "");
+  const hash = String(userRow?.password_hash || "").trim();
+  const plain = String(userRow?.password_plain ?? "");
 
-  if (typeof hash === "string" && /^\$2[aby]\$/.test(hash)) {
-    try {
-      let bcrypt;
-      try { bcrypt = await import("bcrypt"); }
-      catch { bcrypt = await import("bcryptjs"); }
-      return await bcrypt.compare(input, hash);
-    } catch (e) {
-      if (env.DEBUG_AUTH) console.error("[auth] bcrypt compare:", e?.message || e);
-    }
-  }
-
-  if (typeof hash === "string" && hash.startsWith("$argon2")) {
+  // argon2
+  if (hash.toLowerCase().startsWith("$argon2")) {
     try {
       const argon2 = await import("argon2");
-      return await argon2.verify(hash, input);
+      if (await argon2.default.verify(hash, pass)) return true;
     } catch (e) {
-      console.error("[auth] Argon2 no disponible o fallo:", e?.message || e);
+      if (env.DEBUG_AUTH) console.error("[auth] argon2:", e?.message || e);
     }
   }
 
-  if (userRow?.password_plain != null) {
-    return String(userRow.password_plain) === String(input);
+  // bcrypt / bcryptjs ($2a$ / $2b$ / $2y$)
+  if (/^\$2[aby]\$/.test(hash)) {
+    try {
+      let bcrypt;
+      try { bcrypt = (await import("bcrypt")).default; }
+      catch { bcrypt = (await import("bcryptjs")).default; }
+      if (await bcrypt.compare(pass, hash)) return true;
+    } catch (e) {
+      if (env.DEBUG_AUTH) console.error("[auth] bcrypt:", e?.message || e);
+    }
   }
+
+  // MD5 heredado
+  if (/^[a-f0-9]{32}$/i.test(hash)) {
+    const md5 = crypto.createHash("md5").update(pass).digest("hex");
+    if (md5.toLowerCase() === hash.toLowerCase()) return true;
+  }
+
+  // SHA1 heredado
+  if (/^[a-f0-9]{40}$/i.test(hash)) {
+    const sha1 = crypto.createHash("sha1").update(pass).digest("hex");
+    if (sha1.toLowerCase() === hash.toLowerCase()) return true;
+  }
+
+  // plano
+  if (plain) return plain === pass;
 
   return false;
 }
 
+/* ================== JWT helpers ================== */
+function signToken(userId) {
+  return jwt.sign({ uid: Number(userId) }, env.JWT_SECRET || "dev-secret", { expiresIn: "12h" });
+}
+function readTokenFromReq(req) {
+  // Bearer
+  const bearer = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+  if (bearer) return bearer;
+
+  // Cookie "token" (principal) o "sid" (compat)
+  const rawCookie = req.headers.cookie || "";
+  const mToken = rawCookie.match(/(?:^|;\s*)token=([^;]+)/i);
+  const mSid   = rawCookie.match(/(?:^|;\s*)sid=([^;]+)/i);
+  if (mToken) return decodeURIComponent(mToken[1]);
+  if (mSid)   return decodeURIComponent(mSid[1]);
+  return null;
+}
+
+/* ================== Login handler (para routes/auth.js) ================== */
 export async function loginHandler(req, res) {
   try {
     const { user, username, email, password } = req.body || {};
-    const ident = user ?? username ?? email;
-    if (!ident || !password) {
-      return res.status(400).json({ error: "Faltan credenciales" });
-    }
+    const ident = String(user ?? username ?? email ?? "").trim();
+    const pass  = String(password ?? "");
+
+    if (!ident || !pass) return res.status(400).json({ ok: false, error: "Faltan credenciales" });
 
     const u = getUserForLogin(ident);
-    if (!u) return res.status(401).json({ error: "Usuario o contraseña inválidos" });
+    if (!u) return res.status(401).json({ ok: false, error: "Usuario o contraseña inválidos" });
 
-    if (String(u.is_active ?? "1") === "0") {
-      return res.status(403).json({ error: "Usuario inactivo" });
+    // inactivo?
+    const active = String(u.is_active ?? "1").trim();
+    if (["0", "false", "no", "inactivo", "disabled"].includes(active.toLowerCase())) {
+      return res.status(403).json({ ok: false, error: "Usuario inactivo" });
     }
 
-    const ok = await comparePassword(password, u);
-    if (!ok) return res.status(401).json({ error: "Usuario o contraseña inválidos" });
+    const ok = await comparePassword(pass, u);
+    if (!ok) return res.status(401).json({ ok: false, error: "Usuario o contraseña inválidos" });
 
-    const roles = getUserRoles(u.id) || [];
-
-    const token = jwt.sign({ id: Number(u.id), username: u.username }, env.JWT_SECRET, { expiresIn: "12h" });
+    const token = signToken(u.id);
     res.cookie("token", token, {
       httpOnly: true,
       sameSite: "lax",
       secure: env.NODE_ENV === "production",
-      maxAge: 12 * 60 * 60 * 1000,
+      maxAge: 12 * 60 * 60 * 1000, // 12h
       path: "/",
     });
 
-    return res.json({ id: Number(u.id), username: u.username, roles });
+    const roles = getUserRoles(u.id) || [];
+    const services = listServicesByUser(u.id) || [];
+
+    return res.json({
+      ok: true,
+      user: {
+        id: Number(u.id),
+        username: u.username ?? null,
+        email: u.email ?? null,
+        roles,
+        services,
+      },
+    });
   } catch (e) {
     console.error("[auth] login error:", e?.message || e);
-    return res.status(500).json({ error: "Error interno" });
+    return res.status(500).json({ ok: false, error: "Error interno" });
   }
 }
 
+/* ================== requireAuth ================== */
 export function requireAuth(req, res, next) {
   try {
-    if (req.session?.user?.id) {
-      req.user = {
-        id: Number(req.session.user.id),
-        username: req.session.user.username,
-        email: req.session.user.email,
-      };
-      return next();
-    }
+    const raw = readTokenFromReq(req);
+    if (!raw) return res.status(401).json({ ok: false });
 
-    const bearer = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-    let token = bearer;
-    if (!token && req.headers.cookie) {
-      const m = req.headers.cookie.match(/(?:^|;\s*)token=([^;]+)/i);
-      if (m) token = decodeURIComponent(m[1]);
-    }
-    if (token) {
-      try {
-        const p = jwt.verify(token, env.JWT_SECRET);
-        req.user = { id: Number(p.id), username: p.username };
-        return next();
-      } catch {/* token inválido */}
-    }
+    const payload = jwt.verify(raw, env.JWT_SECRET || "dev-secret");
+    const user = getUserById(payload?.uid);
+    if (!user?.id) return res.status(401).json({ ok: false });
 
-    if (env.NODE_ENV !== "production" && req.headers["x-user-id"]) {
-      req.user = { id: Number(req.headers["x-user-id"]) };
-      return next();
-    }
+    const roles = getUserRoles(user.id) || [];
+    const services = listServicesByUser(user.id) || [];
 
-    return res.status(401).json({ error: "No autenticado" });
+    req.user = {
+      id: Number(user.id),
+      username: user.username ?? null,
+      email: user.email ?? null,
+      roles,
+      services,
+    };
+    return next();
   } catch (e) {
-    console.error("[auth] requireAuth error:", e?.message || e);
-    return res.status(401).json({ error: "No autenticado" });
+    if (env.DEBUG_AUTH) console.error("[auth] requireAuth:", e?.message || e);
+    return res.status(401).json({ ok: false });
   }
 }
 
+/* ================== requireRole (admin ↔ administrativo) ================== */
+function normalizeRoleName(r) {
+  const s = String(r || "").trim().toLowerCase();
+  if (s === "admin" || s === "administrador") return "administrativo";
+  return s;
+}
 export function requireRole(allowed) {
-  const allow = (Array.isArray(allowed) ? allowed : [allowed])
-    .map((r) => String(r).toLowerCase());
-  const mapSyn = (r) => (r === "admin" ? "administrativo" : r);
-
+  const allow = (Array.isArray(allowed) ? allowed : [allowed]).map(normalizeRoleName);
   return (req, res, next) => {
     try {
-      if (!req.user?.id) return res.status(401).json({ error: "No autenticado" });
-      const roles = (getUserRoles(req.user.id) || []).map((r) => String(r).toLowerCase());
-      const rolesNorm = roles.map(mapSyn);
-      const allowedNorm = allow.map(mapSyn);
-      const ok = rolesNorm.some((r) => allowedNorm.includes(r));
-      if (!ok) return res.status(403).json({ error: "Sin permiso" });
-      return next();
+      if (!req.user?.id) return res.status(401).json({ ok: false });
+      const roles = (req.user.roles?.length ? req.user.roles : getUserRoles(req.user.id) || [])
+        .map(normalizeRoleName);
+      const ok = roles.some((r) => allow.includes(r));
+      if (!ok) return res.status(403).json({ ok: false, error: "Sin permiso" });
+      next();
     } catch (e) {
-      console.error("[auth] requireRole error:", e?.message || e);
-      return res.status(403).json({ error: "Sin permiso" });
+      if (env.DEBUG_AUTH) console.error("[auth] requireRole:", e?.message || e);
+      return res.status(403).json({ ok: false, error: "Sin permiso" });
     }
   };
 }

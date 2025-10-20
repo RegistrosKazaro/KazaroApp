@@ -1,3 +1,4 @@
+// server/src/routes/auth.js
 import express from "express";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
@@ -13,6 +14,7 @@ import {
 
 const router = express.Router();
 
+/* ================= Helpers ================= */
 function normalizeBool(v) {
   const s = String(v ?? "1").trim().toLowerCase();
   return !["0", "false", "no", "inactivo", "deshabilitado", "disabled"].includes(s);
@@ -20,20 +22,21 @@ function normalizeBool(v) {
 
 async function verifyPassword(inputPassword, userRow) {
   const pass = String(inputPassword ?? "");
-  const hash = (userRow?.password_hash || "").trim();
-  const plain = (userRow?.password_plain || "").trim();
+  const hash = String(userRow?.password_hash || "").trim();
+  const plain = String(userRow?.password_plain || "").trim();
 
   if (hash) {
     const lower = hash.toLowerCase();
 
+    // argon2
     if (lower.startsWith("$argon2")) {
-      try { return await argon2.verify(hash, pass); } catch { /* sigue */ }
+      try { if (await argon2.verify(hash, pass)) return true; } catch {}
     }
-
+    // bcrypt ($2a$, $2b$, $2y$)
     if (lower.startsWith("$2a$") || lower.startsWith("$2b$") || lower.startsWith("$2y$")) {
-      try { return await bcrypt.compare(pass, hash); } catch { /* sigue */ }
+      try { if (await bcrypt.compare(pass, hash)) return true; } catch {}
     }
-
+    // MD5 / SHA1 heredados
     try {
       if (/^[a-f0-9]{32}$/i.test(hash)) {
         const md5 = crypto.createHash("md5").update(pass).digest("hex");
@@ -43,40 +46,48 @@ async function verifyPassword(inputPassword, userRow) {
         const sha1 = crypto.createHash("sha1").update(pass).digest("hex");
         if (sha1.toLowerCase() === hash.toLowerCase()) return true;
       }
-    } catch { /* sigue */ }
+    } catch {}
   }
 
+  // texto plano (fallback)
   if (plain) return plain === pass;
 
   return false;
 }
 
-function signSession(userId) {
-  const token = jwt.sign({ uid: userId }, env.JWT_SECRET || "dev-secret", {
-    expiresIn: "12h",
-  });
-  return token;
+function signJwt(userId) {
+  return jwt.sign({ uid: Number(userId) }, env.JWT_SECRET || "dev-secret", { expiresIn: "12h" });
 }
 
-function setSessionCookie(res, token) {
-  res.cookie("sid", token, {
+function setSessionCookies(res, token) {
+  const cookieOpts = {
     httpOnly: true,
     sameSite: "lax",
     secure: env.NODE_ENV === "production",
     maxAge: 12 * 60 * 60 * 1000,
     path: "/",
-  });
+  };
+  // Compat: dejamos ambas cookies
+  res.cookie("token", token, cookieOpts);
+  res.cookie("sid", token, cookieOpts);
 }
 
 function readSession(req) {
-  const raw = req.cookies?.sid || null;
+  const raw =
+    req.cookies?.sid ||
+    req.cookies?.token ||
+    (req.headers.authorization || "").replace(/^Bearer\s+/i, "") ||
+    null;
   if (!raw) return null;
   try { return jwt.verify(raw, env.JWT_SECRET || "dev-secret"); }
   catch { return null; }
 }
 
-router.get("/me", async (req, res) => {
-  const sess = readSession(req);
+/* ================= Rutas ================= */
+
+// Estado de sesión
+router.get("/me", (_req, res) => {
+  const sess = readSession(_req);
   if (!sess?.uid) return res.status(401).json({ ok: false });
 
   const user = getUserById(sess.uid);
@@ -97,6 +108,7 @@ router.get("/me", async (req, res) => {
   });
 });
 
+// Login
 router.post("/login", async (req, res) => {
   try {
     const username = (req.body?.username ?? req.body?.user ?? req.body?.email ?? "").trim();
@@ -116,8 +128,8 @@ router.post("/login", async (req, res) => {
     const ok = await verifyPassword(password, row);
     if (!ok) return res.status(401).json({ ok: false, error: "Usuario o contraseña inválidos" });
 
-    const token = signSession(row.id);
-    setSessionCookie(res, token);
+    const token = signJwt(row.id);
+    setSessionCookies(res, token); // <-- setea token y sid (compat)
 
     const roles = getUserRoles(row.id);
     const services = listServicesByUser(row.id);
@@ -138,8 +150,12 @@ router.post("/login", async (req, res) => {
   }
 });
 
+// Logout
 router.post("/logout", (req, res) => {
-  res.clearCookie("sid", { path: "/" });
+  try {
+    res.clearCookie("sid", { path: "/" });
+    res.clearCookie("token", { path: "/" });
+  } catch {}
   return res.json({ ok: true });
 });
 
