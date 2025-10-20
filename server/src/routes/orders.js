@@ -1,6 +1,14 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.js";
-import { db, createOrder, getFullOrder, getEmployeeDisplayName, getServiceById, getServiceEmails } from "../db.js";
+import {
+  createOrder,
+  getFullOrder,
+  getEmployeeDisplayName,
+  getServiceById,
+  getServiceEmails,
+  getServiceNameById,
+  getBudgetByServiceId,
+} from "../db.js";
 import { generateRemitoPDF } from "../utils/remitoPdf.js";
 import { sendMail } from "../utils/mailer.js";
 import path from "path";
@@ -8,17 +16,24 @@ import fs from "fs";
 
 const router = Router();
 
+function pad7(n) {
+  return String(n ?? "").padStart(7, "0");
+}
+
 router.post("/", requireAuth, async (req, res) => {
   try {
     const empleadoId = req.user.id;
-    const { servicioId, nota, items } = req.body || {};
+    const { servicioId = null, nota = "", items } = req.body || {};
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: "Faltan items" });
     }
 
+    // crea el pedido
     const pedidoId = createOrder({ empleadoId, servicioId, nota, items });
     const pedido = getFullOrder(pedidoId);
+    if (!pedido) return res.status(500).json({ error: "No se pudo recuperar el pedido" });
 
+    // genera PDF (si falla, sigue sin romper el flujo)
     let pdfPath = null;
     try {
       pdfPath = await generateRemitoPDF({ pedido, outDir: path.resolve(process.cwd(), "tmp") });
@@ -26,43 +41,67 @@ router.post("/", requireAuth, async (req, res) => {
       console.warn("[orders] No se pudo generar PDF:", e?.message || e);
     }
 
+    // envía mail con el formato solicitado
     try {
-      const service = pedido.servicio || (servicioId ? getServiceById(servicioId) : null);
-      const toArr = getServiceEmails(servicioId) || [];
-      const to = (toArr.length ? toArr.join(",") : undefined);
-      const subject = `Pedido #${pedidoId}${service?.name ? " - " + service.name : ""}`;
-      const html = `
-        <p>Se ha generado un nuevo pedido.</p>
-        <p><b>Pedido:</b> #${pedidoId}<br/>
-           <b>Servicio:</b> ${service?.name || "-"}<br/>
-           <b>Solicitante:</b> ${getEmployeeDisplayName(empleadoId) || empleadoId}</p>
-        <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">
-          <thead><tr><th>Código</th><th>Producto</th><th>Cant.</th><th>Precio</th><th>Subtotal</th></tr></thead>
-          <tbody>
-            ${pedido.items.map(i => `
-              <tr>
-                <td>${i.code || "-"}</td>
-                <td>${i.name || ""}</td>
-                <td style="text-align:right">${i.qty}</td>
-                <td style="text-align:right">${i.price}</td>
-                <td style="text-align:right">${i.subtotal}</td>
-              </tr>
-            `).join("")}
-            <tr><td colspan="4" style="text-align:right"><b>Total</b></td><td style="text-align:right"><b>${pedido.Total}</b></td></tr>
-          </tbody>
-        </table>
-        ${pedido.Nota ? `<p><b>Notas:</b> ${pedido.Nota}</p>` : ""}
-      `;
+      const service = pedido.servicio || (pedido.ServicioID ? getServiceById(pedido.ServicioID) : null);
+      const serviceName = service?.name || getServiceNameById(pedido.ServicioID) || "-";
+      const empleadoNombre = getEmployeeDisplayName(empleadoId) || `Empleado ${empleadoId}`;
+      const rol = String(pedido.Rol || "").toLowerCase() || "administrativo";
+      const total = Number(pedido.Total || 0);
+      const nro = pad7(pedidoId);
 
-      const attachments = pdfPath && fs.existsSync(pdfPath) ? [{
-        filename: path.basename(pdfPath),
-        path: pdfPath,
-        contentType: "application/pdf",
-      }] : undefined;
+      // % presupuesto (solo si supervisor y hay presupuesto configurado)
+      let presupuestoLinea = "";
+      if (rol === "supervisor" && pedido.ServicioID != null) {
+        const presupuesto = getBudgetByServiceId(pedido.ServicioID);
+        if (presupuesto && presupuesto > 0) {
+          const pct = Math.min(100, (total / presupuesto) * 100);
+          presupuestoLinea = `\nPresupuesto usado: ${pct.toFixed(1)}%`;
+        }
+      }
+
+      const subject = `NUEVO PEDIDO DE INSUMOS - "${serviceName}"`;
+
+      const text = `Se generó el pedido #${nro}.
+
+Empleado: ${empleadoNombre}
+Rol: ${rol}
+Servicio: ${serviceName}
+Total: ${total}
+Nota: ${nota || (pedido.Nota || "—")}${presupuestoLinea}
+
+Se adjunta PDF del remito.`;
+
+      const html = `
+<p>Se generó el pedido <strong>#${nro}</strong>.</p>
+
+<p><strong>Empleado:</strong> ${empleadoNombre}<br/>
+<strong>Rol:</strong> ${rol}<br/>
+<strong>Servicio:</strong> ${serviceName}<br/>
+<strong>Total:</strong> ${total}<br/>
+<strong>Nota:</strong> ${nota || (pedido.Nota || "—")}</p>
+${presupuestoLinea ? `<p><strong>${presupuestoLinea.replace("\n", "")}</strong></p>` : ""}
+<p>Se adjunta PDF del remito.</p>
+`.trim();
+
+      const toArr = getServiceEmails(pedido.ServicioID || servicioId) || [];
+      const to = toArr.length ? toArr.join(",") : undefined;
+
+      const attachments =
+        pdfPath && fs.existsSync(pdfPath)
+          ? [
+              {
+                filename: path.basename(pdfPath),
+                path: pdfPath,
+                contentType: "application/pdf",
+              },
+            ]
+          : undefined;
 
       await sendMail({
         to,
         subject,
+        text,
         html,
         attachments,
         entityType: "pedido",
