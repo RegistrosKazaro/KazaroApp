@@ -1,116 +1,43 @@
+// server/src/middleware/auth.js
 import jwt from "jsonwebtoken";
-import crypto from "crypto";
 import { env } from "../utils/env.js";
-import { getUserForLogin, getUserById } from "../db.js";
+import { getUserForLogin, getUserRoles } from "../db.js";
 
-/* =================== Helpers de hash =================== */
+/* ================= Verificación de contraseña ================= */
+async function comparePassword(input, userRow) {
+  const hash = userRow?.password_hash || "";
 
-function norm(s) {
-  return String(s ?? "").trim();
-}
-function isHex(str) {
-  return /^[0-9a-f]+$/i.test(str);
-}
-function hashHex(alg, data) {
-  return crypto.createHash(alg).update(data).digest("hex");
-}
+  // 1) bcrypt / bcryptjs
+  if (typeof hash === "string" && /^\$2[aby]\$/.test(hash)) {
+    try {
+      let bcrypt;
+      try { bcrypt = await import("bcrypt"); }
+      catch { bcrypt = await import("bcryptjs"); }
+      return await bcrypt.compare(input, hash);
+    } catch (e) {
+      if (env.DEBUG_AUTH) console.error("[auth] bcrypt compare:", e?.message || e);
+    }
+  }
 
-/**
- * Verifica contraseñas contra múltiples formatos:
- * - Argon2id  -> $argon2...
- * - Bcrypt    -> $2a$ / $2b$ / $2y$
- * - MD5/SHA1/SHA256/SHA512 -> hex (32/40/64/128)
- * - Con sal tipo "salt:hash" o "hash:salt" (proba salt+pass y pass+salt)
- * - Pepper opcional en env.PASSWORD_PEPPER
- */
-async function verifyHashMulti(inputRaw, storedRaw) {
-  const input = norm(inputRaw);
-  const stored = norm(storedRaw);
-  if (!stored) return false;
-
-  // Argon2
-  if (stored.startsWith("$argon2")) {
+  // 2) argon2
+  if (typeof hash === "string" && hash.startsWith("$argon2")) {
     try {
       const argon2 = await import("argon2");
-      return await argon2.verify(stored, input);
+      return await argon2.verify(hash, input);
     } catch (e) {
-      console.error("[auth] faltante 'argon2' para verificar hashes Argon2id.");
-      // devolvemos un objeto especial para que el handler responda 500 explícito
-      return { missingArgon2: true };
+      console.error("[auth] Argon2 no disponible o fallo:", e?.message || e);
     }
   }
 
-  // Bcrypt
-  if (/^\$2[aby]\$/.test(stored)) {
-    const bcryptjs = await import("bcryptjs");
-    return bcryptjs.compare(input, stored);
+  // 3) texto plano (si tu BD lo trae en otra columna)
+  if (userRow?.password_plain != null) {
+    return String(userRow.password_plain) === String(input);
   }
 
-  const pepper = env.PASSWORD_PEPPER ? String(env.PASSWORD_PEPPER) : "";
-
-  // Hex puro (sin sal)
-  if (isHex(stored)) {
-    const len = stored.length;
-    const cand = [];
-    if (len === 32)  cand.push(hashHex("md5", input), hashHex("md5", input + pepper));
-    if (len === 40)  cand.push(hashHex("sha1", input), hashHex("sha1", input + pepper));
-    if (len === 64)  cand.push(hashHex("sha256", input), hashHex("sha256", input + pepper));
-    if (len === 128) cand.push(hashHex("sha512", input), hashHex("sha512", input + pepper));
-    return cand.some((h) => h.toLowerCase() === stored.toLowerCase());
-  }
-
-  // Formatos con sal (salt:hash o hash:salt)
-  if (stored.includes(":") || stored.includes("$")) {
-    const sep = stored.includes(":") ? ":" : "$";
-    const [a, b] = stored.split(sep);
-    // Intento 1: salt:hash
-    if (isHex(b)) {
-      const len = b.length;
-      const salt = a;
-      const combos = [
-        ["md5", 32],
-        ["sha1", 40],
-        ["sha256", 64],
-        ["sha512", 128],
-      ];
-      for (const [alg, hexLen] of combos) {
-        if (len === hexLen) {
-          const h1 = hashHex(alg, salt + input);
-          const h2 = hashHex(alg, input + salt);
-          const h3 = pepper ? hashHex(alg, salt + input + pepper) : null;
-          const h4 = pepper ? hashHex(alg, input + salt + pepper) : null;
-          if ([h1, h2, h3, h4].filter(Boolean).some((h) => h.toLowerCase() === b.toLowerCase())) return true;
-        }
-      }
-    }
-    // Intento 2: hash:salt (hash primero)
-    if (isHex(a)) {
-      const len = a.length;
-      const salt = b;
-      const combos = [
-        ["md5", 32],
-        ["sha1", 40],
-        ["sha256", 64],
-        ["sha512", 128],
-      ];
-      for (const [alg, hexLen] of combos) {
-        if (len === hexLen) {
-          const h1 = hashHex(alg, salt + input);
-          const h2 = hashHex(alg, input + salt);
-          const h3 = pepper ? hashHex(alg, salt + input + pepper) : null;
-          const h4 = pepper ? hashHex(alg, input + salt + pepper) : null;
-          if ([h1, h2, h3, h4].filter(Boolean).some((h) => h.toLowerCase() === a.toLowerCase())) return true;
-        }
-      }
-    }
-  }
-
-  // Último intento: igual plano (por si la columna guarda texto plano con espacios)
-  return stored === input;
+  return false;
 }
 
-/* =================== Handlers =================== */
-
+/* ================= Login ================= */
 export async function loginHandler(req, res) {
   try {
     const { user, username, email, password } = req.body || {};
@@ -122,53 +49,93 @@ export async function loginHandler(req, res) {
     const u = getUserForLogin(ident);
     if (!u) return res.status(401).json({ error: "Usuario o contraseña inválidos" });
 
-    // Si existe hash, probá todas las variantes
-    let ok = false;
-    if (u.password_hash) {
-      const r = await verifyHashMulti(password, u.password_hash);
-      if (typeof r === "object" && r?.missingArgon2) {
-        return res.status(500).json({ error: "Servidor sin soporte Argon2: ejecutar `npm i argon2` en /server" });
-      }
-      ok = !!r;
+    // Usuario inactivo (si tu tabla trae esa columna)
+    if (String(u.is_active ?? "1") === "0") {
+      return res.status(403).json({ error: "Usuario inactivo" });
     }
 
-    // Fallback a password_plain si existe y no pasó el hash
-    if (!ok && u.password_plain) {
-      ok = String(password) === String(u.password_plain);
-    }
-
+    const ok = await comparePassword(password, u);
     if (!ok) return res.status(401).json({ error: "Usuario o contraseña inválidos" });
 
-    const token = jwt.sign({ uid: u.id }, env.JWT_SECRET, { expiresIn: "7d" });
+    const roles = getUserRoles(u.id) || [];
+
+    // Cookie JWT (lo usa requireAuth)
+    const token = jwt.sign({ id: Number(u.id), username: u.username }, env.JWT_SECRET, { expiresIn: "12h" });
     res.cookie("token", token, {
       httpOnly: true,
       sameSite: "lax",
-      secure: req.protocol === "https",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      secure: env.NODE_ENV === "production",
+      maxAge: 12 * 60 * 60 * 1000,
       path: "/",
     });
 
-    const me = getUserById(u.id);
-    return res.json(me);
+    // ⚠️ El front espera esto: { id, username, roles }
+    return res.json({ id: Number(u.id), username: u.username, roles });
   } catch (e) {
     console.error("[auth] login error:", e?.message || e);
     return res.status(500).json({ error: "Error interno" });
   }
 }
 
+/* ================= Autenticación por cookie/bearer ================= */
 export function requireAuth(req, res, next) {
   try {
-    const hdr = req.get("Authorization");
-    let token = req.cookies?.token || null;
-    if (!token && hdr && /^Bearer\s+/i.test(hdr)) token = hdr.replace(/^Bearer\s+/i, "").trim();
+    // 1) Sesión clásica (si la estuvieras usando)
+    if (req.session?.user?.id) {
+      req.user = {
+        id: Number(req.session.user.id),
+        username: req.session.user.username,
+        email: req.session.user.email,
+      };
+      return next();
+    }
 
-    if (!token) return res.status(401).json({ error: "No autenticado" });
-    const payload = jwt.verify(token, env.JWT_SECRET);
-    const me = getUserById(payload?.uid);
-    if (!me) return res.status(401).json({ error: "No autenticado" });
-    req.user = me;
-    return next();
+    // 2) JWT en Authorization o cookie
+    const bearer = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+    let token = bearer;
+    if (!token && req.headers.cookie) {
+      const m = req.headers.cookie.match(/(?:^|;\s*)token=([^;]+)/i);
+      if (m) token = decodeURIComponent(m[1]);
+    }
+    if (token) {
+      try {
+        const p = jwt.verify(token, env.JWT_SECRET);
+        req.user = { id: Number(p.id), username: p.username };
+        return next();
+      } catch {/* token inválido */}
+    }
+
+    // 3) Dev fallback por header (solo fuera de prod)
+    if (env.NODE_ENV !== "production" && req.headers["x-user-id"]) {
+      req.user = { id: Number(req.headers["x-user-id"]) };
+      return next();
+    }
+
+    return res.status(401).json({ error: "No autenticado" });
   } catch (e) {
+    console.error("[auth] requireAuth error:", e?.message || e);
     return res.status(401).json({ error: "No autenticado" });
   }
+}
+
+/* ================= Autorización por rol ================= */
+export function requireRole(allowed) {
+  const allow = (Array.isArray(allowed) ? allowed : [allowed])
+    .map((r) => String(r).toLowerCase());
+  const mapSyn = (r) => (r === "admin" ? "administrativo" : r);
+
+  return (req, res, next) => {
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: "No autenticado" });
+      const roles = (getUserRoles(req.user.id) || []).map((r) => String(r).toLowerCase());
+      const rolesNorm = roles.map(mapSyn);
+      const allowedNorm = allow.map(mapSyn);
+      const ok = rolesNorm.some((r) => allowedNorm.includes(r));
+      if (!ok) return res.status(403).json({ error: "Sin permiso" });
+      return next();
+    } catch (e) {
+      console.error("[auth] requireRole error:", e?.message || e);
+      return res.status(403).json({ error: "Sin permiso" });
+    }
+  };
 }

@@ -1,42 +1,70 @@
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
-import morgan from "morgan";
+import crypto from "crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 import { env } from "./utils/env.js";
+import { ensureStockColumn, DB_RESOLVED_PATH, db } from "./db.js";
+
 import authRoutes from "./routes/auth.js";
 import ordersRoutes from "./routes/orders.js";
-import { requireCsrf, csrfTokenRoute } from "./utils/simpleCsrf.js";
-import { db } from "./db.js";
+import adminRoutes from "./routes/admin.js";
+import catalogRoutes from "./routes/catalog.js";
+import servicesRoutes from "./routes/services.js";
+import supervisorRoutes from "./routes/supervisor.js";
+import serviceProductsRoutes from "./routes/serviceProducts.js";
+import reportsRoutes from "./routes/reports.js";
+// import meRoutes from "./routes/me.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
-// --- CORS ---
 app.use(cors({
   origin: (origin, cb) => cb(null, true),
   credentials: true,
 }));
-
+app.use(express.json());
 app.use(cookieParser());
-app.use(express.json({ limit: "2mb" }));
-app.use(morgan("dev"));
 
-// CSRF
-app.get("/csrf-token", csrfTokenRoute);
-app.use(requireCsrf);
+// Logs de diagnóstico
+console.log("[db] Usando base:", DB_RESOLVED_PATH);
+try {
+  const c = db.prepare("SELECT COUNT(*) AS c FROM Empleados").get()?.c ?? 0;
+  console.log("[db] Empleados en la base:", c);
+} catch {
+  console.log("[db] Empleados: tabla no encontrada");
+}
 
-// Rutas
+/* CSRF para el frontend */
+app.get("/csrf-token", (req, res) => {
+  let token = req.cookies?.csrf_token;
+  if (!token) token = crypto.randomBytes(16).toString("hex");
+  res.cookie("csrf_token", token, {
+    httpOnly: false,
+    sameSite: "lax",
+    secure: env.NODE_ENV === "production",
+    maxAge: 12 * 60 * 60 * 1000,
+    path: "/",
+  });
+  return res.json({ csrfToken: token });
+});
+
+/* Rutas */
 app.use("/auth", authRoutes);
 app.use("/orders", ordersRoutes);
+app.use("/admin", adminRoutes);
+app.use("/catalog", catalogRoutes);
+app.use("/services", servicesRoutes);
+app.use("/supervisor", supervisorRoutes);
+app.use("/service-products", serviceProductsRoutes);
+app.use("/reports", reportsRoutes);
+// app.use("/me", meRoutes);
 
-// Health
-app.get("/_health", (req, res) => res.json({ ok: true }));
+app.get("/_health", (_req, res) => res.json({ ok: true }));
 
-// Start
-const PORT = env.PORT || 4000;
-app.listen(PORT, () => {
-  try { db.pragma("journal_mode = WAL"); } catch {}
-  console.log(`[server] listening on http://localhost:${PORT} (${env.NODE_ENV})`);
+ensureStockColumn();
+
+app.listen(env.PORT, () => {
+  console.log(`[server] ${env.APP_BASE_URL} (${env.NODE_ENV})`);
 });

@@ -1,29 +1,58 @@
 import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import { env } from "./utils/env.js";
 
 /* =====================  Resolución de ruta de DB  ===================== */
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function uniq(list) {
+  const seen = new Set();
+  const out = [];
+  for (const v of list) {
+    const k = path.resolve(String(v));
+    if (!seen.has(k)) { seen.add(k); out.push(k); }
+  }
+  return out;
+}
+
 function resolveDbPath() {
-  const candidates = [];
-  if (env.DB_PATH) {
-    candidates.push(path.isAbsolute(env.DB_PATH) ? env.DB_PATH : path.resolve(process.cwd(), env.DB_PATH));
-  }
-  candidates.push(
+  const inEnv = env.DB_PATH ? (path.isAbsolute(env.DB_PATH) ? env.DB_PATH : path.resolve(process.cwd(), env.DB_PATH)) : null;
+
+  const candidates = uniq([
+    // 1) Si viene por ENV, primero
+    inEnv,
+
+    // 2) Donde arranca el proceso
     path.resolve(process.cwd(), "Kazaro.db"),
-    path.resolve(process.cwd(), "../Kazaro.db"),
-    path.resolve(process.cwd(), "../../Kazaro.db")
-  );
+    path.resolve(process.cwd(), "data", "Kazaro.db"),
+
+    // 3) Carpeta del código (src/)
+    path.resolve(__dirname, "Kazaro.db"),
+    path.resolve(__dirname, "..", "Kazaro.db"),
+    path.resolve(__dirname, "..", "data", "Kazaro.db"),
+
+    // 4) Un nivel y dos niveles arriba (mono-repo / raíz proyecto)
+    path.resolve(process.cwd(), "..", "Kazaro.db"),
+    path.resolve(process.cwd(), "..", "data", "Kazaro.db"),
+    path.resolve(process.cwd(), "..", "..", "Kazaro.db"),
+    path.resolve(process.cwd(), "..", "..", "data", "Kazaro.db"),
+  ].filter(Boolean));
+
+  // Elegimos la PRIMERA que exista
   for (const p of candidates) {
-    try { if (p && fs.existsSync(p)) return p; } catch {}
+    try { if (fs.existsSync(p)) return p; } catch {}
   }
-  // si no existe ninguno, devolvemos el primero para que se cree
-  return candidates[0] || path.resolve(process.cwd(), "Kazaro.db");
+
+  // Si no existe ninguna, devolvemos la más razonable para crear: prioridad ENV, luego ./Kazaro.db
+  return inEnv || path.resolve(process.cwd(), "Kazaro.db");
 }
 
 const dbPath = resolveDbPath();
 export const DB_RESOLVED_PATH = dbPath;
 
+// Abrimos la DB. Si no existe, se crea; pero con el barrido anterior es MUY difícil “equivocarse” de archivo.
 export const db = new Database(dbPath, { fileMustExist: fs.existsSync(dbPath) });
 try { db.pragma("foreign_keys = ON"); } catch {}
 try { db.pragma("journal_mode = WAL"); } catch {}
@@ -93,6 +122,10 @@ const rolesInfo = tinfo("Roles");
 const rolesIdCol   = pickCol(rolesInfo, ["RolID","IdRol","rol_id","id_rol","id"]) || "RolID";
 const rolesNameCol = pickCol(rolesInfo, ["Rol","Nombre","name","Descripcion","descripcion"]) || "Nombre";
 
+/**
+ * Busca por username o email (case/trim insensitive) y
+ * devuelve valores TRIMeados para evitar fallos de comparación.
+ */
 export function getUserForLogin(userOrEmailInput) {
   if (!tableExists("Empleados")) return null;
   const eInfo = tinfo("Empleados");
@@ -119,11 +152,11 @@ export function getUserForLogin(userOrEmailInput) {
   const sql = `
     SELECT
       ${idCol} AS id,
-      COALESCE(${userCol || "NULL"}, ${emailCol || "NULL"}) AS username,
-      ${emailCol || "NULL"} AS email,
-      ${hashCol   ? hashCol   : "NULL"} AS password_hash,
-      ${plainCol  ? plainCol  : "NULL"} AS password_plain,
-      ${activeCol ? activeCol : "1"}    AS is_active
+      TRIM(COALESCE(${userCol || "NULL"}, ${emailCol || "NULL"})) AS username,
+      TRIM(${emailCol || "''"}) AS email,
+      ${hashCol   ? `TRIM(${hashCol})`   : "NULL"} AS password_hash,
+      ${plainCol  ? `TRIM(${plainCol})`  : "NULL"} AS password_plain,
+      ${activeCol ? activeCol : "1"}     AS is_active
     FROM Empleados
     WHERE ${whereParts.join(" OR ")}
     LIMIT 1
@@ -143,14 +176,35 @@ export function getUserByUsername(username) {
   };
 }
 
+/**
+ * Devuelve usuario por ID detectando columnas (no asume 'username' fija).
+ */
 export function getUserById(id) {
   try {
-    return db.prepare(`
-      SELECT ${empleadoIdCol} AS id, username, Email AS email, Nombre, Apellido, 1 AS is_active
+    const eInfo = tinfo("Empleados");
+    const idCol =
+      (eInfo.find(c => c.pk === 1)?.name) ||
+      pickCol(eInfo, ["EmpleadosID","EmpleadoID","IdEmpleado","empleado_id","user_id","id","ID"]) ||
+      "EmpleadosID";
+
+    const userCol  = pickCol(eInfo, ["username","user","usuario","Usuario"]);
+    const emailCol = pickCol(eInfo, ["email","Email","correo","Correo"]);
+    const nombre   = pickCol(eInfo, ["Nombre","nombre"]);
+    const apellido = pickCol(eInfo, ["Apellido","apellido"]);
+
+    const sql = `
+      SELECT
+        ${idCol} AS id,
+        ${userCol  ? `TRIM(${userCol})` : "NULL"} AS username,
+        ${emailCol ? `TRIM(${emailCol})` : "NULL"} AS email,
+        ${nombre   ? `TRIM(${nombre})`   : "NULL"} AS Nombre,
+        ${apellido ? `TRIM(${apellido})` : "NULL"} AS Apellido,
+        1 AS is_active
       FROM Empleados
-      WHERE ${empleadoIdCol} = ?
+      WHERE ${idCol} = ?
       LIMIT 1
-    `).get(id) || null;
+    `;
+    return db.prepare(sql).get(id) || null;
   } catch {
     return null;
   }
@@ -168,7 +222,6 @@ export function getUserRoles(userId) {
 
 export function getRoleNameForEmployee(userId) {
   const roles = getUserRoles(userId);
-  // devolvemos el primer rol con preferencia por "supervisor" y "administrativo"
   const pref = ["supervisor","Supervisor","administrativo","Administrativo"];
   const hit = roles.find(r => pref.includes(String(r)));
   return hit || roles[0] || null;
@@ -293,7 +346,7 @@ export function discoverCatalogSchema() {
   };
 }
 
-/* =====================  Visibilidad por Rol (NUEVO)  ===================== */
+/* =====================  Visibilidad por Rol ===================== */
 export function ensureVisibilitySchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS ProductRoleVisibility (
@@ -323,7 +376,7 @@ export function revokeVisibility(productId, roleName) {
   `).run(productId, role);
 }
 
-/* ========= APIs auxiliares para catálogo ========= */
+/* ========= APIs catálogo ========= */
 export function listCategories() {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
@@ -359,7 +412,7 @@ export function listCategories() {
   return [{ id: "__all__", name: "Todos", count: total }];
 }
 
-/** Acepta { q, serviceId, role, roles } y filtra por ProductRoleVisibility */
+/** acepta { q, serviceId, role, roles } y filtra por ProductRoleVisibility */
 export function listProductsByCategory(categoryId, { q = "", serviceId = null, role = null, roles = null } = {}) {
   ensureVisibilitySchema();
 
@@ -372,12 +425,9 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
   const hasPrice = !!prodPrice;
   const hasStock = !!prodStock;
 
-  // Detectar pivote service_products (opcional)
   let pivot = null;
   try {
-    const spTbl = db.prepare(`
-      SELECT name FROM sqlite_master WHERE type='table' AND name='service_products' LIMIT 1
-    `).get();
+    const spTbl = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='service_products' LIMIT 1`).get();
     if (spTbl) {
       const pcols = db.prepare(`PRAGMA table_info('service_products')`).all();
       const names = new Set(pcols.map(c => String(c.name).toLowerCase()));
@@ -510,7 +560,7 @@ function ensureOrdersSchema() {
 ensureOrdersSchema();
 ensureVisibilitySchema();
 
-/* =====================  Helpers de Productos / Servicios  ===================== */
+/* =====================  Helpers Producto/Servicio/Pedidos (igual que tenías) ===================== */
 export function getProductById(productId) {
   const sch = discoverCatalogSchema();
   if (!sch.ok) return null;
@@ -554,7 +604,6 @@ export function getServiceById(serviceId) {
   }
 }
 
-/* =====================  createOrder (compatible con /orders)  ===================== */
 export function createOrder({ empleadoId, servicioId, nota, items }) {
   if (!empleadoId || !Array.isArray(items) || items.length === 0) {
     throw new Error("Datos de pedido inválidos");
@@ -564,21 +613,18 @@ export function createOrder({ empleadoId, servicioId, nota, items }) {
   const tx = db.transaction(() => {
     let total = 0;
 
-    // Descubrimos esquema de productos
     const sch = discoverCatalogSchema();
     if (!sch.ok) throw new Error(sch.reason);
     const { products } = sch.tables;
     const { prodId, prodName, prodPrice, prodCode, prodStock } = sch.cols;
     const hasStock = !!prodStock;
 
-    // Crear cabecera
     const insPedido = db.prepare(`
       INSERT INTO Pedidos (EmpleadoID, Rol, Nota, ServicioID, Total)
       VALUES (?, ?, ?, ?, 0)
     `);
     const pedidoId = insPedido.run(empleadoId, String(rol), String(nota || ""), servicioId || null).lastInsertRowid;
 
-    // Insertar items con validación de stock si existe
     const insItem = db.prepare(`
       INSERT INTO PedidoItems (PedidoID, ProductoID, Nombre, Precio, Cantidad, Subtotal, Codigo)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -627,7 +673,6 @@ export function createOrder({ empleadoId, servicioId, nota, items }) {
   return tx();
 }
 
-/* =====================  Pedido / Lecturas  ===================== */
 export function getFullOrder(pedidoId) {
   const ped = db.prepare(`
     SELECT p.PedidoID AS id, p.EmpleadoID, p.Rol, p.Nota, p.Total, p.Fecha, p.ServicioID
@@ -645,7 +690,7 @@ export function getFullOrder(pedidoId) {
   return { ...ped, items, user, servicio };
 }
 
-/* =====================  Emails por Servicio y Log de Emails  ===================== */
+/* =====================  Emails / Log ===================== */
 export function getServiceEmails(serviceId) {
   if (!serviceId) return [];
   try {
@@ -862,8 +907,8 @@ export function getEmployeeDisplayName(userId) {
     const row = db.prepare(`
       SELECT
         TRIM(COALESCE(Nombre,'') || ' ' || COALESCE(Apellido,'')) AS full,
-        Email,
-        username
+        ${pickCol(tinfo("Empleados"), ["Email","email","correo","Correo"]) || "NULL"} AS Email,
+        ${pickCol(tinfo("Empleados"), ["username","user","usuario","Usuario"]) || "NULL"} AS username
       FROM Empleados
       WHERE ${empleadoIdCol} = ?
       LIMIT 1
@@ -876,6 +921,7 @@ export function getEmployeeDisplayName(userId) {
 }
 
 /* ======================== ADMIN: Categorías & Productos ======================== */
+// (resto igual al tuyo)
 export function adminListCategoriesForSelect() {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
