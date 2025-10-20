@@ -5,9 +5,7 @@ import { db, tinfo } from "../db.js";
 
 const router = Router();
 
-/** Obtiene el ID del empleado logueado de forma robusta (distintos middlewares) */
 function getLoggedEmployeeId(req) {
-  // soportamos varias formas que he visto en tu código
   return (
     req.user?.empleadoId ??
     req.user?.EmpleadosID ??
@@ -18,7 +16,6 @@ function getLoggedEmployeeId(req) {
   );
 }
 
-/** Columnas reales de Servicios (de tu BD) */
 function getServiceCols() {
   const info = tinfo("Servicios");
   if (!info.length) throw new Error("No existe tabla Servicios");
@@ -30,18 +27,15 @@ function getServiceCols() {
   return { SRV_ID: pk, SRV_NAME: name };
 }
 
-/** Lee los servicios asignados al empleado desde la pivote real (supervisor_services) */
 function listAssignedServicesFor(empleadoId) {
   const { SRV_ID, SRV_NAME } = getServiceCols();
 
-  // Verificamos pivote; en tu BD REAL se llama supervisor_services (EmpleadoID, ServicioID) SIN id
   const pivotInfo = tinfo("supervisor_services");
   if (!pivotInfo.length) return [];
 
   const PIV_EMP = pivotInfo.find(c => /empleado.*id/i.test(c.name))?.name || "EmpleadoID";
   const PIV_SRV = pivotInfo.find(c => /servicio.*id/i.test(c.name))?.name || "ServicioID";
 
-  // Cast para evitar problemas Integer vs Text
   const rows = db.prepare(`
     SELECT s.${SRV_ID} AS id, s.${SRV_NAME} AS name
     FROM supervisor_services a
@@ -53,10 +47,6 @@ function listAssignedServicesFor(empleadoId) {
 
   return rows;
 }
-
-/** ----------- Rutas compatibles (elige la que ya usaba tu front) ----------- **/
-
-// 1) Ruta moderna
 router.get("/services", requireAuth, (req, res) => {
   try {
     const empleadoId = getLoggedEmployeeId(req);
@@ -69,7 +59,6 @@ router.get("/services", requireAuth, (req, res) => {
   }
 });
 
-// 2) Alias muy común en implementaciones previas
 router.get("/me/services", requireAuth, (req, res) => {
   try {
     const empleadoId = getLoggedEmployeeId(req);
@@ -82,7 +71,6 @@ router.get("/me/services", requireAuth, (req, res) => {
   }
 });
 
-// 3) Otro alias que he visto (por si tu front usaba esto)
 router.get("/services/assigned", requireAuth, (req, res) => {
   try {
     const empleadoId = getLoggedEmployeeId(req);
@@ -95,7 +83,6 @@ router.get("/services/assigned", requireAuth, (req, res) => {
   }
 });
 
-/** ----------- Self-check para depurar rápidamente ----------- **/
 router.get("/services/_selfcheck", requireAuth, (req, res) => {
   try {
     const empleadoId = getLoggedEmployeeId(req);

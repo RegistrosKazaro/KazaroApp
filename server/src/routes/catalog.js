@@ -5,7 +5,6 @@ import { listCategories, listProductsByCategory } from "../db.js";
 
 const router = express.Router();
 
-/** Categorías del catálogo (requiere login) */
 router.get("/categories", requireAuth, (_req, res) => {
   try {
     res.json(listCategories());
@@ -15,13 +14,6 @@ router.get("/categories", requireAuth, (_req, res) => {
   }
 });
 
-/**
- * Productos del catálogo
- * Query:
- *   - catId: "__all__" | <id de categoría>
- *   - q:     texto de búsqueda
- *   - serviceId: <id de servicio>  => si viene, se devuelven SOLO los productos ASIGNADOS a ese servicio
- */
 router.get("/products", (req, res) => {
   try {
     const catId = req.query.catId ?? "__all__";

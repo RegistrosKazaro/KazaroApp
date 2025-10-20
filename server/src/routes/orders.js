@@ -19,7 +19,6 @@ router.post("/", requireAuth, async (req, res) => {
     const pedidoId = createOrder({ empleadoId, servicioId, nota, items });
     const pedido = getFullOrder(pedidoId);
 
-    // PDF
     let pdfPath = null;
     try {
       pdfPath = await generateRemitoPDF({ pedido, outDir: path.resolve(process.cwd(), "tmp") });
@@ -27,7 +26,6 @@ router.post("/", requireAuth, async (req, res) => {
       console.warn("[orders] No se pudo generar PDF:", e?.message || e);
     }
 
-    // Email
     try {
       const service = pedido.servicio || (servicioId ? getServiceById(servicioId) : null);
       const toArr = getServiceEmails(servicioId) || [];

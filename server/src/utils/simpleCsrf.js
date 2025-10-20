@@ -21,7 +21,6 @@ export function requireCsrf(req, res, next) {
   const method = (req.method || "GET").toUpperCase();
   const unsafe = /^(POST|PUT|PATCH|DELETE)$/i.test(method);
 
-  // 👉 salteamos CSRF para login/logout
   const p = (req.path || "").toLowerCase();
   if (p.startsWith("/auth/login") || p.startsWith("/auth/logout")) return next();
 

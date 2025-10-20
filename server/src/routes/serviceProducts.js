@@ -4,14 +4,10 @@ import { db } from "../db.js";
 
 const router = Router();
 
-/* Utils */
 const uniq = (arr) =>
   Array.from(new Set((arr || []).map((x) => Number(x)).filter((n) => Number.isInteger(n))));
 const ph = (n) => Array(n).fill("?").join(",");
 
-/* =========================
-   Helpers DB
-   ========================= */
 function getServicesAssignInfo(ids) {
   if (!ids.length) return [];
   const q = `
@@ -44,26 +40,18 @@ function searchServicesRaw(q) {
   return db.prepare(sql).all(term, like);
 }
 
-/* =========================
-   GET /admin/sp/list?q=
-   (alias /admin/sp/search)
-   ========================= */
 router.get(["/list", "/search"], (req, res) => {
   const q = String(req.query.q ?? "");
   const items = searchServicesRaw(q).map((s) => ({
     id: s.id,
     name: s.name,
-    assignedTo: s.assignedTo,           // null => disponible
-    supervisorName: s.supervisorName,   // nombre de quien lo tiene
+    assignedTo: s.assignedTo,           
+    supervisorName: s.supervisorName,
   }));
   res.json({ ok: true, items });
 });
 
-/* =========================
-   POST /admin/sp/assign
-   { supervisorId, serviceIds[] }
-   - Bloquea si alguno está asignado a OTRO.
-   ========================= */
+
 router.post("/assign", (req, res) => {
   const supervisorId = Number(req.body?.supervisorId);
   const serviceIds = uniq(req.body?.serviceIds);
@@ -77,7 +65,7 @@ router.post("/assign", (req, res) => {
   if (conflicts.length) {
     return res.status(409).json({
       error: "Uno o más servicios ya están asignados a otro supervisor.",
-      conflicts, // [{id,name,assignedTo,supervisorName}]
+      conflicts, 
     });
   }
 
@@ -98,11 +86,6 @@ router.post("/assign", (req, res) => {
   res.json({ ok: true, updated, total: serviceIds.length, skipped: serviceIds.length - updated });
 });
 
-/* =========================
-   POST /admin/sp/reassign-bulk
-   { fromSupervisorId, toSupervisorId, serviceIds[] }
-   - Bloquea si alguno está con un tercero.
-   ========================= */
 router.post("/reassign-bulk", (req, res) => {
   const fromId = Number(req.body?.fromSupervisorId);
   const toId = Number(req.body?.toSupervisorId);

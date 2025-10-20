@@ -6,7 +6,6 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 const router = Router();
 const mustBeAdmin = [requireAuth, requireRole(["admin","Admin"])];
 
-// ===== Helpers (local) =====
 function _tinfo(table) {
   try { return db.prepare(`PRAGMA table_info(${table})`).all(); } catch { return []; }
 }
@@ -40,7 +39,6 @@ function monthRange(y, m) {
   return { year, month, start: fmt(start), end: fmt(end) };
 }
 
-// ===== Listado de servicios (para selector en UI) =====
 router.get("/services", mustBeAdmin, (_req, res) => {
   const spec = resolveServicesTableLocal();
   if (spec) {
@@ -55,7 +53,6 @@ router.get("/services", mustBeAdmin, (_req, res) => {
       console.error("[reports] GET /services error:", e);
     }
   }
-  // Fallback: si no existe tabla "Servicios", listar desde Pedidos
   try {
     const rows = db.prepare(`
       SELECT DISTINCT CAST(COALESCE(ServicioID,'') AS TEXT) AS id
@@ -70,7 +67,6 @@ router.get("/services", mustBeAdmin, (_req, res) => {
   }
 });
 
-// ===== Informe mensual (general) =====
 router.get("/monthly", mustBeAdmin, (req, res) => {
   const { year, month, start, end } = (() => {
     const r = monthRange(req.query.year, req.query.month);
@@ -163,12 +159,10 @@ router.get("/monthly", mustBeAdmin, (req, res) => {
   }
 });
 
-// ===== Informe por servicio =====
 router.get("/service/:serviceId", mustBeAdmin, (req, res) => {
   const servicioId = req.params.serviceId;
   const { year, month, start, end } = (() => {
     const r = monthRange(req.query.year, req.query.month);
-    // también acepto ?start=YYYY-MM-DD&end=YYYY-MM-DD
     const startQ = req.query.start ? String(req.query.start).trim() + " 00:00:00" : r.start;
     const endQ   = req.query.end   ? String(req.query.end).trim()   + " 23:59:59" : r.end;
     return { ...r, start: startQ, end: endQ };

@@ -5,7 +5,6 @@ import { db, listServicesByUser, getUserForLogin } from "../db.js";
 
 const router = express.Router();
 
-/* --------------------------------- helpers -------------------------------- */
 function pickCol(info, candidates) {
   const names = info.map(c => String(c.name));
   for (const cand of candidates) {
@@ -15,7 +14,6 @@ function pickCol(info, candidates) {
   return null;
 }
 
-/* ----------------------- /dev/services-by-id (GET) ------------------------ */
 router.get("/services-by-id", (req, res) => {
   try {
     const userId = Number(req.query.userId);
@@ -42,7 +40,6 @@ router.get("/services-by-id", (req, res) => {
   }
 });
 
-/* ------------------ /dev/services-by-username (GET) ----------------------- */
 router.get("/services-by-username", (req, res) => {
   try {
     const username = String(req.query.username || "").trim();
@@ -72,7 +69,6 @@ router.get("/services-by-username", (req, res) => {
   }
 });
 
-/* ------------------------- /dev/auth-debug (GET) -------------------------- */
 router.get("/auth-debug", (req, res) => {
   try {
     const u = String(req.query.u || "").trim();
@@ -98,7 +94,6 @@ router.get("/auth-debug", (req, res) => {
   }
 });
 
-/* ------------------------ /dev/try-login (POST) --------------------------- */
 router.post("/try-login", express.json(), async (req, res) => {
   try {
     const { username, password } = req.body || {};
@@ -112,7 +107,6 @@ router.post("/try-login", express.json(), async (req, res) => {
     const pwd = String(password);
     const hash = u.password_hash ? String(u.password_hash) : "";
 
-    // bcrypt
     if (hash && /^\$2[aby]\$/.test(hash)) {
       try {
         const mod = await import("bcryptjs");
@@ -122,7 +116,6 @@ router.post("/try-login", express.json(), async (req, res) => {
         return res.json({ ok: false, reason: "bcrypt-error:" + (e?.message || e) });
       }
     }
-    // argon2
     if (hash && /^\$argon2/i.test(hash)) {
       try {
         const ok = await argon2.verify(hash, pwd);
@@ -131,7 +124,6 @@ router.post("/try-login", express.json(), async (req, res) => {
         return res.json({ ok: false, reason: "argon2-error:" + (e?.message || e) });
       }
     }
-    // texto plano (legacy)
     if (u.password_plain != null) {
       const ok = String(u.password_plain) === pwd;
       return res.json({ ok, reason: ok ? "ok-plain" : "plain-mismatch" });
@@ -144,8 +136,6 @@ router.post("/try-login", express.json(), async (req, res) => {
   }
 });
 
-/* ----------------------- /dev/set-password (POST) ------------------------- */
-/* Setea la contraseña del usuario (username o email) con argon2id. */
 router.post("/set-password", express.json(), async (req, res) => {
   try {
     const { user, password } = req.body || {};
@@ -153,7 +143,6 @@ router.post("/set-password", express.json(), async (req, res) => {
       return res.status(400).json({ ok: false, error: "Falta user o password" });
     }
 
-    // Detectar columnas reales de Empleados
     const cols = db.prepare(`PRAGMA table_info(Empleados)`).all();
     const idCol    =
       (cols.find(c => c.pk === 1)?.name) ||
@@ -164,7 +153,6 @@ router.post("/set-password", express.json(), async (req, res) => {
     const hashCol  = pickCol(cols, ["password_hash","hash","pass_hash"]) || "password_hash";
     const plainCol = pickCol(cols, ["password","contrasena","contraseña","clave","pass"]); // si existe, lo limpiamos
 
-    // Buscar por username/email
     const where = [];
     const params = [];
     if (userCol)  { where.push(`LOWER(TRIM(${userCol})) = LOWER(TRIM(?))`);  params.push(user); }
@@ -181,7 +169,6 @@ router.post("/set-password", express.json(), async (req, res) => {
 
     const newHash = await argon2.hash(String(password), { type: argon2.argon2id });
 
-    // Update seguro
     const sql = `
       UPDATE Empleados
       SET ${hashCol} = ? ${plainCol ? `, ${plainCol} = NULL` : ""}

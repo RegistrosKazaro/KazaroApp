@@ -20,7 +20,6 @@ const EMP_NAME = pick(empInfo, /username|nombre|email/i) || "Email";
 const SRV_ID   = (srvInfo.find(c => c.pk === 1)?.name) || "ServiciosID";
 const SRV_NAME = pick(srvInfo, /nombre|name/i) || "ServicioNombre";
 
-// GET /services (supervisor): servicios asignados al usuario logueado
 router.get("/", [requireAuth, requireRole("supervisor")], (req, res) => {
   try {
     const userId = req.user?.id ?? null;
@@ -44,7 +43,6 @@ router.get("/", [requireAuth, requireRole("supervisor")], (req, res) => {
   }
 });
 
-// GET /services/:id/budget → presupuesto (autenticado)
 router.get("/:id/budget", requireAuth, (req, res) => {
   const id = req.params.id;
   const budget = getBudgetByServiceId(id);

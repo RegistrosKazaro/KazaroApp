@@ -18,7 +18,6 @@ function normalizeBool(v) {
   return !["0", "false", "no", "inactivo", "deshabilitado", "disabled"].includes(s);
 }
 
-// ===== Verificador de contraseñas flexible =====
 async function verifyPassword(inputPassword, userRow) {
   const pass = String(inputPassword ?? "");
   const hash = (userRow?.password_hash || "").trim();
@@ -27,17 +26,14 @@ async function verifyPassword(inputPassword, userRow) {
   if (hash) {
     const lower = hash.toLowerCase();
 
-    // argon2
     if (lower.startsWith("$argon2")) {
       try { return await argon2.verify(hash, pass); } catch { /* sigue */ }
     }
 
-    // bcrypt ($2a$, $2b$, $2y$)
     if (lower.startsWith("$2a$") || lower.startsWith("$2b$") || lower.startsWith("$2y$")) {
       try { return await bcrypt.compare(pass, hash); } catch { /* sigue */ }
     }
 
-    // hashes heredados (MD5 / SHA1 hex)
     try {
       if (/^[a-f0-9]{32}$/i.test(hash)) {
         const md5 = crypto.createHash("md5").update(pass).digest("hex");
@@ -50,7 +46,6 @@ async function verifyPassword(inputPassword, userRow) {
     } catch { /* sigue */ }
   }
 
-  // Plano
   if (plain) return plain === pass;
 
   return false;
@@ -80,9 +75,6 @@ function readSession(req) {
   catch { return null; }
 }
 
-/* ==================== Rutas ==================== */
-
-// Estado de sesión
 router.get("/me", async (req, res) => {
   const sess = readSession(req);
   if (!sess?.uid) return res.status(401).json({ ok: false });
@@ -105,7 +97,6 @@ router.get("/me", async (req, res) => {
   });
 });
 
-// Login
 router.post("/login", async (req, res) => {
   try {
     const username = (req.body?.username ?? req.body?.user ?? req.body?.email ?? "").trim();
@@ -147,7 +138,6 @@ router.post("/login", async (req, res) => {
   }
 });
 
-// Logout
 router.post("/logout", (req, res) => {
   res.clearCookie("sid", { path: "/" });
   return res.json({ ok: true });

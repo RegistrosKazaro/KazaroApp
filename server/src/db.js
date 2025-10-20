@@ -4,7 +4,6 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { env } from "./utils/env.js";
 
-/* =====================  Resolución de ruta de DB  ===================== */
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function uniq(list) {
@@ -21,44 +20,33 @@ function resolveDbPath() {
   const inEnv = env.DB_PATH ? (path.isAbsolute(env.DB_PATH) ? env.DB_PATH : path.resolve(process.cwd(), env.DB_PATH)) : null;
 
   const candidates = uniq([
-    // 1) Si viene por ENV, primero
     inEnv,
-
-    // 2) Donde arranca el proceso
     path.resolve(process.cwd(), "Kazaro.db"),
     path.resolve(process.cwd(), "data", "Kazaro.db"),
-
-    // 3) Carpeta del código (src/)
     path.resolve(__dirname, "Kazaro.db"),
     path.resolve(__dirname, "..", "Kazaro.db"),
     path.resolve(__dirname, "..", "data", "Kazaro.db"),
-
-    // 4) Un nivel y dos niveles arriba (mono-repo / raíz proyecto)
     path.resolve(process.cwd(), "..", "Kazaro.db"),
     path.resolve(process.cwd(), "..", "data", "Kazaro.db"),
     path.resolve(process.cwd(), "..", "..", "Kazaro.db"),
     path.resolve(process.cwd(), "..", "..", "data", "Kazaro.db"),
   ].filter(Boolean));
 
-  // Elegimos la PRIMERA que exista
   for (const p of candidates) {
     try { if (fs.existsSync(p)) return p; } catch {}
   }
 
-  // Si no existe ninguna, devolvemos la más razonable para crear: prioridad ENV, luego ./Kazaro.db
   return inEnv || path.resolve(process.cwd(), "Kazaro.db");
 }
 
 const dbPath = resolveDbPath();
 export const DB_RESOLVED_PATH = dbPath;
 
-// Abrimos la DB. Si no existe, se crea; pero con el barrido anterior es MUY difícil “equivocarse” de archivo.
 export const db = new Database(dbPath, { fileMustExist: fs.existsSync(dbPath) });
 try { db.pragma("foreign_keys = ON"); } catch {}
 try { db.pragma("journal_mode = WAL"); } catch {}
 try { db.pragma("busy_timeout = 5000"); } catch {}
 
-/* =====================  Helpers base e introspección  ===================== */
 function norm(s) {
   return String(s ?? "")
     .normalize("NFD")
@@ -105,7 +93,6 @@ export function pick(info, regex, fallback = null) {
   return hit ? hit.name : fallback;
 }
 
-/* =====================  Empleados / Roles  ===================== */
 const empInfo = tinfo("Empleados");
 const empleadoIdCol =
   (empInfo.find(c => c.pk === 1)?.name) ||
@@ -122,10 +109,6 @@ const rolesInfo = tinfo("Roles");
 const rolesIdCol   = pickCol(rolesInfo, ["RolID","IdRol","rol_id","id_rol","id"]) || "RolID";
 const rolesNameCol = pickCol(rolesInfo, ["Rol","Nombre","name","Descripcion","descripcion"]) || "Nombre";
 
-/**
- * Busca por username o email (case/trim insensitive) y
- * devuelve valores TRIMeados para evitar fallos de comparación.
- */
 export function getUserForLogin(userOrEmailInput) {
   if (!tableExists("Empleados")) return null;
   const eInfo = tinfo("Empleados");
@@ -176,9 +159,6 @@ export function getUserByUsername(username) {
   };
 }
 
-/**
- * Devuelve usuario por ID detectando columnas (no asume 'username' fija).
- */
 export function getUserById(id) {
   try {
     const eInfo = tinfo("Empleados");
@@ -227,7 +207,6 @@ export function getRoleNameForEmployee(userId) {
   return hit || roles[0] || null;
 }
 
-/* =====================  Catálogo (descubrimiento dinámico)  ===================== */
 const NAME_CANDIDATES  = ["Nombre","NombreProducto","Nombre_Producto","Descripcion","Detalle","Producto","Titulo","title","name","descripcion"];
 const CODE_CANDIDATES  = ["Codigo","CodigoProducto","Codigo_Producto","SKU","sku","codigo","code","Code"];
 const PRICE_CANDIDATES = ["Precio","precio","Price","Costo","costo","importe","Valor","valor"];
@@ -346,7 +325,6 @@ export function discoverCatalogSchema() {
   };
 }
 
-/* =====================  Visibilidad por Rol ===================== */
 export function ensureVisibilitySchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS ProductRoleVisibility (
@@ -376,7 +354,6 @@ export function revokeVisibility(productId, roleName) {
   `).run(productId, role);
 }
 
-/* ========= APIs catálogo ========= */
 export function listCategories() {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
@@ -412,7 +389,6 @@ export function listCategories() {
   return [{ id: "__all__", name: "Todos", count: total }];
 }
 
-/** acepta { q, serviceId, role, roles } y filtra por ProductRoleVisibility */
 export function listProductsByCategory(categoryId, { q = "", serviceId = null, role = null, roles = null } = {}) {
   ensureVisibilitySchema();
 
@@ -505,7 +481,6 @@ export function debugCatalogSchema() {
   return { ...sch, sample };
 }
 
-/* =====================  Stock helper (opcional)  ===================== */
 export function ensureStockColumn() {
   try {
     const sch = discoverCatalogSchema();
@@ -532,7 +507,6 @@ export function productsMeta() {
   return { table: products, hasStock };
 }
 
-/* =====================  Pedidos: asegurar esquema  ===================== */
 function ensureOrdersSchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS Pedidos (
@@ -560,7 +534,6 @@ function ensureOrdersSchema() {
 ensureOrdersSchema();
 ensureVisibilitySchema();
 
-/* =====================  Helpers Producto/Servicio/Pedidos (igual que tenías) ===================== */
 export function getProductById(productId) {
   const sch = discoverCatalogSchema();
   if (!sch.ok) return null;
@@ -690,7 +663,6 @@ export function getFullOrder(pedidoId) {
   return { ...ped, items, user, servicio };
 }
 
-/* =====================  Emails / Log ===================== */
 export function getServiceEmails(serviceId) {
   if (!serviceId) return [];
   try {
@@ -722,7 +694,6 @@ export function logEmail({ entityType, entityId, to, subject, status, providerId
   }
 }
 
-/* =====================  Supervisor ↔ Servicio (exclusivo)  ===================== */
 export function ensureSupervisorPivot() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS supervisor_services (
@@ -850,7 +821,6 @@ export function getServiceNameById(servicioId) {
   return row?.name || null;
 }
 
-/* =====================  PRESUPUESTOS POR SERVICIO ===================== */
 export function ensureServiceBudgetTable() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS service_budget (
@@ -901,7 +871,6 @@ export function listServiceBudgets() {
   }
 }
 
-/* =====================  Otros helpers  ===================== */
 export function getEmployeeDisplayName(userId) {
   try {
     const row = db.prepare(`
@@ -920,8 +889,6 @@ export function getEmployeeDisplayName(userId) {
   }
 }
 
-/* ======================== ADMIN: Categorías & Productos ======================== */
-// (resto igual al tuyo)
 export function adminListCategoriesForSelect() {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);

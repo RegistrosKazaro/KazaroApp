@@ -6,7 +6,6 @@ export default function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Cargar sesión al montar
   useEffect(() => {
     let alive = true;
     api
@@ -25,11 +24,10 @@ export default function AuthProvider({ children }) {
     };
   }, []);
 
-  // 🔐 Login con CSRF asegurado
   async function login(username, password) {
-    await ensureCsrf(); // cookie csrf_token + header X-CSRF-Token
+    await ensureCsrf(); 
     const res = await api.post("/auth/login", { username, password });
-    const payload = res.data?.user || res.data; // soporta {user} o usuario directo
+    const payload = res.data?.user || res.data; 
     setUser(payload);
     return payload;
   }
@@ -38,10 +36,8 @@ export default function AuthProvider({ children }) {
     try {
       await api.post("/auth/logout");
     } catch (e) {
-      // Evita eslint(no-empty) y eslint(no-unused-vars)
       void e;
     }
-    // limpiar carrito/servicio y notificar al CartProvider
     localStorage.removeItem("cart");
     localStorage.removeItem("selectedService");
     window.dispatchEvent(new Event("app:logout"));

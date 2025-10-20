@@ -3,11 +3,9 @@ import jwt from "jsonwebtoken";
 import { env } from "../utils/env.js";
 import { getUserForLogin, getUserRoles } from "../db.js";
 
-/* ================= Verificación de contraseña ================= */
 async function comparePassword(input, userRow) {
   const hash = userRow?.password_hash || "";
 
-  // 1) bcrypt / bcryptjs
   if (typeof hash === "string" && /^\$2[aby]\$/.test(hash)) {
     try {
       let bcrypt;
@@ -19,7 +17,6 @@ async function comparePassword(input, userRow) {
     }
   }
 
-  // 2) argon2
   if (typeof hash === "string" && hash.startsWith("$argon2")) {
     try {
       const argon2 = await import("argon2");
@@ -29,7 +26,6 @@ async function comparePassword(input, userRow) {
     }
   }
 
-  // 3) texto plano (si tu BD lo trae en otra columna)
   if (userRow?.password_plain != null) {
     return String(userRow.password_plain) === String(input);
   }
@@ -37,7 +33,6 @@ async function comparePassword(input, userRow) {
   return false;
 }
 
-/* ================= Login ================= */
 export async function loginHandler(req, res) {
   try {
     const { user, username, email, password } = req.body || {};
@@ -49,7 +44,6 @@ export async function loginHandler(req, res) {
     const u = getUserForLogin(ident);
     if (!u) return res.status(401).json({ error: "Usuario o contraseña inválidos" });
 
-    // Usuario inactivo (si tu tabla trae esa columna)
     if (String(u.is_active ?? "1") === "0") {
       return res.status(403).json({ error: "Usuario inactivo" });
     }
@@ -59,7 +53,6 @@ export async function loginHandler(req, res) {
 
     const roles = getUserRoles(u.id) || [];
 
-    // Cookie JWT (lo usa requireAuth)
     const token = jwt.sign({ id: Number(u.id), username: u.username }, env.JWT_SECRET, { expiresIn: "12h" });
     res.cookie("token", token, {
       httpOnly: true,
@@ -69,7 +62,6 @@ export async function loginHandler(req, res) {
       path: "/",
     });
 
-    // ⚠️ El front espera esto: { id, username, roles }
     return res.json({ id: Number(u.id), username: u.username, roles });
   } catch (e) {
     console.error("[auth] login error:", e?.message || e);
@@ -77,10 +69,8 @@ export async function loginHandler(req, res) {
   }
 }
 
-/* ================= Autenticación por cookie/bearer ================= */
 export function requireAuth(req, res, next) {
   try {
-    // 1) Sesión clásica (si la estuvieras usando)
     if (req.session?.user?.id) {
       req.user = {
         id: Number(req.session.user.id),
@@ -90,7 +80,6 @@ export function requireAuth(req, res, next) {
       return next();
     }
 
-    // 2) JWT en Authorization o cookie
     const bearer = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
     let token = bearer;
     if (!token && req.headers.cookie) {
@@ -105,7 +94,6 @@ export function requireAuth(req, res, next) {
       } catch {/* token inválido */}
     }
 
-    // 3) Dev fallback por header (solo fuera de prod)
     if (env.NODE_ENV !== "production" && req.headers["x-user-id"]) {
       req.user = { id: Number(req.headers["x-user-id"]) };
       return next();
@@ -118,7 +106,6 @@ export function requireAuth(req, res, next) {
   }
 }
 
-/* ================= Autorización por rol ================= */
 export function requireRole(allowed) {
   const allow = (Array.isArray(allowed) ? allowed : [allowed])
     .map((r) => String(r).toLowerCase());

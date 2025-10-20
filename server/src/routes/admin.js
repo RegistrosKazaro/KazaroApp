@@ -7,7 +7,6 @@ import {
   adminGetProductById,
   listServiceBudgets,
   setBudgetForService,
-  // Exclusividad Servicio ↔ Supervisor
   ensureSupervisorPivotExclusive,
   assignServiceToSupervisorExclusive,
   reassignServiceToSupervisor,
@@ -18,16 +17,12 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 const router = Router();
 const mustBeAdmin = [requireAuth, requireRole(["admin", "Admin"])];
 
-// ---------- util: esquema dinámico de productos ----------
 function prodSchemaOrThrow() {
   const sch = discoverCatalogSchema();
   if (!sch?.ok) throw new Error(sch?.reason || "No hay esquema de productos");
   return sch;
 }
 
-/* =================== PRODUCTOS =================== */
-
-// Esquema para el front
 router.get("/products/_schema", mustBeAdmin, (_req, res) => {
   try {
     const sch = prodSchemaOrThrow();
@@ -42,13 +37,11 @@ router.get("/products/_schema", mustBeAdmin, (_req, res) => {
   }
 });
 
-// Lista para <select> de categorías
 router.get("/product-categories", mustBeAdmin, (_req, res) => {
   try { res.json(adminListCategoriesForSelect()); }
   catch { res.status(500).json({ error: "No se pudieron cargar las categorías" }); }
 });
 
-// Listado / búsqueda
 router.get("/products", mustBeAdmin, (req, res) => {
   try {
     const sch = prodSchemaOrThrow();
@@ -81,7 +74,6 @@ router.get("/products", mustBeAdmin, (req, res) => {
   }
 });
 
-// Obtener un producto por id
 router.get("/products/:id", mustBeAdmin, (req, res) => {
   const id = req.params.id;
   try {
@@ -93,7 +85,6 @@ router.get("/products/:id", mustBeAdmin, (req, res) => {
   }
 });
 
-// Crear producto
 router.post("/products", mustBeAdmin, (req, res) => {
   try {
     const sch = prodSchemaOrThrow();
@@ -134,7 +125,6 @@ router.post("/products", mustBeAdmin, (req, res) => {
   }
 });
 
-// Editar producto
 router.put("/products/:id", mustBeAdmin, (req, res) => {
   try {
     const sch = prodSchemaOrThrow();
@@ -207,7 +197,6 @@ router.put("/products/:id", mustBeAdmin, (req, res) => {
   }
 });
 
-// Eliminar producto
 router.delete("/products/:id", mustBeAdmin, (req, res) => {
   try {
     const sch = prodSchemaOrThrow();
@@ -226,7 +215,6 @@ router.delete("/products/:id", mustBeAdmin, (req, res) => {
   }
 });
 
-// Sumar/restar stock
 router.patch("/products/:id/stock", mustBeAdmin, (req, res) => {
   try {
     const sch = prodSchemaOrThrow();
@@ -255,7 +243,6 @@ router.patch("/products/:id/stock", mustBeAdmin, (req, res) => {
   }
 });
 
-/* =================== PEDIDOS =================== */
 router.get("/orders", mustBeAdmin, (_req, res) => {
   try {
     const rows = db.prepare(`
@@ -293,7 +280,6 @@ router.put("/orders/:id/price", mustBeAdmin, (req, res) => {
   }
 });
 
-/* ========== SERVICIOS / SUPERVISORES / ASIGNACIONES (Admin) ========== */
 const EMP_ID = "EmpleadosID";
 const EMP_NAME_EXPR = `
   TRIM(COALESCE(e.Nombre,'') || ' ' || COALESCE(e.Apellido,'')) ||
@@ -302,10 +288,9 @@ const EMP_NAME_EXPR = `
 const SRV_ID = "ServiciosID";
 const SRV_NAME = "ServicioNombre";
 
-// Buscar servicios (👁️ incluye estado de asignación para desactivar en el UI)
 router.get("/services", mustBeAdmin, (req, res) => {
   try {
-    ensureSupervisorPivotExclusive(); // asegura índice UNIQUE y depura duplicados
+    ensureSupervisorPivotExclusive(); 
     const q = String(req.query.q ?? "").trim();
     const limit = Math.min(Math.max(parseInt(req.query.limit ?? "25", 10) || 25, 1), 100);
     if (!q) return res.json([]);
@@ -340,7 +325,6 @@ router.get("/services", mustBeAdmin, (req, res) => {
       LIMIT ${limit}
     `).all({ like });
 
-    // Normalizo is_assigned a booleano 0/1 (SQLite devuelve 0/1 pero por las dudas)
     const normalized = rows.map(r => ({
       ...r,
       is_assigned: Number(r.is_assigned) === 1 ? 1 : 0
@@ -353,7 +337,6 @@ router.get("/services", mustBeAdmin, (req, res) => {
   }
 });
 
-// Supervisores
 router.get("/supervisors", mustBeAdmin, (_req, res) => {
   try {
     const rows = db.prepare(`
@@ -373,10 +356,9 @@ router.get("/supervisors", mustBeAdmin, (_req, res) => {
   }
 });
 
-// Asignaciones (listado)
 router.get("/assignments", mustBeAdmin, (req, res) => {
   try {
-    ensureSupervisorPivotExclusive(); // asegura exclusividad y limpia duplicados al vuelo
+    ensureSupervisorPivotExclusive(); 
     const EmpleadoID = req.query.EmpleadoID ? Number(req.query.EmpleadoID) : null;
     const base = `
       SELECT a.rowid AS id, a.EmpleadoID, a.ServicioID,
@@ -396,7 +378,6 @@ router.get("/assignments", mustBeAdmin, (req, res) => {
   }
 });
 
-// Asignar (EXCLUSIVO) — devuelve también “a quién quedó asignado”
 router.post("/assignments", mustBeAdmin, (req, res) => {
   try {
     const EmpleadoID = Number(req.body?.EmpleadoID);
@@ -435,7 +416,6 @@ router.post("/assignments", mustBeAdmin, (req, res) => {
   }
 });
 
-// Reasignar — también devuelve los nombres actualizados
 router.post("/assignments/reassign", mustBeAdmin, (req, res) => {
   try {
     const EmpleadoID = Number(req.body?.EmpleadoID);
@@ -463,7 +443,6 @@ router.post("/assignments/reassign", mustBeAdmin, (req, res) => {
   }
 });
 
-// Eliminar asignación
 router.delete("/assignments/:id", mustBeAdmin, (req, res) => {
   try {
     const ok = unassignService({ id: Number(req.params.id) });
@@ -474,7 +453,6 @@ router.delete("/assignments/:id", mustBeAdmin, (req, res) => {
   }
 });
 
-/* =================== PRESUPUESTOS POR SERVICIO (ADMIN) =================== */
 router.get("/service-budgets", mustBeAdmin, (_req, res) => {
   try { res.json(listServiceBudgets()); }
   catch (e) { res.status(500).json({ error: "Error al listar presupuestos" }); }
