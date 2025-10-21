@@ -10,15 +10,23 @@ const money = (n) => {
   try { return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(v); }
   catch { return `$ ${v.toFixed(2)}`; }
 };
+const parseDbDate = (s) => {
+  if (!s) return null;
+  const d = new Date((String(s).replace(" ", "T")) + "Z"); // interpretar como UTC
+  return isNaN(d.getTime()) ? new Date(s) : d;
+};
 const fmtDateTime = (s) => {
-  if (!s) return "";
-  try {
-    const d = typeof s === "string" ? new Date(s.replace(" ", "T")) : new Date(s);
-    return d.toLocaleString("es-AR", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-  } catch { return String(s || ""); }
+  const d = parseDbDate(s);
+  if (!d) return "";
+  return new Intl.DateTimeFormat("es-AR", {
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit"
+  }).format(d);
 };
 const nowLocal = () =>
-  new Date().toLocaleString("es-AR", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  new Intl.DateTimeFormat("es-AR", {
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
+  }).format(new Date());
 
 function fitText(doc, text, width) {
   const ell = "…";
@@ -30,20 +38,18 @@ function fitText(doc, text, width) {
 
 /* === Nombre de servicio robusto (DB → hinted → ID) === */
 function resolveServiceName(serviceId, hintedName) {
-  // 1) si ya viene embebido en el objeto pedido
   if (hintedName) return hintedName;
 
-  // 2) helper del DB.js (usa heurísticas de columnas)
   if (serviceId != null) {
     const byDb = getServiceNameById(serviceId);
     if (byDb) return byDb;
   }
 
-  // 3) fallback directo a tabla Servicios por si cambió el helper
   try {
     const info = db.prepare(`PRAGMA table_info('Servicios')`).all();
     if (info.length) {
-      const pick = (cands) => cands.find(n => info.some(c => String(c.name).toLowerCase() === n.toLowerCase()));
+      const pick = (cands) =>
+        cands.find(n => info.some(c => String(c.name).toLowerCase() === n.toLowerCase()));
       const idCol = (info.find(c => c.pk === 1)?.name) ||
         pick(["ServiciosID","ServicioID","IdServicio","service_id","servicio_id","ID","id"]);
       const nameCol = pick(["ServicioNombre","Nombre","Descripcion","Detalle","NombreServicio","Servicio"]) || idCol;
@@ -54,9 +60,8 @@ function resolveServiceName(serviceId, hintedName) {
         if (r?.n) return String(r.n);
       }
     }
-  } catch { /* noop */ }
+  } catch {}
 
-  // 4) último recurso
   return serviceId != null ? String(serviceId) : "—";
 }
 
@@ -88,7 +93,7 @@ function drawMeta(doc, y, { empleado, rol, fecha, servicio }) {
   const line = (label, value, x, y0) => {
     doc.font("Helvetica").fontSize(9).fill("#666").text(label, x, y0);
     return doc.font("Helvetica").fontSize(11).fill("#111").text(String(value || "—"), x, y0 + 12, { width: colW }).y + 6;
-    };
+  };
 
   const yStart = y;
   let yl = yStart;
@@ -106,11 +111,10 @@ function drawMeta(doc, y, { empleado, rol, fecha, servicio }) {
 
 function drawItemsTable(doc, y, rows, total) {
   const m = 36;
-  const widths = [78, 270, 55, 60, 60]; // 523 pt totales
+  const widths = [78, 270, 55, 60, 60]; // 523 total
   const aligns = ["left", "left", "right", "right", "right"];
   const headerH = 22, rowH = 20;
 
-  // encabezado
   doc.save().rect(m, y - 2, 523, headerH).fill("#F5F6F7").restore();
   const labels = ["Código", "Descripción", "Cant.", "Precio", "Subtotal"];
   let x = m;
@@ -121,11 +125,9 @@ function drawItemsTable(doc, y, rows, total) {
   }
   y += headerH;
 
-  // capacidad para 1 hoja
   const bottomReserve = 120;
   const maxY = doc.page.height - bottomReserve;
   const maxRows = Math.max(0, Math.floor((maxY - y - rowH) / rowH));
-
   const data = rows.slice(0, maxRows);
   const leftover = rows.length - data.length;
 
@@ -156,7 +158,6 @@ function drawItemsTable(doc, y, rows, total) {
     y += 16;
   }
 
-  // fila TOTAL integrada
   doc.save().rect(m, y + 2, 523, rowH).fill("#F1F2F4").restore();
   doc.font("Helvetica-Bold").fontSize(10).fill("#111")
      .text("TOTAL", m + widths[0] + widths[1] + 6, y + 6, { width: widths[2] + widths[3] - 12, align: "right" });
@@ -176,7 +177,8 @@ function drawNote(doc, y, nota) {
 
 function drawFooter(doc) {
   const m = 36, y = doc.page.height - m + 6;
-  doc.font("Helvetica").fontSize(9).fill("#777").text(`Generado por Kazaro ${nowLocal()}`, m, y, { width: 523, align: "left" });
+  doc.font("Helvetica").fontSize(9).fill("#777")
+     .text(`Generado por Kazaro ${nowLocal()}`, m, y, { width: 523, align: "left" });
 }
 
 /* ================= Generador principal ================= */
@@ -188,9 +190,9 @@ export async function generateRemitoPDF({ pedido, outDir = path.resolve(process.
 
   const empleado = getEmployeeDisplayName(cab?.EmpleadoID);
 
-  // 👇 Asegura NOMBRE de Servicio
+  // Nombre de servicio priorizando el hint pasado desde la ruta
   const servicioNombre = resolveServiceName(
-    cab?.ServicioID,
+    cab?.ServicioID ?? pedido?.servicio?.id ?? null,
     pedido?.servicio?.name || cab?.servicio?.name
   );
 
