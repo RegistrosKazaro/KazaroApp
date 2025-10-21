@@ -1,5 +1,5 @@
 // client/src/pages/Reports.jsx
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { api } from "../api/client";
 import "../styles/catalog.css";
 import "../styles/reports.css";
@@ -27,7 +27,10 @@ function yRange() {
   for (let k = y; k >= y - 5; k--) arr.push(k);
   return arr;
 }
-const MONTHS_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+const MONTHS_ES = [
+  "Enero","Febrero","Marzo","Abril","Mayo","Junio",
+  "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"
+];
 
 // ======= Datos ficticios para “Demo” =======
 const demoData = {
@@ -60,6 +63,56 @@ const demoData = {
   ],
 };
 
+/* ===== Helpers de PDF (encabezado, pie, proporciones) ================== */
+function pdfConstants(doc) {
+  return {
+    w: doc.internal.pageSize.getWidth(),
+    h: doc.internal.pageSize.getHeight(),
+    marginX: 56,
+    gutter: 16,
+    rowTop: 96,
+    chartH: 230,
+    color: {
+      primary: "#0b1a78",
+      accent:  "#2563eb",
+      muted:   "#6b7280",
+      line:    "#e5e7eb",
+      text:    "#111827",
+    }
+  };
+}
+function drawHeader(doc, PDF, titleLeft, titleRight) {
+  doc.setFillColor(238,244,255);
+  doc.rect(0, 0, PDF.w, 56, "F");
+  doc.setTextColor(PDF.color.primary);
+  doc.setFont(undefined, "bold"); doc.setFontSize(14);
+  doc.text(titleLeft || "Informe mensual – Kazaro", PDF.marginX, 36);
+  doc.setFont(undefined, "normal"); doc.setFontSize(11); doc.setTextColor("#374151");
+  if (titleRight) doc.text(titleRight, PDF.w - PDF.marginX, 36, { align: "right" });
+}
+function drawFooter(doc, PDF, tag) {
+  const n = doc.getNumberOfPages();
+  for (let i = 1; i <= n; i++) {
+    doc.setPage(i);
+    doc.setDrawColor(PDF.color.line); doc.setLineWidth(0.5);
+    doc.line(PDF.marginX, PDF.h - 32, PDF.w - PDF.marginX, PDF.h - 32);
+    const ts = new Date().toLocaleString("es-AR");
+    doc.setTextColor(PDF.color.muted); doc.setFontSize(9);
+    doc.text(`Generado: ${ts}`, PDF.marginX, PDF.h - 16);
+    doc.text(`${tag} — Página ${i} de ${n}`, PDF.w - PDF.marginX, PDF.h - 16, { align: "right" });
+  }
+}
+// Coloca una imagen dentro de una caja conservando relación de aspecto
+function placeImage(doc, imgData, box) {
+  const props = doc.getImageProperties(imgData);
+  const r = props.width / props.height;
+  let w = box.w, h = w / r;
+  if (h > box.h) { h = box.h; w = h * r; }
+  const x = box.x + (box.w - w) / 2;
+  const y = box.y + (box.h - h) / 2;
+  doc.addImage(imgData, "PNG", x, y, w, h);
+}
+
 export default function Reports() {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
@@ -76,7 +129,7 @@ export default function Reports() {
   const refProdUnits = useRef(null);
   const refProdAmount = useRef(null);
 
-  async function load() {
+  const load = useCallback(async () => {
     if (demo) {
       setErr("");
       setData(demoData);
@@ -84,29 +137,49 @@ export default function Reports() {
     }
     setLoading(true); setErr(""); setData(null);
     try {
-      const { data } = await api.get("/admin/reports/monthly", { params: { year, month } });
-      setData(data);
+      // catálogo de servicios + informe mensual en paralelo
+      const [svcRes, repRes] = await Promise.all([
+        api.get("/reports/services"),
+        api.get("/reports/monthly", { params: { year, month } }),
+      ]);
+      const svcMap = new Map(
+        Array.isArray(svcRes?.data) ? svcRes.data.map(r => [String(r.id), String(r.name || "").trim()]) : []
+      );
+      const rep = repRes.data || {};
+      const top_services = (rep.top_services || []).map(r => {
+        const idStr = String(r?.serviceId ?? "").trim();
+        const nameFromApi = String(r?.serviceName ?? "").trim();
+        const resolved = nameFromApi || (idStr && svcMap.get(idStr)) || (idStr ? `Servicio ${idStr}` : "—");
+        return { ...r, serviceName: resolved };
+      });
+      setData({ ...rep, top_services });
     } catch (e) {
       setErr(e?.response?.data?.error || "No se pudo cargar el informe");
     } finally {
       setLoading(false);
     }
-  }
+  }, [demo, year, month]);
 
-  useEffect(() => { load(); /* auto-carga */ // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demo]);
+  useEffect(() => { load(); /* auto-carga */ }, [load]);
 
   const title = useMemo(() => `${MONTHS_ES[month-1]} ${year}`, [month, year]);
 
   // ======= Helpers =======
-  const fmtMoney = (v) => new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(v || 0);
-  const short = (s) => (String(s ?? "")).length > 18 ? String(s).slice(0, 16)+"…" : String(s ?? "");
+  const fmtMoney = (v) =>
+    new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(v || 0);
+  const short = (s) => (String(s ?? "")).length > 18 ? String(s).slice(0, 16) + "…" : String(s ?? "");
+  const serviceLabel = (r) => {
+    const name = String(r?.serviceName ?? "").trim();
+    if (name) return name;
+    const sid = r?.serviceId;
+    return sid != null && String(sid).trim() !== "" ? `Servicio ${sid}` : "—";
+  };
 
   const chartServices = useMemo(() => {
     if (!data?.top_services) return [];
     return data.top_services.map((r, i) => ({
       idx: i + 1,
-      name: short(r.serviceName || `Servicio ${r.serviceId ?? "-"}`),
+      name: short(serviceLabel(r)),
       unidades: Number(r.qty || 0),
       monto: Number(r.amount || 0),
     }));
@@ -138,7 +211,7 @@ export default function Reports() {
     const sRows = [
       ["rank","serviceId","serviceName","pedidos","unidades","monto"],
       ...(data.top_services || []).map((r, idx) => [
-        idx+1, r.serviceId ?? "", r.serviceName ?? "", r.pedidos ?? 0, r.qty ?? 0, r.amount ?? 0
+        idx+1, r.serviceId ?? "", serviceLabel(r), r.pedidos ?? 0, r.qty ?? 0, r.amount ?? 0
       ])
     ].map(arr => arr.map(esc).join(",")).join("\n");
 
@@ -165,16 +238,14 @@ export default function Reports() {
     download(`reporte_articulos_${tag}.csv`, pRows);
   }
 
-  // Captura un nodo DOM a imagen PNG usando html2canvas
-  async function captureNode(node, { width = 760, height = 360 } = {}) {
+  // Captura un nodo DOM a imagen PNG (alta resolución)
+  async function captureNode(node) {
     if (!node) return null;
     const canvas = await html2canvas(node, { backgroundColor: "#ffffff", scale: 2, useCORS: true });
-    const img = canvas.toDataURL("image/png");
-    // devolvemos tamaño sugerido en puntos (jsPDF usa pt)
-    return { img, width, height };
+    return { img: canvas.toDataURL("image/png"), w: canvas.width, h: canvas.height };
   }
 
-  // Exportar PDF con portada + gráficos + tablas
+  // Exportar PDF PRO (encabezado/pie, 2 columnas, tablas cuidadas)
   async function exportPDF() {
     if (!data?.ok) {
       alert("No hay datos para exportar. Generá un informe primero.");
@@ -182,112 +253,116 @@ export default function Reports() {
     }
 
     const tag = `${String(year)}-${String(month).padStart(2,"0")}`;
-    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" }); // 842x595 pt aprox
+    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+    const PDF = pdfConstants(doc);
 
-    // Portada
-    doc.setFillColor(255,255,255);
-    doc.rect(0, 0, doc.internal.pageSize.getWidth(), doc.internal.pageSize.getHeight(), "F");
+    // -------- Portada / Resumen ejecutivo
+    drawHeader(doc, PDF, "Informe Mensual – Kazaro", `${MONTHS_ES[month-1]} ${year}`);
 
-    doc.setTextColor("#0b1a78");
-    doc.setFontSize(26);
-    doc.setFont(undefined, "bold");
-    doc.text("Informe Mensual – Kazaro", 60, 80);
+    doc.setTextColor(PDF.color.primary);
+    doc.setFont(undefined, "bold"); doc.setFontSize(24);
+    doc.text("Resumen ejecutivo", PDF.marginX, PDF.rowTop);
 
-    doc.setTextColor("#124f7e");
-    doc.setFontSize(16);
-    doc.setFont(undefined, "normal");
-    doc.text(`${MONTHS_ES[month-1]} ${year}`, 60, 110);
+    // Tarjetas KPI
+    const cardW = 200, cardH = 72, gap = 18;
+    const baseY = PDF.rowTop + 20;
+    const cards = [
+      { label: "Pedidos",  value: String(data.totals?.ordersCount ?? 0) },
+      { label: "Unidades", value: String(data.totals?.itemsCount ?? 0) },
+      { label: "Monto",    value: new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(data.totals?.amount ?? 0) },
+    ];
+    cards.forEach((c, i) => {
+      const x = PDF.marginX + i * (cardW + gap);
+      doc.setFillColor(255,255,255);
+      doc.setDrawColor("#dbe7ff");
+      doc.roundedRect(x, baseY, cardW, cardH, 8, 8, "FD");
+      doc.setTextColor(PDF.color.muted); doc.setFontSize(11);
+      doc.text(c.label, x + 12, baseY + 22);
+      doc.setTextColor(PDF.color.text); doc.setFont(undefined, "bold"); doc.setFontSize(20);
+      doc.text(c.value, x + 12, baseY + 48);
+      doc.setFont(undefined, "normal");
+    });
 
-    // Tarjetas simples
-    doc.setTextColor("#6b7280");
-    doc.setFontSize(11);
-    doc.text("Pedidos", 60, 160);
-    doc.text("Unidades", 260, 160);
-    doc.text("Monto", 460, 160);
+    doc.setTextColor("#374151"); doc.setFontSize(11);
+    doc.text("Este informe consolida el desempeño del período y el ranking de servicios y artículos.", PDF.marginX, baseY + cardH + 30);
 
-    doc.setTextColor("#111827");
-    doc.setFont(undefined, "bold");
-    doc.setFontSize(24);
-    doc.text(String(data.totals?.ordersCount ?? 0), 60, 190);
-    doc.text(String(data.totals?.itemsCount ?? 0), 260, 190);
-    doc.text(new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(data.totals?.amount ?? 0), 460, 190);
+    // -------- Capturas de gráficos
+    const [capServU, capServM, capProdU, capProdM] = await Promise.all([
+      captureNode(refServUnits.current),
+      captureNode(refServAmount.current),
+      captureNode(refProdUnits.current),
+      captureNode(refProdAmount.current),
+    ]);
 
-    doc.setTextColor("#0b1a78");
-    doc.setFontSize(13);
-    doc.setFont(undefined, "bold");
-    doc.text("Detalle del período", 60, 240);
-    doc.setFontSize(11);
-    doc.setFont(undefined, "normal");
-    doc.text("• Top 10 servicios por unidades y monto", 60, 264);
-    doc.text("• Top 10 artículos por unidades y monto", 60, 284);
+    // -------- Página: Gráficos de servicios (2 por página)
+    doc.addPage();
+    drawHeader(doc, PDF, "Servicios — Indicadores", `${MONTHS_ES[month-1]} ${year}`);
+    doc.setTextColor(PDF.color.primary); doc.setFont(undefined, "bold"); doc.setFontSize(14);
 
-    // Página: Unidades por servicio (gráfico)
-    const servUnitsCap = await captureNode(refServUnits.current);
-    if (servUnitsCap) {
-      doc.addPage();
-      doc.setFontSize(16);
-      doc.setTextColor("#0b1a78");
-      doc.setFont(undefined, "bold");
-      doc.text("Top 10 servicios por unidades", 60, 60);
-      doc.addImage(servUnitsCap.img, "PNG", 60, 80, 720, 320);
-    }
+    const colW = (PDF.w - PDF.marginX*2 - PDF.gutter) / 2;
+    const box1 = { x: PDF.marginX,                 y: PDF.rowTop, w: colW, h: PDF.chartH };
+    const box2 = { x: PDF.marginX + colW + PDF.gutter, y: PDF.rowTop, w: colW, h: PDF.chartH };
+    doc.text("Top 10 servicios por unidades", box1.x, box1.y - 10);
+    doc.text("Top 10 servicios por monto",    box2.x, box2.y - 10);
+    if (capServU) placeImage(doc, capServU.img, box1);
+    if (capServM) placeImage(doc, capServM.img, box2);
 
-    // Página: Monto por servicio (gráfico)
-    const servAmountCap = await captureNode(refServAmount.current);
-    if (servAmountCap) {
-      doc.addPage();
-      doc.setFontSize(16);
-      doc.setTextColor("#0b1a78");
-      doc.setFont(undefined, "bold");
-      doc.text("Top 10 servicios por monto", 60, 60);
-      doc.addImage(servAmountCap.img, "PNG", 60, 80, 720, 320);
-    }
+    // -------- Página: Gráficos de artículos (2 por página)
+    doc.addPage();
+    drawHeader(doc, PDF, "Artículos — Indicadores", `${MONTHS_ES[month-1]} ${year}`);
+    const box3 = { x: PDF.marginX,                 y: PDF.rowTop, w: colW, h: PDF.chartH };
+    const box4 = { x: PDF.marginX + colW + PDF.gutter, y: PDF.rowTop, w: colW, h: PDF.chartH };
+    doc.text("Top 10 artículos por unidades", box3.x, box3.y - 10);
+    doc.text("Top 10 artículos por monto",    box4.x, box4.y - 10);
+    if (capProdU) placeImage(doc, capProdU.img, box3);
+    if (capProdM) placeImage(doc, capProdM.img, box4);
 
-    // Página: Unidades por artículo (gráfico)
-    const prodUnitsCap = await captureNode(refProdUnits.current);
-    if (prodUnitsCap) {
-      doc.addPage();
-      doc.setFontSize(16);
-      doc.setTextColor("#0b1a78");
-      doc.setFont(undefined, "bold");
-      doc.text("Top 10 artículos por unidades", 60, 60);
-      doc.addImage(prodUnitsCap.img, "PNG", 60, 80, 720, 320);
-    }
-
-    // Página: Monto por artículo (gráfico)
-    const prodAmountCap = await captureNode(refProdAmount.current);
-    if (prodAmountCap) {
-      doc.addPage();
-      doc.setFontSize(16);
-      doc.setTextColor("#0b1a78");
-      doc.setFont(undefined, "bold");
-      doc.text("Top 10 artículos por monto", 60, 60);
-      doc.addImage(prodAmountCap.img, "PNG", 60, 80, 720, 320);
-    }
-
-    // Tablas (servicios)
+    // -------- Tablas (Servicios)
     if (data.top_services?.length) {
       doc.addPage();
+      drawHeader(doc, PDF, "Detalle — Servicios", `${MONTHS_ES[month-1]} ${year}`);
       autoTable(doc, {
         head: [["#", "Servicio", "Pedidos", "Unidades", "Monto"]],
         body: data.top_services.map((r, idx) => [
           idx + 1,
-          r.serviceName || `Servicio ${r.serviceId ?? "-"}`,
+          (r.serviceName || `Servicio ${r.serviceId ?? "-"}`),
           r.pedidos ?? 0,
           r.qty ?? 0,
           new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(r.amount || 0),
         ]),
-        startY: 60,
-        styles: { fontSize: 10, cellPadding: 6 },
-        headStyles: { fillColor: [238,244,255], textColor: [11,26,120], fontStyle: "bold" },
+        startY: PDF.rowTop,
+        margin: { left: PDF.marginX, right: PDF.marginX },
         theme: "grid",
-        margin: { left: 60, right: 60 },
+        styles: {
+          fontSize: 10,
+          cellPadding: 6,
+          lineColor: [229,231,235],
+          lineWidth: 0.6,
+        },
+        headStyles: {
+          fillColor: [238,244,255],
+          textColor: [11,26,120],
+          fontStyle: "bold",
+          halign: "center",
+        },
+        columnStyles: {
+          0: { cellWidth: 32,  halign: "center" },
+          1: { cellWidth: "auto" },
+          2: { cellWidth: 80,  halign: "right" },
+          3: { cellWidth: 80,  halign: "right" },
+          4: { cellWidth: 100, halign: "right" },
+        },
+        alternateRowStyles: { fillColor: [250,252,255] },
+        didParseCell: (c) => {
+          if (c.section === "body" && c.column.index === 1) c.cell.styles.fontStyle = "bold";
+        },
       });
     }
 
-    // Tablas (artículos)
+    // -------- Tablas (Artículos)
     if (data.top_products?.length) {
       doc.addPage();
+      drawHeader(doc, PDF, "Detalle — Artículos", `${MONTHS_ES[month-1]} ${year}`);
       autoTable(doc, {
         head: [["#", "Artículo", "Código", "Pedidos", "Unidades", "Monto"]],
         body: data.top_products.map((r, idx) => [
@@ -298,13 +373,35 @@ export default function Reports() {
           r.qty ?? 0,
           new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(r.amount || 0),
         ]),
-        startY: 60,
-        styles: { fontSize: 10, cellPadding: 6 },
-        headStyles: { fillColor: [238,244,255], textColor: [11,26,120], fontStyle: "bold" },
+        startY: PDF.rowTop,
+        margin: { left: PDF.marginX, right: PDF.marginX },
         theme: "grid",
-        margin: { left: 60, right: 60 },
+        styles: {
+          fontSize: 10,
+          cellPadding: 6,
+          lineColor: [229,231,235],
+          lineWidth: 0.6,
+        },
+        headStyles: {
+          fillColor: [238,244,255],
+          textColor: [11,26,120],
+          fontStyle: "bold",
+          halign: "center",
+        },
+        columnStyles: {
+          0: { cellWidth: 32,  halign: "center" },
+          1: { cellWidth: "auto" },
+          2: { cellWidth: 90,  halign: "left" },
+          3: { cellWidth: 80,  halign: "right" },
+          4: { cellWidth: 80,  halign: "right" },
+          5: { cellWidth: 100, halign: "right" },
+        },
+        alternateRowStyles: { fillColor: [250,252,255] },
       });
     }
+
+    // -------- Pie con numeración/fecha
+    drawFooter(doc, PDF, `${MONTHS_ES[month-1]} ${year}`);
 
     doc.save(`Informe_Mensual_${tag}.pdf`);
   }
@@ -380,7 +477,21 @@ export default function Reports() {
                     {data.top_services.map((r, idx) => (
                       <tr key={r.serviceId ?? idx}>
                         <td>{idx+1}</td>
-                        <td>{r.serviceName || `Servicio ${r.serviceId ?? "-"}`}</td>
+                        <td>
+                          <div
+                            title={serviceLabel(r)}
+                            style={{
+                              maxWidth: "min(28vw, 260px)",
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              display: "block",
+                              fontWeight: 600
+                            }}
+                          >
+                            {serviceLabel(r)}
+                          </div>
+                        </td>
                         <td className="mono">{r.pedidos}</td>
                         <td className="mono">{r.qty}</td>
                         <td className="mono">{fmtMoney(r.amount)}</td>
