@@ -10,13 +10,12 @@ import {
   getBudgetByServiceId,
 } from "../db.js";
 import { generateRemitoPDF } from "../utils/remitoPdf.js";
+import { sendMail } from "../utils/mailer.js";
 import path from "path";
 import fs from "fs";
-import { sendMail } from "../utils/mailer.js";
 
 const router = Router();
 
-/* ===== helpers locales ===== */
 const pad7 = (n) => String(n ?? "").padStart(7, "0");
 const money = (v) => {
   const n = Number(v || 0);
@@ -26,80 +25,72 @@ const money = (v) => {
     return `$ ${n.toFixed(2)}`;
   }
 };
-const parseDbDate = (s) => {
-  if (!s) return null;
-  // SQLite datetime('now') -> "YYYY-MM-DD HH:MM:SS" (UTC)
-  // Lo parseamos como UTC y lo mostramos en local.
-  const d = new Date((String(s).replace(" ", "T")) + "Z");
-  return isNaN(d.getTime()) ? new Date(s) : d;
-};
-const fmtDateTime = (s) => {
-  const d = parseDbDate(s);
-  if (!d) return "";
-  return new Intl.DateTimeFormat("es-AR", {
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit"
-  }).format(d);
-};
+
+// Parseo de timestamp tipo "YYYY-MM-DD HH:mm:ss" (SQLite) como UTC -> local
+function fmtDateTime(sql) {
+  if (!sql) return "";
+  try {
+    const d = new Date(sql.replace(" ", "T") + "Z");
+    return d.toLocaleString("es-AR", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  } catch {
+    return String(sql);
+  }
+}
 
 router.post("/", requireAuth, async (req, res) => {
   try {
     const empleadoId = req.user.id;
     const { servicioId = null, nota = "", items } = req.body || {};
-
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: "Faltan items" });
     }
 
-    // 1) crear pedido
+    // 1) Crear pedido
     const pedidoId = createOrder({ empleadoId, servicioId, nota, items });
-
-    // 2) recuperar cabecera + items
     const pedido = getFullOrder(pedidoId);
     if (!pedido) return res.status(500).json({ error: "No se pudo recuperar el pedido" });
 
-    const cab = pedido.cab || pedido;
+    // 2) Datos para mail/PDF
     const nro = pad7(pedidoId);
     const empleadoNombre = getEmployeeDisplayName(empleadoId) || `Empleado ${empleadoId}`;
-    const rol = String(cab.Rol || "").toLowerCase() || "administrativo";
-    const total = Number(cab.Total || 0);
-    const fechaLocal = fmtDateTime(cab.Fecha);
+    const rol = String(pedido.Rol || "").toLowerCase() || "administrativo";
+    const total = Number(pedido.Total || 0);
+    const fechaLocal = fmtDateTime(pedido.Fecha);
 
-    // 3) resolver servicio (id + nombre) para mail y PDF
-    const serviceIdEff = cab.ServicioID ?? servicioId ?? null;
-    let serviceName = "—";
-    if (serviceIdEff != null) {
-      // intenta por helper general; si falla, intenta getServiceById; si falla, muestra el id como último recurso
-      serviceName =
-        getServiceNameById(serviceIdEff) ||
-        (getServiceById(serviceIdEff)?.name ?? null) ||
-        String(serviceIdEff);
-    }
+    // NOMBRE del servicio (no ID)
+    const sid = pedido.ServicioID ?? servicioId ?? null;
+    let serviceName =
+      pedido?.servicio?.name ||
+      (sid != null ? getServiceNameById(sid) : null) ||
+      (sid != null ? (getServiceById(sid)?.name || null) : null) ||
+      "—";
 
-    // 4) generar PDF (pasamos hint con el servicio resuelto)
+    // 3) PDF (si falla, no detiene el flujo)
     let pdfPath = null;
     try {
-      const pedidoParaPdf = {
-        ...pedido,
-        servicio: { id: serviceIdEff, name: serviceName },
-      };
-      pdfPath = await generateRemitoPDF({
-        pedido: pedidoParaPdf,
-        outDir: path.resolve(process.cwd(), "tmp"),
-      });
+      // inyectamos nombre de servicio para el PDF si no venía
+      const pedidoConServicio = { ...pedido, servicio: pedido.servicio || (serviceName ? { id: sid, name: serviceName } : null) };
+      pdfPath = await generateRemitoPDF({ pedido: pedidoConServicio, outDir: path.resolve(process.cwd(), "tmp") });
     } catch (e) {
       console.warn("[orders] No se pudo generar PDF:", e?.message || e);
     }
 
-    // 5) enviar correo
+    // 4) Mail con formato solicitado
     try {
-      // % presupuesto (sólo si supervisor y hay presupuesto configurado)
+      // % presupuesto (solo si supervisor y el servicio tiene presupuesto)
       let presupuestoLinea = "";
-      if (rol === "supervisor" && serviceIdEff != null) {
-        const presupuesto = getBudgetByServiceId(serviceIdEff);
+      if (rol === "supervisor" && sid != null) {
+        const presupuesto = getBudgetByServiceId(sid);
         if (presupuesto && presupuesto > 0) {
           const pct = Math.min(100, (total / presupuesto) * 100);
-          presupuestoLinea = `Presupuesto usado: ${pct.toFixed(1)}%`;
+          presupuestoLinea = `\nPresupuesto usado: ${pct.toFixed(1)}%`;
         }
       }
 
@@ -112,8 +103,7 @@ Rol: ${rol}
 Servicio: ${serviceName}
 Fecha: ${fechaLocal}
 Total: ${money(total)}
-Nota: ${nota || (cab.Nota || "—")}
-${presupuestoLinea ? `\n${presupuestoLinea}` : ""}
+Nota: ${nota || (pedido.Nota || "—")}${presupuestoLinea}
 
 Se adjunta PDF del remito.`;
 
@@ -125,17 +115,23 @@ Se adjunta PDF del remito.`;
 <strong>Servicio:</strong> ${serviceName}<br/>
 <strong>Fecha:</strong> ${fechaLocal}<br/>
 <strong>Total:</strong> ${money(total)}<br/>
-<strong>Nota:</strong> ${nota || (cab.Nota || "—")}</p>
-${presupuestoLinea ? `<p><strong>${presupuestoLinea}</strong></p>` : ""}
+<strong>Nota:</strong> ${nota || (pedido.Nota || "—")}</p>
+${presupuestoLinea ? `<p><strong>${presupuestoLinea.replace("\n", "")}</strong></p>` : ""}
 <p>Se adjunta PDF del remito.</p>
 `.trim();
 
-      const toArr = getServiceEmails(serviceIdEff) || [];
+      const toArr = getServiceEmails(sid) || [];
       const to = toArr.length ? toArr.join(",") : undefined;
 
       const attachments =
         pdfPath && fs.existsSync(pdfPath)
-          ? [{ filename: path.basename(pdfPath), path: pdfPath, contentType: "application/pdf" }]
+          ? [
+              {
+                filename: path.basename(pdfPath),
+                path: pdfPath,
+                contentType: "application/pdf",
+              },
+            ]
           : undefined;
 
       await sendMail({
@@ -151,6 +147,7 @@ ${presupuestoLinea ? `<p><strong>${presupuestoLinea}</strong></p>` : ""}
       console.warn("[orders] sendMail falló:", e?.message || e);
     }
 
+    // 5) Respuesta
     const pdfUrl = `/orders/pdf/${pedidoId}`;
     return res.status(201).json({ ok: true, pedidoId, remito: { pdfUrl } });
   } catch (e) {
@@ -164,7 +161,6 @@ router.get("/pdf/:id", requireAuth, async (req, res) => {
   const pedido = getFullOrder(id);
   if (!pedido) return res.status(404).end();
   try {
-    // si el pedido ya trae servicio resuelto, el PDF lo mostrará
     const pdfPath = await generateRemitoPDF({ pedido, outDir: path.resolve(process.cwd(), "tmp") });
     res.setHeader("Content-Type", "application/pdf");
     return res.send(fs.readFileSync(pdfPath));
