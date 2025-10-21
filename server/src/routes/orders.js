@@ -10,7 +10,8 @@ import {
   getBudgetByServiceId,
   getUserRoles,
   listServicesByUser,
-  db, // 👈 lo uso para actualizar el rol si viene desde el front
+  getUserById,
+  db,
 } from "../db.js";
 import { generateRemitoPDF } from "../utils/remitoPdf.js";
 import { sendMail } from "../utils/mailer.js";
@@ -26,11 +27,10 @@ const money = (v) => {
   try { return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(n); }
   catch { return `$ ${n.toFixed(2)}`; }
 };
-// “YYYY-MM-DD HH:mm:ss” (SQLite) -> hora local
 function fmtLocal(sqlTs) {
   if (!sqlTs) return "";
   try {
-    const d = new Date(String(sqlTs).replace(" ", "T") + "Z"); // asumo UTC -> muestro local
+    const d = new Date(String(sqlTs).replace(" ", "T") + "Z"); // DB→UTC, muestro local
     return d.toLocaleString("es-AR", {
       year: "numeric", month: "2-digit", day: "2-digit",
       hour: "2-digit", minute: "2-digit", second: "2-digit",
@@ -54,7 +54,7 @@ function resolveServiceName(servicioId, hintedName) {
 router.post("/", requireAuth, async (req, res) => {
   try {
     const empleadoId = req.user.id;
-    let   { servicioId = null, nota = "", items, rol: rolFromClient } = req.body || {};
+    let { servicioId = null, nota = "", items, rol: rolFromClient } = req.body || {};
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: "Faltan items" });
     }
@@ -65,38 +65,39 @@ router.post("/", requireAuth, async (req, res) => {
       if (Array.isArray(mios) && mios.length === 1) servicioId = mios[0].id;
     }
 
-    // Crear pedido (db.js guardará un rol por defecto)
+    // Crear pedido
     const pedidoId = createOrder({ empleadoId, servicioId, nota, items });
 
-    // Si el front indicó rol explícito (admin/supervisor), lo fuerzo en la cabecera
+    // Si el front indicó rol explícito, lo fuerzo
     if (rolFromClient && String(rolFromClient).trim()) {
       db.prepare(`UPDATE Pedidos SET Rol = ? WHERE PedidoID = ?`)
         .run(String(rolFromClient).trim(), Number(pedidoId));
     }
 
-    // Leer el pedido ya persistido
+    // Leer el pedido persistido
     const pedido = getFullOrder(pedidoId);
     if (!pedido) return res.status(500).json({ error: "No se pudo recuperar el pedido" });
 
     // Datos base
-    const nro           = pad7(pedidoId);
-    const empleadoNombre= getEmployeeDisplayName(empleadoId) || `Empleado ${empleadoId}`;
-    const rolGuardado   = String(pedido.Rol || "").trim().toLowerCase();
-    const rol           = rolGuardado || (rolFromClient ? String(rolFromClient).trim().toLowerCase() : primaryRole(empleadoId));
+    const nro = pad7(pedidoId);
+    const empleadoNombre = getEmployeeDisplayName(empleadoId) || `Empleado ${empleadoId}`;
+    const usuario = pedido.user || getUserById(empleadoId); // incluye email si existe
+    const rolGuardado = String(pedido.Rol || "").trim().toLowerCase();
+    const rol = rolGuardado || (rolFromClient ? String(rolFromClient).trim().toLowerCase() : primaryRole(empleadoId));
 
-    // Servicio: priorizo el de la cabecera; si está vacío y el usuario tiene uno solo, uso ese
+    // Servicio
     let sid = String(pedido.ServicioID ?? servicioId ?? "").trim();
     if (!sid) {
       const mios = listServicesByUser(empleadoId);
       if (Array.isArray(mios) && mios.length === 1) sid = String(mios[0].id);
     }
-    const serviceName   = resolveServiceName(sid, pedido?.servicio?.name);
+    const serviceName = resolveServiceName(sid, pedido?.servicio?.name);
 
-    const total         = Number(pedido.Total || 0);
-    const fechaLocal    = fmtLocal(pedido.Fecha);
-    const notaFinal     = String(nota || pedido.Nota || "—");
+    const total      = Number(pedido.Total || 0);
+    const fechaLocal = fmtLocal(pedido.Fecha);
+    const notaFinal  = String(nota || pedido.Nota || "—");
 
-    // Generar PDF (inyecto nombre del servicio y rol correctos)
+    // Generar PDF con servicio/rol correctos
     let pdfPath = null;
     try {
       const pedidoParaPdf = {
@@ -109,7 +110,7 @@ router.post("/", requireAuth, async (req, res) => {
       console.warn("[orders] No se pudo generar PDF:", e?.message || e);
     }
 
-    // Email con el formato solicitado
+    // Email
     try {
       let presupuestoLinea = "";
       if (rol === "supervisor" && sid) {
@@ -154,6 +155,7 @@ ${presupuestoLinea ? `<p><strong>${presupuestoLinea.replace("\n", "")}</strong><
           ? [{ filename: path.basename(pdfPath), path: pdfPath, contentType: "application/pdf" }]
           : undefined;
 
+      // Mostrar usuario como remitente (nombre). Si su e-mail no está, va Reply-To si existe.
       await sendMail({
         to,
         subject,
@@ -162,12 +164,15 @@ ${presupuestoLinea ? `<p><strong>${presupuestoLinea.replace("\n", "")}</strong><
         attachments,
         entityType: "pedido",
         entityId: pedidoId,
+        displayAsUser: true,               // muestra nombre del usuario
+        userName: empleadoNombre,
+        userEmail: usuario?.email || null, // si hay mail del usuario
+        systemTag: "Kazaro Pedidos",       // etiqueta si no hay mail del user
       });
     } catch (e) {
       console.warn("[orders] sendMail falló:", e?.message || e);
     }
 
-    // Respuesta
     const pdfUrl = `/orders/pdf/${pedidoId}`;
     return res.status(201).json({ ok: true, pedidoId, remito: { pdfUrl } });
   } catch (e) {
@@ -181,7 +186,15 @@ router.get("/pdf/:id", requireAuth, async (req, res) => {
   const pedido = getFullOrder(id);
   if (!pedido) return res.status(404).end();
   try {
-    const pdfPath = await generateRemitoPDF({ pedido, outDir: path.resolve(process.cwd(), "tmp") });
+    const sid = String(pedido.ServicioID ?? "").trim();
+    const serviceName = resolveServiceName(sid, pedido?.servicio?.name);
+    const pedidoParaPdf = {
+      ...pedido,
+      servicio: { id: sid || null, name: serviceName },
+      rol: String(pedido.Rol || "").trim().toLowerCase(),
+    };
+
+    const pdfPath = await generateRemitoPDF({ pedido: pedidoParaPdf, outDir: path.resolve(process.cwd(), "tmp") });
     res.setHeader("Content-Type", "application/pdf");
     return res.send(fs.readFileSync(pdfPath));
   } catch (e) {

@@ -199,7 +199,7 @@ function drawItemsTable(doc, y, rows, total) {
   // Fila TOTAL al pie (no se corta)
   doc.save().rect(M, y + 2, contentW, rowH).fill("#F1F2F4").restore();
 
-  const xTotalLabel = M + W_CODE + W_DESC + W_QTY - 6;      // hasta antes de Precio
+  const xTotalLabel = M + W_CODE + W_DESC + W_QTY - 6;      
   const wTotalLabel = W_PRICE + 6;
   const xTotalAmt = xTotalLabel + wTotalLabel;
   const wTotalAmt = W_SUB;
