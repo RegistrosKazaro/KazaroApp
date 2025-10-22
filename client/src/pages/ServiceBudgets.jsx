@@ -6,6 +6,35 @@ import { useAuth } from "../hooks/useAuth";
 import "../styles/service-budgets.css";
 import "../styles/a11y.css";
 
+const PAGE_SIZE = 15;
+
+// Parseo flexible de dinero: acepta puntos y comas como separadores.
+// - Usa el ÚLTIMO (.,) como separador decimal, el resto se eliminan como miles.
+// - Soporta: "1.234,56" -> 1234.56 ; "1,234.56" -> 1234.56 ; "1000" -> 1000
+function parseMoneyFlexible(raw){
+  if (raw == null) return NaN;
+  let s = String(raw).trim().replace(/\s+/g,"");
+  if (s=== "") return NaN;
+
+  s=s.replace(/[^\d.,-]/g,"");
+
+  const lastComma= s.lastIndexOf(",");
+  const lastDot = s.lastIndexOf(".");
+  const last = Math.max(lastComma, lastDot);
+
+  if (last === -1){
+    s =s.replace(/[^\d-]/g,"");
+    return s ? Number(s) : NaN;
+  }
+
+  const intPart = s.slice(0, last).replace(/[^\d-]/g, "");
+  const decPart = s.slice(last + 1).replace(/[^\d]/g, "");
+  const normalized = `${intPart}.${decPart}`;
+
+  const num = Number(normalized);
+  return Number.isFinite(num) ? num : NaN;
+}
+
 export default function ServiceBudgets() {
   const nav = useNavigate();
   const { user, loading } = useAuth();
@@ -24,11 +53,21 @@ export default function ServiceBudgets() {
   const [savingId, setSavingId] = useState(null);
   const [status, setStatus] = useState("");
 
+  // Paginación
+  const [page, setPage] = useState(1);
+
   const load = useCallback(async () => {
-    try { setRows((await api.get("/admin/service-budgets")).data || []); }
-    catch (e) { setErr(e?.response?.data?.error || e.message); }
+    try {
+      const data = (await api.get("/admin/service-budgets")).data || [];
+      setRows(data);
+    } catch (e) {
+      setErr(e?.response?.data?.error || e.message);
+    }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // Resetear página al cambiar búsqueda o dataset
+  useEffect(() => { setPage(1); }, [q, rows]);
 
   const filtered = useMemo(() => {
     const k = q.trim().toLowerCase();
@@ -39,11 +78,17 @@ export default function ServiceBudgets() {
     );
   }, [rows, q]);
 
-  const onSave = async (id, val) => {
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageSafe = Math.min(page, totalPages);
+  const startIdx = (pageSafe - 1) * PAGE_SIZE;
+  const endIdx = startIdx + PAGE_SIZE;
+  const pageRows = filtered.slice(startIdx, endIdx);
+
+  const onSave = async (id, valRaw) => {
     setSavingId(id);
     setStatus("");
     try {
-      const presupuesto = Number(val);
+      const presupuesto = parseMoneyFlexible(valRaw);
       if (!Number.isFinite(presupuesto) || presupuesto < 0) throw new Error("Presupuesto inválido");
       await api.put(`/admin/service-budgets/${id}`, { presupuesto });
       await load();
@@ -55,6 +100,12 @@ export default function ServiceBudgets() {
     }
   };
 
+  // helpers pager
+  const goFirst = () => setPage(1);
+  const goPrev  = () => setPage(p => Math.max(1, p - 1));
+  const goNext  = () => setPage(p => Math.min(totalPages, p + 1));
+  const goLast  = () => setPage(totalPages);
+
   if (loading) return <div className="sb-state">Cargando…</div>;
 
   return (
@@ -62,7 +113,9 @@ export default function ServiceBudgets() {
       <header className="sb-header">
         <div className="sb-title">
           <h1>Presupuesto de servicios</h1>
-          <p className="sb-sub">Definí el presupuesto base por servicio. Un pedido no puede superar el <strong>5%</strong> de este valor.</p>
+          <p className="sb-sub">
+            Definí el presupuesto base por servicio. Un pedido no puede superar el <strong>5%</strong> de este valor.
+          </p>
         </div>
         <div className="sb-actions">
           <Link className="sb-btn" to="/app/admin">← Volver al panel</Link>
@@ -93,8 +146,9 @@ export default function ServiceBudgets() {
           </div>
         </div>
         <div className="sb-tbody" role="rowgroup">
-          {filtered.map(r => {
+          {pageRows.map(r => {
             const inputId = `b-${r.id}`;
+            const defaultVal = (r.budget ?? "") === "" ? "" : String(r.budget).replace(".", ",");
             return (
               <div key={r.id} className="sb-tr" role="row">
                 <div className="td" role="cell">
@@ -105,10 +159,16 @@ export default function ServiceBudgets() {
                   <label htmlFor={inputId} className="sr-only">Presupuesto para {r.name}</label>
                   <input
                     id={inputId}
-                    type="number"
-                    step="0.01"
-                    defaultValue={r.budget ?? ""}
-                    className="sb-input mono"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="0,00"
+                    defaultValue={defaultVal}
+                    className="sb-input sb-money mono"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        onSave(r.id, e.currentTarget.value);
+                      }
+                    }}
                   />
                 </div>
                 <div className="td" role="cell">
@@ -124,13 +184,31 @@ export default function ServiceBudgets() {
               </div>
             );
           })}
-          {filtered.length === 0 && (
+          {pageRows.length === 0 && (
             <div className="sb-tr" role="row">
               <div className="td" role="cell" style={{ gridColumn: "1 / -1" }}>Sin resultados</div>
             </div>
           )}
         </div>
       </div>
+
+      {/* Paginación */}
+      <nav className="sb-pager" role="navigation" aria-label="Paginación de servicios">
+        <div className="sb-pager-info" aria-live="polite">
+          {filtered.length > 0
+            ? <>Mostrando <strong>{filtered.length === 0 ? 0 : startIdx + 1}</strong>–<strong>{Math.min(endIdx, filtered.length)}</strong> de <strong>{filtered.length}</strong> servicios</>
+            : <>Sin resultados</>}
+        </div>
+        <div className="sb-page-controls">
+          <button className="sb-page-btn" onClick={goFirst} disabled={pageSafe <= 1} aria-label="Primera página">«</button>
+          <button className="sb-page-btn" onClick={goPrev}  disabled={pageSafe <= 1} aria-label="Página anterior">‹</button>
+          <span className="sb-pager-info" style={{ padding: "0 6px" }}>
+            Página <strong>{pageSafe}</strong> de <strong>{totalPages}</strong>
+          </span>
+          <button className="sb-page-btn" onClick={goNext}  disabled={pageSafe >= totalPages} aria-label="Página siguiente">›</button>
+          <button className="sb-page-btn" onClick={goLast}  disabled={pageSafe >= totalPages} aria-label="Última página">»</button>
+        </div>
+      </nav>
     </div>
   );
 }

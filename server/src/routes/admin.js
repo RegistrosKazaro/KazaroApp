@@ -11,8 +11,10 @@ import {
   assignServiceToSupervisorExclusive,
   reassignServiceToSupervisor,
   unassignService,
+  getServiceNameById,
 } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { sendMail } from "../utils/mailer.js";
 
 const router = Router();
 const mustBeAdmin = [requireAuth, requireRole(["admin", "Admin"])];
@@ -300,12 +302,10 @@ router.get("/services", mustBeAdmin, (req, res) => {
       SELECT 
         s.${SRV_ID} AS id, 
         s.${SRV_NAME} AS name,
-        -- 1 si ya tiene supervisor asignado (sirve para "disabled" en el front)
         EXISTS (
           SELECT 1 FROM supervisor_services a
           WHERE CAST(a.ServicioID AS TEXT) = CAST(s.${SRV_ID} AS TEXT)
         ) AS is_assigned,
-        -- Supervisor asignado (si hay)
         (
           SELECT a.EmpleadoID
           FROM supervisor_services a
@@ -471,5 +471,77 @@ router.put("/service-budgets/:id", mustBeAdmin, (req, res) => {
   }
 });
 
-export default router;
+/* =========================
+   Emails por servicio
+   ========================= */
 
+// Lista agrupada de emails por servicio
+router.get("/service-emails", mustBeAdmin, (_req, res) => {
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS service_emails (service_id TEXT NOT NULL, email TEXT NOT NULL);`);
+    const rows = db.prepare(`
+      SELECT service_id AS serviceId, email
+      FROM service_emails
+      ORDER BY CAST(service_id AS TEXT), email
+    `).all();
+
+    const map = new Map();
+    for (const r of rows) {
+      const k = String(r.serviceId);
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(r.email);
+    }
+    const out = Array.from(map.entries()).map(([serviceId, emails]) => ({
+      serviceId,
+      serviceName: getServiceNameById(serviceId) || serviceId,
+      emails,
+    }));
+    return res.json(out);
+  } catch (e) {
+    return res.status(500).json({ error: "Error al listar emails por servicio" });
+  }
+});
+
+// Reemplaza todos los emails de un servicio
+router.put("/service-emails/:serviceId", mustBeAdmin, (req, res) => {
+  const serviceId = String(req.params.serviceId || "").trim();
+  const raw = String(req.body.emails || "").trim();
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS service_emails (service_id TEXT NOT NULL, email TEXT NOT NULL);`);
+    const list = raw
+      .split(/[,;]+/)
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    const del = db.prepare(`DELETE FROM service_emails WHERE CAST(service_id AS TEXT) = CAST(? AS TEXT)`);
+    del.run(serviceId);
+
+    const ins = db.prepare(`INSERT INTO service_emails (service_id, email) VALUES (?, ?)`);
+    for (const e of list) ins.run(serviceId, e);
+
+    return res.json({ ok: true, serviceId, count: list.length });
+  } catch (e) {
+    return res.status(500).json({ error: "Error al actualizar emails de servicio" });
+  }
+});
+
+// Envío de prueba (usa entityType permitido por el CHECK de email_log)
+router.post("/email/test", mustBeAdmin, async (req, res) => {
+  const to = String(req.body.to || "").trim() || undefined;
+  try {
+    const info = await sendMail({
+      to,
+      subject: "Prueba de correo - Kazaro",
+      text: "Esto es un mail de prueba del sistema Kazaro.",
+      html: "<p>Esto es un <strong>mail de prueba</strong> del sistema Kazaro.</p>",
+      entityType: "order",   // ✅ cumple el CHECK ('remito','order')
+      entityId: "email-test",
+      displayAsUser: false,
+    });
+    return res.json({ ok: true, info });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+export default router;

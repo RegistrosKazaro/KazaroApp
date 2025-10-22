@@ -117,7 +117,7 @@ router.post("/", requireAuth, async (req, res) => {
         const presupuesto = getBudgetByServiceId(sid);
         if (presupuesto && presupuesto > 0) {
           const pct = Math.min(100, (total / presupuesto) * 100);
-          presupuestoLinea = `\nPresupuesto usado: ${pct.toFixed(1)}%`;
+          presupuestoLinea = `\nUsado: ${pct.toFixed(1)}%`;
         }
       }
 
