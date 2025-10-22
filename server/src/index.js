@@ -5,8 +5,7 @@ import crypto from "crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 import { env } from "./utils/env.js";
-import { ensureStockColumn, DB_RESOLVED_PATH, db } from "./db.js";
-
+import { ensureStockColumn, ensureStockSyncTriggers, DB_RESOLVED_PATH, db } from "./db.js";
 // Rutas
 import authRoutes from "./routes/auth.js";
 import ordersRoutes from "./routes/orders.js";
@@ -70,7 +69,11 @@ app.use("/reports", reportsRoutes);
 // Healthcheck
 app.get("/_health", (_req, res) => res.json({ ok: true }));
 
+// 🔧 Inicializaciones de DB
 ensureStockColumn();
+ensureStockSyncTriggers();
+console.log(`[db] usando DB en: ${DB_RESOLVED_PATH}`);
+ensureStockSyncTriggers(); // 👈 crea/asegura triggers bidireccionales de stock
 
 app.listen(env.PORT, async () => {
   console.log(`[server] ${env.APP_BASE_URL} (${env.NODE_ENV})`);

@@ -507,6 +507,122 @@ export function productsMeta() {
   return { table: products, hasStock };
 }
 
+/* ============================
+   SINCRONIZACIÓN DE STOCK
+   ============================ */
+
+/** Detecta la tabla `Stock` y sus columnas clave. */
+function findStockTableSchema() {
+  try {
+    const t = db.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all()
+      .map(r => String(r.name))
+      .find(n => n.toLowerCase() === "stock");
+    if (!t) return null;
+
+    const info = tinfo(t);
+    const names = new Set(info.map(c => String(c.name).toLowerCase()));
+    const pickName = (arr) => {
+      for (const cand of arr) {
+        const c = String(cand).toLowerCase();
+        if (names.has(c)) {
+          const hit = info.find(x => String(x.name).toLowerCase() === c);
+          return hit?.name || cand;
+        }
+      }
+      return null;
+    };
+
+    const prodCol = pickName(["ProductoID","ProductID","producto_id","product_id","IdProducto","id_producto","Producto","producto"]);
+    const qtyCol  = pickName(["CantidadActual","Cantidad","Stock","cantidad_actual","cantidad","stock","Existencia","existencia"]);
+    if (!prodCol || !qtyCol) return null;
+
+    return { table: t, prodCol, qtyCol };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Crea triggers de SQLite para mantener sincronizados:
+ *   - Productos.<Stock>  <->  Stock.(CantidadActual/Cantidad/Stock)
+ * Incluye un seed inicial desde Productos -> Stock.
+ */
+export function ensureStockSyncTriggers() {
+  try {
+    const sch = discoverCatalogSchema();
+    if (!sch?.ok) return;
+    const { products } = sch.tables;
+    const { prodId, prodStock } = sch.cols;
+
+    if (!prodId || !prodStock) {
+      // Si no hay columna de stock en productos, no hay nada que sincronizar
+      return;
+    }
+
+    const stock = findStockTableSchema();
+    if (!stock) return;
+
+    const { table: stockTbl, prodCol: stockProd, qtyCol: stockQty } = stock;
+
+    // Asegura conflict target para UPSERT
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_${stockTbl}_${stockProd}
+      ON ${stockTbl} (${stockProd});
+    `);
+
+    // Triggers desde Productos -> Stock
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS trg_${products}_upd_stock
+      AFTER UPDATE OF ${prodStock} ON ${products}
+      BEGIN
+        INSERT INTO ${stockTbl}(${stockProd}, ${stockQty})
+        VALUES (NEW.${prodId}, COALESCE(NEW.${prodStock},0))
+        ON CONFLICT(${stockProd}) DO UPDATE SET ${stockQty} = excluded.${stockQty};
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_${products}_ins_stock
+      AFTER INSERT ON ${products}
+      BEGIN
+        INSERT INTO ${stockTbl}(${stockProd}, ${stockQty})
+        VALUES (NEW.${prodId}, COALESCE(NEW.${prodStock},0))
+        ON CONFLICT(${stockProd}) DO UPDATE SET ${stockQty} = excluded.${stockQty};
+      END;
+    `);
+
+    // Triggers desde Stock -> Productos
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS trg_${stockTbl}_upd_prod
+      AFTER UPDATE OF ${stockQty} ON ${stockTbl}
+      BEGIN
+        UPDATE ${products}
+        SET ${prodStock} = COALESCE(NEW.${stockQty},0)
+        WHERE CAST(${prodId} AS TEXT) = CAST(NEW.${stockProd} AS TEXT);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_${stockTbl}_ins_prod
+      AFTER INSERT ON ${stockTbl}
+      BEGIN
+        UPDATE ${products}
+        SET ${prodStock} = COALESCE(NEW.${stockQty},0)
+        WHERE CAST(${prodId} AS TEXT) = CAST(NEW.${stockProd} AS TEXT);
+      END;
+    `);
+
+    // Sincronización inicial: prioriza el valor presente en Productos
+    db.exec(`
+      INSERT INTO ${stockTbl}(${stockProd}, ${stockQty})
+      SELECT ${prodId}, COALESCE(${prodStock},0) FROM ${products}
+      ON CONFLICT(${stockProd}) DO UPDATE SET ${stockQty} = excluded.${stockQty};
+    `);
+
+    console.log("[db] Triggers de sincronización de stock creados entre", products, "y", stockTbl);
+  } catch (e) {
+    console.error("[db] ensureStockSyncTriggers error:", e?.message || e);
+  }
+}
+
+/* ====== ORDENES, SERVICIOS, PRESUPUESTOS, ETC. (sin cambios) ====== */
+
 function ensureOrdersSchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS Pedidos (
