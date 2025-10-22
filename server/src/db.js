@@ -1,3 +1,4 @@
+// server/src/db.js
 import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
@@ -6,6 +7,7 @@ import { env } from "./utils/env.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/* ===================== util paths ===================== */
 function uniq(list) {
   const seen = new Set();
   const out = [];
@@ -15,9 +17,10 @@ function uniq(list) {
   }
   return out;
 }
-
 function resolveDbPath() {
-  const inEnv = env.DB_PATH ? (path.isAbsolute(env.DB_PATH) ? env.DB_PATH : path.resolve(process.cwd(), env.DB_PATH)) : null;
+  const inEnv = env.DB_PATH
+    ? (path.isAbsolute(env.DB_PATH) ? env.DB_PATH : path.resolve(process.cwd(), env.DB_PATH))
+    : null;
 
   const candidates = uniq([
     inEnv,
@@ -35,7 +38,6 @@ function resolveDbPath() {
   for (const p of candidates) {
     try { if (fs.existsSync(p)) return p; } catch {}
   }
-
   return inEnv || path.resolve(process.cwd(), "Kazaro.db");
 }
 
@@ -47,6 +49,7 @@ try { db.pragma("foreign_keys = ON"); } catch {}
 try { db.pragma("journal_mode = WAL"); } catch {}
 try { db.pragma("busy_timeout = 5000"); } catch {}
 
+/* ===================== util sql helpers ===================== */
 function norm(s) {
   return String(s ?? "")
     .normalize("NFD")
@@ -93,6 +96,7 @@ export function pick(info, regex, fallback = null) {
   return hit ? hit.name : fallback;
 }
 
+/* ===================== usuarios / roles ===================== */
 const empInfo = tinfo("Empleados");
 const empleadoIdCol =
   (empInfo.find(c => c.pk === 1)?.name) ||
@@ -146,19 +150,11 @@ export function getUserForLogin(userOrEmailInput) {
   `;
   return db.prepare(sql).get(...params);
 }
-
 export function getUserByUsername(username) {
   const u = getUserForLogin(username);
   if (!u) return null;
-  return {
-    id: u.id,
-    username: u.username,
-    email: u.email,
-    password_hash: u.password_hash,
-    is_active: u.is_active
-  };
+  return { id: u.id, username: u.username, email: u.email, password_hash: u.password_hash, is_active: u.is_active };
 }
-
 export function getUserById(id) {
   try {
     const eInfo = tinfo("Empleados");
@@ -189,7 +185,6 @@ export function getUserById(id) {
     return null;
   }
 }
-
 export function getUserRoles(userId) {
   if (!tableExists("Roles_Empleados") || !tableExists("Roles")) return [];
   return db.prepare(`
@@ -199,7 +194,6 @@ export function getUserRoles(userId) {
     WHERE re.${reEmpleadoIdCol} = ?
   `).all(userId).map(r => r.role);
 }
-
 export function getRoleNameForEmployee(userId) {
   const roles = getUserRoles(userId);
   const pref = ["supervisor","Supervisor","administrativo","Administrativo"];
@@ -207,6 +201,7 @@ export function getRoleNameForEmployee(userId) {
   return hit || roles[0] || null;
 }
 
+/* ===================== catálogo productos ===================== */
 const NAME_CANDIDATES  = ["Nombre","NombreProducto","Nombre_Producto","Descripcion","Detalle","Producto","Titulo","title","name","descripcion"];
 const CODE_CANDIDATES  = ["Codigo","CodigoProducto","Codigo_Producto","SKU","sku","codigo","code","Code"];
 const PRICE_CANDIDATES = ["Precio","precio","Price","Costo","costo","importe","Valor","valor"];
@@ -258,8 +253,7 @@ function findCategoryTableFor(productsTable, prodCatCol) {
   const fk = fks.find(f => String(f.from).toLowerCase() === String(prodCatCol).toLowerCase());
   if (fk) {
     const info = tinfo(fk.table);
-    const catId   = fk.to || (info.find(c => c.pk === 1)?.name) ||
-                    pickCol(info, ["CategoriaID","IdCategoria","id","ID"]);
+    const catId   = fk.to || (info.find(c => c.pk === 1)?.name) || pickCol(info, ["CategoriaID","IdCategoria","id","ID"]);
     const catName = pickCol(info, CATNAME_CANDIDATES);
     if (catId && catName) return { table: fk.table, catId, catName, info };
   }
@@ -305,11 +299,11 @@ export function discoverCatalogSchema() {
     const anyText = pinfo.find(c => /TEXT/i.test(String(c.type)));
     prodName = anyText ? anyText.name : pinfo[0].name;
   }
-  const prodCat   = pickCol(pinfo, CAT_CANDIDATES);
+  const prodCat     = pickCol(pinfo, CAT_CANDIDATES);
   const prodCatName = pickCol(pinfo, CATNAME_CANDIDATES);
-  const prodCode  = pickCol(pinfo, CODE_CANDIDATES);
-  const prodPrice = pickCol(pinfo, PRICE_CANDIDATES);
-  const prodStock = pickCol(pinfo, STOCK_CANDIDATES);
+  const prodCode    = pickCol(pinfo, CODE_CANDIDATES);
+  const prodPrice   = pickCol(pinfo, PRICE_CANDIDATES);
+  const prodStock   = pickCol(pinfo, STOCK_CANDIDATES);
 
   let cat = null;
   if (prodCat) cat = findCategoryTableFor(products, prodCat) || chooseCategoryTable(products, prodCat);
@@ -325,6 +319,7 @@ export function discoverCatalogSchema() {
   };
 }
 
+/* ===================== visibilidad por rol ===================== */
 export function ensureVisibilitySchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS ProductRoleVisibility (
@@ -354,6 +349,7 @@ export function revokeVisibility(productId, roleName) {
   `).run(productId, role);
 }
 
+/* ===================== categorías ===================== */
 export function listCategories() {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
@@ -389,6 +385,7 @@ export function listCategories() {
   return [{ id: "__all__", name: "Todos", count: total }];
 }
 
+/* ===================== productos (SOLO Productos) ===================== */
 export function listProductsByCategory(categoryId, { q = "", serviceId = null, role = null, roles = null } = {}) {
   ensureVisibilitySchema();
 
@@ -401,6 +398,9 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
   const hasPrice = !!prodPrice;
   const hasStock = !!prodStock;
 
+  const stockExpr = hasStock ? `COALESCE(p.${prodStock}, 0) AS stock` : `NULL AS stock`;
+
+  // pivot services (opcional)
   let pivot = null;
   try {
     const spTbl = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='service_products' LIMIT 1`).get();
@@ -419,7 +419,7 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
     prodCat ? `p.${prodCat}  AS categoryId` : (prodCatName ? `p.${prodCatName} AS categoryId` : `'__all__' AS categoryId`),
     hasCode  ? `p.${prodCode}  AS code`  : `' ' AS code`,
     hasPrice ? `p.${prodPrice} AS price` : `NULL AS price`,
-    hasStock ? `p.${prodStock} AS stock` : `NULL AS stock`,
+    stockExpr,
   ].join(", ");
 
   const normRoles = []
@@ -507,122 +507,13 @@ export function productsMeta() {
   return { table: products, hasStock };
 }
 
-/* ============================
-   SINCRONIZACIÓN DE STOCK
-   ============================ */
-
-/** Detecta la tabla `Stock` y sus columnas clave. */
-function findStockTableSchema() {
-  try {
-    const t = db.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all()
-      .map(r => String(r.name))
-      .find(n => n.toLowerCase() === "stock");
-    if (!t) return null;
-
-    const info = tinfo(t);
-    const names = new Set(info.map(c => String(c.name).toLowerCase()));
-    const pickName = (arr) => {
-      for (const cand of arr) {
-        const c = String(cand).toLowerCase();
-        if (names.has(c)) {
-          const hit = info.find(x => String(x.name).toLowerCase() === c);
-          return hit?.name || cand;
-        }
-      }
-      return null;
-    };
-
-    const prodCol = pickName(["ProductoID","ProductID","producto_id","product_id","IdProducto","id_producto","Producto","producto"]);
-    const qtyCol  = pickName(["CantidadActual","Cantidad","Stock","cantidad_actual","cantidad","stock","Existencia","existencia"]);
-    if (!prodCol || !qtyCol) return null;
-
-    return { table: t, prodCol, qtyCol };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Crea triggers de SQLite para mantener sincronizados:
- *   - Productos.<Stock>  <->  Stock.(CantidadActual/Cantidad/Stock)
- * Incluye un seed inicial desde Productos -> Stock.
- */
+/* ===================== triggers no-op ===================== */
+// Si index.js llama a ensureStockSyncTriggers(), no fallará.
 export function ensureStockSyncTriggers() {
-  try {
-    const sch = discoverCatalogSchema();
-    if (!sch?.ok) return;
-    const { products } = sch.tables;
-    const { prodId, prodStock } = sch.cols;
-
-    if (!prodId || !prodStock) {
-      // Si no hay columna de stock en productos, no hay nada que sincronizar
-      return;
-    }
-
-    const stock = findStockTableSchema();
-    if (!stock) return;
-
-    const { table: stockTbl, prodCol: stockProd, qtyCol: stockQty } = stock;
-
-    // Asegura conflict target para UPSERT
-    db.exec(`
-      CREATE UNIQUE INDEX IF NOT EXISTS ux_${stockTbl}_${stockProd}
-      ON ${stockTbl} (${stockProd});
-    `);
-
-    // Triggers desde Productos -> Stock
-    db.exec(`
-      CREATE TRIGGER IF NOT EXISTS trg_${products}_upd_stock
-      AFTER UPDATE OF ${prodStock} ON ${products}
-      BEGIN
-        INSERT INTO ${stockTbl}(${stockProd}, ${stockQty})
-        VALUES (NEW.${prodId}, COALESCE(NEW.${prodStock},0))
-        ON CONFLICT(${stockProd}) DO UPDATE SET ${stockQty} = excluded.${stockQty};
-      END;
-
-      CREATE TRIGGER IF NOT EXISTS trg_${products}_ins_stock
-      AFTER INSERT ON ${products}
-      BEGIN
-        INSERT INTO ${stockTbl}(${stockProd}, ${stockQty})
-        VALUES (NEW.${prodId}, COALESCE(NEW.${prodStock},0))
-        ON CONFLICT(${stockProd}) DO UPDATE SET ${stockQty} = excluded.${stockQty};
-      END;
-    `);
-
-    // Triggers desde Stock -> Productos
-    db.exec(`
-      CREATE TRIGGER IF NOT EXISTS trg_${stockTbl}_upd_prod
-      AFTER UPDATE OF ${stockQty} ON ${stockTbl}
-      BEGIN
-        UPDATE ${products}
-        SET ${prodStock} = COALESCE(NEW.${stockQty},0)
-        WHERE CAST(${prodId} AS TEXT) = CAST(NEW.${stockProd} AS TEXT);
-      END;
-
-      CREATE TRIGGER IF NOT EXISTS trg_${stockTbl}_ins_prod
-      AFTER INSERT ON ${stockTbl}
-      BEGIN
-        UPDATE ${products}
-        SET ${prodStock} = COALESCE(NEW.${stockQty},0)
-        WHERE CAST(${prodId} AS TEXT) = CAST(NEW.${stockProd} AS TEXT);
-      END;
-    `);
-
-    // Sincronización inicial: prioriza el valor presente en Productos
-    db.exec(`
-      INSERT INTO ${stockTbl}(${stockProd}, ${stockQty})
-      SELECT ${prodId}, COALESCE(${prodStock},0) FROM ${products}
-      ON CONFLICT(${stockProd}) DO UPDATE SET ${stockQty} = excluded.${stockQty};
-    `);
-
-    console.log("[db] Triggers de sincronización de stock creados entre", products, "y", stockTbl);
-  } catch (e) {
-    console.error("[db] ensureStockSyncTriggers error:", e?.message || e);
-  }
+  // intencionalmente vacío: no usamos tabla Stock ni UPSERTs
 }
 
-/* ====== ORDENES, SERVICIOS, PRESUPUESTOS, ETC. (sin cambios) ====== */
-
+/* ===================== pedidos / servicios ===================== */
 function ensureOrdersSchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS Pedidos (
@@ -654,17 +545,25 @@ export function getProductById(productId) {
   const sch = discoverCatalogSchema();
   if (!sch.ok) return null;
   const { products } = sch.tables;
-  const { prodId, prodName, prodPrice, prodCode } = sch.cols;
+  const { prodId, prodName, prodPrice, prodCode, prodStock } = sch.cols;
 
-  const cols = [
-    `${prodId} AS id`,
-    `${prodName} AS name`,
-    prodPrice ? `${prodPrice} AS Precio` : `NULL AS Precio`,
-    prodCode  ? `${prodCode}  AS Code`   : `NULL AS Code`,
-    `1 AS is_active`
-  ].join(", ");
+  const priceExpr = prodPrice ? `p.${prodPrice} AS Precio` : `NULL AS Precio`;
+  const codeExpr  = prodCode  ? `p.${prodCode}  AS Code`   : `NULL AS Code`;
+  const stockExpr = prodStock ? `COALESCE(p.${prodStock}, 0) AS stock` : `NULL AS stock`;
 
-  return db.prepare(`SELECT ${cols} FROM ${products} WHERE ${prodId} = ? LIMIT 1`).get(productId) || null;
+  const sql = `
+    SELECT
+      p.${prodId} AS id,
+      p.${prodName} AS name,
+      ${priceExpr},
+      ${codeExpr},
+      ${stockExpr},
+      1 AS is_active
+    FROM ${products} p
+    WHERE CAST(p.${prodId} AS TEXT) = CAST(? AS TEXT)
+    LIMIT 1
+  `;
+  return db.prepare(sql).get(productId) || null;
 }
 
 function resolveServicesTable() {
@@ -779,6 +678,7 @@ export function getFullOrder(pedidoId) {
   return { ...ped, items, user, servicio };
 }
 
+/* ===================== emails ===================== */
 export function getServiceEmails(serviceId) {
   if (!serviceId) return [];
   try {
@@ -810,6 +710,7 @@ export function logEmail({ entityType, entityId, to, subject, status, providerId
   }
 }
 
+/* ===================== asignación servicios ===================== */
 export function ensureSupervisorPivot() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS supervisor_services (
@@ -937,6 +838,7 @@ export function getServiceNameById(servicioId) {
   return row?.name || null;
 }
 
+/* ===================== presupuestos ===================== */
 export function ensureServiceBudgetTable() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS service_budget (
@@ -962,11 +864,17 @@ export function getBudgetByServiceId(servicioId) {
 }
 export function setBudgetForService(servicioId, presupuesto) {
   ensureServiceBudgetTable();
-  db.prepare(`
-    INSERT INTO service_budget(ServicioID, Presupuesto)
+  // upsert compatible con SQLite viejas
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO service_budget(ServicioID, Presupuesto)
     VALUES(CAST(? AS TEXT), ?)
-    ON CONFLICT(ServicioID) DO UPDATE SET Presupuesto = excluded.Presupuesto
   `).run(servicioId, Number(presupuesto));
+  if (insert.changes === 0) {
+    db.prepare(`
+      UPDATE service_budget SET Presupuesto = ?
+      WHERE CAST(ServicioID AS TEXT) = CAST(? AS TEXT)
+    `).run(Number(presupuesto), servicioId);
+  }
   return getBudgetByServiceId(servicioId);
 }
 export function listServiceBudgets() {
@@ -987,6 +895,7 @@ export function listServiceBudgets() {
   }
 }
 
+/* ===================== helpers UI ===================== */
 export function getEmployeeDisplayName(userId) {
   try {
     const row = db.prepare(`
@@ -1019,7 +928,6 @@ export function adminListCategoriesForSelect() {
       ORDER BY ${catName} COLLATE NOCASE
     `).all();
   }
-
   if (prodCatName) {
     return db.prepare(`
       SELECT TRIM(${prodCatName}) AS name, TRIM(${prodCatName}) AS id
@@ -1029,7 +937,6 @@ export function adminListCategoriesForSelect() {
       ORDER BY TRIM(${prodCatName}) COLLATE NOCASE
     `).all();
   }
-
   return [];
 }
 export function adminGetProductById(id) {
@@ -1039,16 +946,24 @@ export function adminGetProductById(id) {
   const { products } = sch.tables;
   const { prodId, prodName, prodPrice, prodStock, prodCode, prodCat, prodCatName } = sch.cols;
 
-  const cols = [
-    `${prodId} AS id`,
-    `${prodName} AS name`,
-    prodPrice ? `${prodPrice} AS price` : `NULL AS price`,
-    prodStock ? `${prodStock} AS stock` : `NULL AS stock`,
-    prodCode  ? `${prodCode} AS code`  : `NULL AS code`,
-    prodCat   ? `${prodCat} AS categoryId` : (prodCatName ? `${prodCatName} AS categoryName` : `NULL AS categoryName`),
-  ].join(", ");
+  const priceExpr = prodPrice ? `p.${prodPrice} AS price` : `NULL AS price`;
+  const codeExpr  = prodCode  ? `p.${prodCode}  AS code`  : `NULL AS code`;
+  const catExpr   = prodCat   ? `p.${prodCat}   AS categoryId` : (prodCatName ? `p.${prodCatName} AS categoryName` : `NULL AS categoryName`);
+  const stockExpr = prodStock ? `COALESCE(p.${prodStock}, 0) AS stock` : `NULL AS stock`;
 
-  return db.prepare(`SELECT ${cols} FROM ${products} WHERE ${prodId} = ? OR rowid = ? LIMIT 1`).get(id, id);
+  const sql = `
+    SELECT
+      p.${prodId}   AS id,
+      p.${prodName} AS name,
+      ${priceExpr},
+      ${stockExpr},
+      ${codeExpr},
+      ${catExpr}
+    FROM ${products} p
+    WHERE CAST(p.${prodId} AS TEXT) = CAST(? AS TEXT) OR rowid = ?
+    LIMIT 1
+  `;
+  return db.prepare(sql).get(id, id);
 }
 export function adminCreateProduct(fields = {}) {
   const sch = discoverCatalogSchema();
@@ -1100,7 +1015,6 @@ export function adminUpdateProduct(id, fields = {}) {
 
   if (fields.name != null && prodName)  { set.push(`${prodName} = ?`);  args.push(String(fields.name).trim()); }
   if (fields.price != null && prodPrice){ set.push(`${prodPrice} = ?`); args.push(Number(fields.price) || 0); }
-  if (fields.stock != null && prodStock){ set.push(`${prodStock} = ?`); args.push(Math.max(0, parseInt(fields.stock) || 0)); }
   if (fields.code  != null && prodCode) { set.push(`${prodCode}  = ?`); args.push(String(fields.code)); }
 
   if (prodCat && fields.categoryId !== undefined) {
@@ -1109,20 +1023,32 @@ export function adminUpdateProduct(id, fields = {}) {
     set.push(`${prodCatName} = ?`); args.push(String(fields.categoryName).trim());
   }
 
-  if (!set.length) {
-    return db.prepare(`SELECT * FROM ${products} WHERE ${prodId} = ? OR rowid = ?`).get(id, id) || null;
+  const wantsStock = fields.stock != null && !Number.isNaN(Number(fields.stock));
+  if (wantsStock && prodStock) {
+    set.push(`${prodStock} = ?`);
+    args.push(Math.max(0, parseInt(fields.stock, 10) || 0));
   }
 
-  db.prepare(`UPDATE ${products} SET ${set.join(", ")} WHERE ${prodId} = ? OR rowid = ?`).run(...args, id, id);
+  if (set.length) {
+    db.prepare(`UPDATE ${products} SET ${set.join(", ")} WHERE ${prodId} = ? OR rowid = ?`).run(...args, id, id);
+  }
 
-  const selCols = [
-    `${prodId} AS id`,
-    `${prodName} AS name`,
-    prodPrice ? `${prodPrice} AS price` : `NULL AS price`,
-    prodStock ? `${prodStock} AS stock` : `NULL AS stock`,
-    prodCode  ? `${prodCode} AS code`  : `NULL AS code`,
-    prodCat   ? `${prodCat} AS categoryId` : (prodCatName ? `${prodCatName} AS categoryName` : `NULL AS categoryName`),
-  ].join(", ");
+  const priceExpr = prodPrice ? `p.${prodPrice} AS price` : `NULL AS price`;
+  const codeExpr  = prodCode  ? `p.${prodCode}  AS code`  : `NULL AS code`;
+  const catExpr   = prodCat   ? `p.${prodCat}   AS categoryId` : (prodCatName ? `p.${prodCatName} AS categoryName` : `NULL AS categoryName`);
+  const stockExpr = prodStock ? `COALESCE(p.${prodStock}, 0) AS stock` : `NULL AS stock`;
 
-  return db.prepare(`SELECT ${selCols} FROM ${products} WHERE ${prodId} = ? OR rowid = ?`).get(id, id);
+  const sql = `
+    SELECT
+      p.${prodId}   AS id,
+      p.${prodName} AS name,
+      ${priceExpr},
+      ${stockExpr},
+      ${codeExpr},
+      ${catExpr}
+    FROM ${products} p
+    WHERE CAST(p.${prodId} AS TEXT) = CAST(? AS TEXT) OR rowid = ?
+    LIMIT 1
+  `;
+  return db.prepare(sql).get(id, id);
 }
