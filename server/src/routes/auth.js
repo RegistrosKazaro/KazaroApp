@@ -20,6 +20,9 @@ function normalizeBool(v) {
   return !["0", "false", "no", "inactivo", "deshabilitado", "disabled"].includes(s);
 }
 
+// HTTPS detector (sirve para setear cookies correctamente)
+const IS_HTTPS = /^https:\/\//i.test(String(env.APP_BASE_URL || ""));
+
 async function verifyPassword(inputPassword, userRow) {
   const pass = String(inputPassword ?? "");
   const hash = String(userRow?.password_hash || "").trim();
@@ -62,12 +65,13 @@ function signJwt(userId) {
 function setSessionCookies(res, token) {
   const cookieOpts = {
     httpOnly: true,
-    sameSite: "lax",
-    secure: env.NODE_ENV === "production",
+    // En HTTPS (producción real) usamos sameSite none + secure
+    sameSite: IS_HTTPS ? "none" : "lax",
+    secure: IS_HTTPS,           // <- solo true en HTTPS; en localhost (HTTP) queda false
     maxAge: 12 * 60 * 60 * 1000,
     path: "/",
   };
-  // Compat: dejamos ambas cookies
+  // Compat: dejamos ambas cookies para cualquier cliente
   res.cookie("token", token, cookieOpts);
   res.cookie("sid", token, cookieOpts);
 }
@@ -86,8 +90,8 @@ function readSession(req) {
 /* ================= Rutas ================= */
 
 // Estado de sesión
-router.get("/me", (_req, res) => {
-  const sess = readSession(_req);
+router.get("/me", (req, res) => {
+  const sess = readSession(req);
   if (!sess?.uid) return res.status(401).json({ ok: false });
 
   const user = getUserById(sess.uid);
@@ -111,7 +115,9 @@ router.get("/me", (_req, res) => {
 // Login
 router.post("/login", async (req, res) => {
   try {
-    const username = (req.body?.username ?? req.body?.user ?? req.body?.email ?? "").trim();
+    const username = String(
+      req.body?.username ?? req.body?.user ?? req.body?.email ?? ""
+    ).trim();
     const password = String(req.body?.password ?? "");
 
     if (!username || !password) {
@@ -143,6 +149,8 @@ router.post("/login", async (req, res) => {
         roles,
         services,
       },
+      // útil en dev si querés usar Authorization: Bearer
+      devToken: env.NODE_ENV === "development" ? token : undefined,
     });
   } catch (e) {
     console.error("[auth/login] error:", e?.message || e);

@@ -13,10 +13,8 @@ import {
   getUserById,
   db,
 } from "../db.js";
-import { generateRemitoPDF } from "../utils/remitoPdf.js";
+import { generateRemitoPDFBuffer } from "../utils/remitoPdf.js"; // <— PDF en memoria
 import { sendMail } from "../utils/mailer.js";
-import path from "path";
-import fs from "fs";
 
 const router = Router();
 
@@ -97,20 +95,23 @@ router.post("/", requireAuth, async (req, res) => {
     const fechaLocal = fmtLocal(pedido.Fecha);
     const notaFinal  = String(nota || pedido.Nota || "—");
 
-    // Generar PDF con servicio/rol correctos
-    let pdfPath = null;
+    // ===== Generar PDF EN MEMORIA (sin tocar disco) =====
+    const pedidoParaPdf = {
+      ...pedido,
+      rol,
+      servicio: { id: sid || null, name: serviceName },
+    };
+    let filename = `remito_${nro}.pdf`;
+    let buffer = null;
     try {
-      const pedidoParaPdf = {
-        ...pedido,
-        rol,
-        servicio: { id: sid || null, name: serviceName },
-      };
-      pdfPath = await generateRemitoPDF({ pedido: pedidoParaPdf, outDir: path.resolve(process.cwd(), "tmp") });
+      const out = await generateRemitoPDFBuffer({ pedido: pedidoParaPdf });
+      filename = out.filename || filename;
+      buffer = out.buffer;
     } catch (e) {
-      console.warn("[orders] No se pudo generar PDF:", e?.message || e);
+      console.warn("[orders] No se pudo generar PDF en memoria:", e?.message || e);
     }
 
-    // Email
+    // ===== Email =====
     try {
       let presupuestoLinea = "";
       if (rol === "supervisor" && sid) {
@@ -150,12 +151,10 @@ ${presupuestoLinea ? `<p><strong>${presupuestoLinea.replace("\n", "")}</strong><
       const toArr = getServiceEmails(sid) || [];
       const to = toArr.length ? toArr.join(",") : undefined;
 
-      const attachments =
-        pdfPath && fs.existsSync(pdfPath)
-          ? [{ filename: path.basename(pdfPath), path: pdfPath, contentType: "application/pdf" }]
-          : undefined;
+      const attachments = buffer
+        ? [{ filename, content: buffer, contentType: "application/pdf" }]
+        : undefined;
 
-      // Mostrar usuario como remitente (nombre). Si su e-mail no está, va Reply-To si existe.
       await sendMail({
         to,
         subject,
@@ -194,9 +193,11 @@ router.get("/pdf/:id", requireAuth, async (req, res) => {
       rol: String(pedido.Rol || "").trim().toLowerCase(),
     };
 
-    const pdfPath = await generateRemitoPDF({ pedido: pedidoParaPdf, outDir: path.resolve(process.cwd(), "tmp") });
+    // Generar PDF en memoria y devolverlo
+    const { filename, buffer } = await generateRemitoPDFBuffer({ pedido: pedidoParaPdf });
     res.setHeader("Content-Type", "application/pdf");
-    return res.send(fs.readFileSync(pdfPath));
+    res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+    return res.send(buffer);
   } catch (e) {
     return res.status(500).json({ error: "No se pudo generar el PDF" });
   }

@@ -5,7 +5,14 @@ import crypto from "crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 import { env } from "./utils/env.js";
-import { ensureStockColumn, ensureStockSyncTriggers, DB_RESOLVED_PATH } from "./db.js";// Rutas
+import {
+  db, // ← NECESARIO para el conteo de empleados
+  ensureStockColumn,
+  ensureStockSyncTriggers,
+  DB_RESOLVED_PATH,
+} from "./db.js";
+
+// Rutas
 import authRoutes from "./routes/auth.js";
 import ordersRoutes from "./routes/orders.js";
 import adminRoutes from "./routes/admin.js";
@@ -76,9 +83,14 @@ console.log(`[db] usando DB en: ${DB_RESOLVED_PATH}`);
 app.listen(env.PORT, async () => {
   console.log(`[server] ${env.APP_BASE_URL} (${env.NODE_ENV})`);
   // ✔ verifica SMTP al arrancar (ayuda a detectar 535, puertos, etc.)
-  await verifyTransport();
+  try {
+    await verifyTransport();
+  } catch (e) {
+    console.warn("[mailer] verificación fallida:", e?.message || e);
+  }
 });
 
+// Guardas de proceso útiles en dev/prod
 process.on("unhandledRejection", (e) => {
   console.error("[unhandledRejection]", e?.message || e);
 });

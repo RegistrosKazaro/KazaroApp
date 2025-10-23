@@ -13,8 +13,8 @@ async function comparePassword(input, userRow) {
   // argon2
   if (hash.toLowerCase().startsWith("$argon2")) {
     try {
-      const argon2 = await import("argon2");
-      if (await argon2.default.verify(hash, pass)) return true;
+      const { default: argon2 } = await import("argon2");
+      if (await argon2.verify(hash, pass)) return true;
     } catch (e) {
       if (env.DEBUG_AUTH) console.error("[auth] argon2:", e?.message || e);
     }
@@ -24,8 +24,8 @@ async function comparePassword(input, userRow) {
   if (/^\$2[aby]\$/.test(hash)) {
     try {
       let bcrypt;
-      try { bcrypt = (await import("bcrypt")).default; }
-      catch { bcrypt = (await import("bcryptjs")).default; }
+      try { ({ default: bcrypt } = await import("bcrypt")); }
+      catch { ({ default: bcrypt } = await import("bcryptjs")); }
       if (await bcrypt.compare(pass, hash)) return true;
     } catch (e) {
       if (env.DEBUG_AUTH) console.error("[auth] bcrypt:", e?.message || e);
@@ -55,7 +55,7 @@ function signToken(userId) {
   return jwt.sign({ uid: Number(userId) }, env.JWT_SECRET || "dev-secret", { expiresIn: "12h" });
 }
 function readTokenFromReq(req) {
-  // Bearer
+  // Authorization: Bearer <token>
   const bearer = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   if (bearer) return bearer;
 
@@ -68,7 +68,7 @@ function readTokenFromReq(req) {
   return null;
 }
 
-/* ================== Login handler (para routes/auth.js) ================== */
+/* ================== Login handler (opcional si lo usás desde routes) ================== */
 export async function loginHandler(req, res) {
   try {
     const { user, username, email, password } = req.body || {};
@@ -95,6 +95,14 @@ export async function loginHandler(req, res) {
       sameSite: "lax",
       secure: env.NODE_ENV === "production",
       maxAge: 12 * 60 * 60 * 1000, // 12h
+      path: "/",
+    });
+    // Compat
+    res.cookie("sid", token, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: env.NODE_ENV === "production",
+      maxAge: 12 * 60 * 60 * 1000,
       path: "/",
     });
 
@@ -144,19 +152,24 @@ export function requireAuth(req, res, next) {
   }
 }
 
-/* ================== requireRole (admin ↔ administrativo) ================== */
-function normalizeRoleName(r) {
-  const s = String(r || "").trim().toLowerCase();
-  if (s === "admin" || s === "administrador") return "administrativo";
-  return s;
+/* ================== requireRole (sinónimos sin mezclar perfiles) ================== */
+function expandAllowed(allowed) {
+  const arr = Array.isArray(allowed) ? allowed : [allowed];
+  const set = new Set();
+  for (const r of arr) {
+    const s = String(r || "").trim().toLowerCase();
+    if (s === "admin" || s === "administrador") { set.add("admin"); set.add("administrador"); }
+    else set.add(s);
+  }
+  return Array.from(set);
 }
 export function requireRole(allowed) {
-  const allow = (Array.isArray(allowed) ? allowed : [allowed]).map(normalizeRoleName);
+  const allow = expandAllowed(allowed);
   return (req, res, next) => {
     try {
       if (!req.user?.id) return res.status(401).json({ ok: false });
       const roles = (req.user.roles?.length ? req.user.roles : getUserRoles(req.user.id) || [])
-        .map(normalizeRoleName);
+        .map((r) => String(r).toLowerCase());
       const ok = roles.some((r) => allow.includes(r));
       if (!ok) return res.status(403).json({ ok: false, error: "Sin permiso" });
       next();

@@ -17,11 +17,41 @@ function uniq(list) {
   }
   return out;
 }
+
+function hasWalShm(basePath) {
+  const dir = path.dirname(basePath);
+  const base = path.basename(basePath, ".db");
+  const wal = path.join(dir, `${base}.db-wal`);
+  const shm = path.join(dir, `${base}.db-shm`);
+  return fs.existsSync(wal) || fs.existsSync(shm);
+}
+
+// Si hay *.db-wal / *.db-shm en un directorio, devolvemos la ruta esperada del *.db
+function trySiblingDbFromWal(dir) {
+  try {
+    const entries = fs.readdirSync(dir).filter(f => /\.db-(wal|shm)$/i.test(f));
+    for (const e of entries) {
+      return path.join(dir, e.replace(/\.db-(wal|shm)$/i, ".db"));
+    }
+  } catch {}
+  return null;
+}
+
 function resolveDbPath() {
   const inEnv = env.DB_PATH
     ? (path.isAbsolute(env.DB_PATH) ? env.DB_PATH : path.resolve(process.cwd(), env.DB_PATH))
     : null;
 
+  // 1) Si env apunta a un archivo existente, usarlo
+  if (inEnv && fs.existsSync(inEnv)) return inEnv;
+
+  // 2) Si env apunta a un lugar donde hay WAL/SHM, usar la DB "hermana"
+  if (inEnv) {
+    const sib = trySiblingDbFromWal(path.dirname(inEnv));
+    if (sib) return sib;
+  }
+
+  // 3) Candidatos comunes
   const candidates = uniq([
     inEnv,
     path.resolve(process.cwd(), "Kazaro.db"),
@@ -38,13 +68,33 @@ function resolveDbPath() {
   for (const p of candidates) {
     try { if (fs.existsSync(p)) return p; } catch {}
   }
+
+  // 4) Si en server/ hay wal/shm, inferimos la DB ahí
+  const serverDir = path.resolve(__dirname, "..");
+  const sib = trySiblingDbFromWal(serverDir);
+  if (sib) return sib;
+
+  // 5) Último recurso: cwd/Kazaro.db
   return inEnv || path.resolve(process.cwd(), "Kazaro.db");
 }
 
 const dbPath = resolveDbPath();
 export const DB_RESOLVED_PATH = dbPath;
 
-export const db = new Database(dbPath, { fileMustExist: fs.existsSync(dbPath) });
+// Política: si definiste DB_PATH o si detectamos WAL/SHM, exigimos que exista el .db
+const mustExistBecauseEnv = !!env.DB_PATH;
+const mustExistBecauseWal = hasWalShm(dbPath);
+const fileMustExist = mustExistBecauseEnv || mustExistBecauseWal;
+
+if (fileMustExist && !fs.existsSync(dbPath)) {
+  console.error(`[db] No se encontró la base en: ${dbPath}`);
+  if (mustExistBecauseWal) {
+    console.error("[db] Detecté WAL/SHM, pero falta el archivo .db principal. Copiá tu Kazaro.db junto a esos .db-wal/.db-shm");
+  }
+  throw new Error("Base de datos ausente. Ajustá DB_PATH o copiá Kazaro.db al directorio correcto.");
+}
+
+export const db = new Database(dbPath, { fileMustExist });
 try { db.pragma("foreign_keys = ON"); } catch {}
 try { db.pragma("journal_mode = WAL"); } catch {}
 try { db.pragma("busy_timeout = 5000"); } catch {}
@@ -103,6 +153,9 @@ const empleadoIdCol =
   pickCol(empInfo, ["EmpleadosID","EmpleadoID","EmpleadoId","IdEmpleado","empleado_id","user_id","id","ID"]) ||
   "EmpleadosID";
 
+// Fallback de rol inline en Empleados (si no hay pivote)
+const empRolInlineCol = pickCol(empInfo, ["rol","Rol","role","Role"]);
+
 const reInfo = tinfo("Roles_Empleados");
 const reEmpleadoIdCol =
   pickCol(reInfo, ["EmpleadoID","EmpleadoId","IdEmpleado","empleado_id","user_id","id_empleado"]) || "EmpleadoID";
@@ -114,41 +167,45 @@ const rolesIdCol   = pickCol(rolesInfo, ["RolID","IdRol","rol_id","id_rol","id"]
 const rolesNameCol = pickCol(rolesInfo, ["Rol","Nombre","name","Descripcion","descripcion"]) || "Nombre";
 
 export function getUserForLogin(userOrEmailInput) {
-  if (!tableExists("Empleados")) return null;
-  const eInfo = tinfo("Empleados");
+  try {
+    if (!tableExists("Empleados")) return null;
+    const eInfo = tinfo("Empleados");
 
-  const idCol =
-    (eInfo.find(c => c.pk === 1)?.name) ||
-    pickCol(eInfo, ["EmpleadosID","EmpleadoID","IdEmpleado","empleado_id","user_id","id","ID"]) ||
-    "EmpleadosID";
+    const idCol =
+      (eInfo.find(c => c.pk === 1)?.name) ||
+      pickCol(eInfo, ["EmpleadosID","EmpleadoID","IdEmpleado","empleado_id","user_id","id","ID"]) ||
+      "EmpleadosID";
 
-  const userCol  = pickCol(eInfo, ["username","user","usuario","Usuario"]);
-  const emailCol = pickCol(eInfo, ["email","Email","correo","Correo"]);
+    const userCol  = pickCol(eInfo, ["username","user","usuario","Usuario"]);
+    const emailCol = pickCol(eInfo, ["email","Email","correo","Correo"]);
 
-  const hashCol   = pickCol(eInfo, ["password_hash","hash","pass_hash"]);
-  const plainCol  = pickCol(eInfo, ["password","contrasena","contraseña","clave","pass"]);
-  const activeCol = pickCol(eInfo, ["is_active","activo","Activo","enabled","estado"]);
+    const hashCol   = pickCol(eInfo, ["password_hash","hash","pass_hash","PasswordHash"]);
+    const plainCol  = pickCol(eInfo, ["password","contrasena","contraseña","clave","pass","Password"]);
+    const activeCol = pickCol(eInfo, ["is_active","activo","Activo","enabled","estado"]);
 
-  if (!userCol && !emailCol) return null;
+    if (!userCol && !emailCol) return null;
 
-  const whereParts = [];
-  const params = [];
-  if (userCol)  { whereParts.push(`LOWER(TRIM(${userCol})) = LOWER(TRIM(?))`);  params.push(userOrEmailInput); }
-  if (emailCol) { whereParts.push(`LOWER(TRIM(${emailCol})) = LOWER(TRIM(?))`); params.push(userOrEmailInput); }
+    const whereParts = [];
+    const params = [];
+    if (userCol)  { whereParts.push(`LOWER(TRIM(${userCol})) = LOWER(TRIM(?))`);  params.push(userOrEmailInput); }
+    if (emailCol) { whereParts.push(`LOWER(TRIM(${emailCol})) = LOWER(TRIM(?))`); params.push(userOrEmailInput); }
 
-  const sql = `
-    SELECT
-      ${idCol} AS id,
-      TRIM(COALESCE(${userCol || "NULL"}, ${emailCol || "NULL"})) AS username,
-      TRIM(${emailCol || "''"}) AS email,
-      ${hashCol   ? `TRIM(${hashCol})`   : "NULL"} AS password_hash,
-      ${plainCol  ? `TRIM(${plainCol})`  : "NULL"} AS password_plain,
-      ${activeCol ? activeCol : "1"}     AS is_active
-    FROM Empleados
-    WHERE ${whereParts.join(" OR ")}
-    LIMIT 1
-  `;
-  return db.prepare(sql).get(...params);
+    const sql = `
+      SELECT
+        ${idCol} AS id,
+        TRIM(COALESCE(${userCol || "NULL"}, ${emailCol || "NULL"})) AS username,
+        TRIM(${emailCol || "''"}) AS email,
+        ${hashCol   ? `TRIM(${hashCol})`   : "NULL"} AS password_hash,
+        ${plainCol  ? `TRIM(${plainCol})`  : "NULL"} AS password_plain,
+        ${activeCol ? activeCol : "1"}     AS is_active
+      FROM Empleados
+      WHERE ${whereParts.join(" OR ")}
+      LIMIT 1
+    `;
+    return db.prepare(sql).get(...params);
+  } catch {
+    return null;
+  }
 }
 export function getUserByUsername(username) {
   const u = getUserForLogin(username);
@@ -186,17 +243,27 @@ export function getUserById(id) {
   }
 }
 export function getUserRoles(userId) {
-  if (!tableExists("Roles_Empleados") || !tableExists("Roles")) return [];
-  return db.prepare(`
-    SELECT r.${rolesNameCol} AS role
-    FROM Roles_Empleados re
-    JOIN Roles r ON r.${rolesIdCol} = re.${reRolIdCol}
-    WHERE re.${reEmpleadoIdCol} = ?
-  `).all(userId).map(r => r.role);
+  try {
+    if (tableExists("Roles_Empleados") && tableExists("Roles")) {
+      const rows = db.prepare(`
+        SELECT r.${rolesNameCol} AS role
+        FROM Roles_Empleados re
+        JOIN Roles r ON r.${rolesIdCol} = re.${reRolIdCol}
+        WHERE re.${reEmpleadoIdCol} = ?
+      `).all(userId);
+      const roles = rows.map(r => r.role).filter(Boolean);
+      if (roles.length) return roles;
+    }
+    if (empRolInlineCol) {
+      const row = db.prepare(`SELECT ${empRolInlineCol} AS role FROM Empleados WHERE ${empleadoIdCol} = ?`).get(userId);
+      if (row?.role) return [String(row.role)];
+    }
+  } catch {}
+  return [];
 }
 export function getRoleNameForEmployee(userId) {
   const roles = getUserRoles(userId);
-  const pref = ["supervisor","Supervisor","administrativo","Administrativo"];
+  const pref = ["supervisor","Supervisor","administrativo","Administrativo","admin","Admin","administrador","Administrador"];
   const hit = roles.find(r => pref.includes(String(r)));
   return hit || roles[0] || null;
 }
@@ -864,7 +931,6 @@ export function getBudgetByServiceId(servicioId) {
 }
 export function setBudgetForService(servicioId, presupuesto) {
   ensureServiceBudgetTable();
-  // upsert compatible con SQLite viejas
   const insert = db.prepare(`
     INSERT OR IGNORE INTO service_budget(ServicioID, Presupuesto)
     VALUES(CAST(? AS TEXT), ?)

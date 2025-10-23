@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import PDFDocument from "pdfkit";
 import { getEmployeeDisplayName, getServiceNameById, db } from "../db.js";
-
+import { PassThrough } from "stream";
 /* ================= Helpers ================= */
 const pad7 = (n) => String(n ?? "").padStart(7, "0");
 const money = (n) => {
@@ -271,4 +271,49 @@ export async function generateRemitoPDF({ pedido, outDir = path.resolve(process.
     stream.on("error", reject);
   });
   return outPath;
+}
+export async function generateRemitoPDFBuffer({ pedido }) {
+  // --- mismas variables que usa generateRemitoPDF ---
+  const cab = pedido?.cab ? pedido.cab : pedido;
+  const itemsRaw = pedido?.items || [];
+  const pedidoId = cab?.PedidoID ?? cab?.id ?? 0;
+  const nro = pad7(pedidoId);
+
+  const empleado = getEmployeeDisplayName(cab?.EmpleadoID);
+  const servicioNombre = resolveServiceName(cab?.ServicioID, pedido?.servicio?.name || cab?.servicio?.name);
+  const fecha = fmtDateTime(cab?.Fecha);
+
+  const items = itemsRaw.map((it) => ({
+    code: it.codigo ?? it.code ?? "",
+    name: it.nombre ?? it.name ?? "",
+    qty: Number(it.cantidad ?? it.qty ?? 0),
+    price: Number(it.precio ?? it.price ?? 0),
+    subtotal: Number(it.subtotal ?? (Number(it.precio ?? it.price ?? 0) * Number(it.cantidad ?? it.qty ?? 0))),
+  }));
+  const total = items.reduce((a, b) => a + Number(b.subtotal || 0), 0);
+
+  // --- armamos el PDF con pdfkit igual que la versión a archivo, pero a buffer ---
+  const doc = new PDFDocument({ size: "A4", margin: 36 });
+  const chunks = [];
+  const passthrough = new PassThrough();
+
+  doc.pipe(passthrough);
+  passthrough.on("data", (c) => chunks.push(c));
+
+  const done = new Promise((resolve, reject) => {
+    passthrough.on("end", () => resolve(Buffer.concat(chunks)));
+    passthrough.on("error", reject);
+  });
+
+  // Reusar los mismos helpers del archivo: drawHeader, drawMeta, drawItemsTable, drawNote, drawFooter
+  let y = drawHeader(doc, nro, fecha, total);
+  y = drawMeta(doc, y, { empleado, rol: cab?.Rol, fecha, servicio: servicioNombre });
+  y = drawItemsTable(doc, y, items, total);
+  y = drawNote(doc, y + 4, cab?.Nota);
+  drawFooter(doc);
+
+  doc.end();
+  const buffer = await done;
+
+  return { filename: `remito_${nro}.pdf`, buffer };
 }

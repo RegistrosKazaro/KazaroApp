@@ -24,13 +24,20 @@ export default function Products() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  // helper para actualizar search params de forma segura (sin función en setSp)
+  const updateParams = (updater, options) => {
+    const next = new URLSearchParams(sp);
+    updater(next);
+    setSp(next, options);
+  };
+
   useEffect(() => {
     api.get("/catalog/categories")
       .then(({ data }) => {
         const list = data || [];
         setCats(list);
         if (!sp.get("cat") && list.length) {
-          setSp(prev => { prev.set("cat", list[0].id); return prev; }, { replace: true });
+          updateParams((next) => { next.set("cat", list[0].id); }, { replace: true });
         }
       })
       .catch(() => setError("No se pudieron cargar las categorías"));
@@ -82,15 +89,26 @@ export default function Products() {
 
   const onChangeCat = (e) => {
     const v = e.target.value;
-    setSp(prev => { prev.set("cat", v); prev.delete("q"); prev.set("page", "1"); return prev; }, { replace: true });
+    updateParams((next) => {
+      next.set("cat", v);
+      next.delete("q");
+      next.set("page", "1");
+    }, { replace: true });
   };
+
   const onSearch = (e) => {
     const v = e.target.value;
-    setSp(prev => { if (v) prev.set("q", v); else prev.delete("q"); prev.set("page","1"); return prev; }, { replace: true });
+    updateParams((next) => {
+      if (v) next.set("q", v); else next.delete("q");
+      next.set("page", "1");
+    }, { replace: true });
   };
+
   const goPage = (p) => {
-    const next = Math.min(Math.max(1, p), totalPages);
-    setSp(prev => { prev.set("page", String(next)); return prev; }, { replace: true });
+    const nextPage = Math.min(Math.max(1, p), totalPages);
+    updateParams((next) => {
+      next.set("page", String(nextPage));
+    }, { replace: true });
   };
 
   return (

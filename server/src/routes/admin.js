@@ -25,6 +25,10 @@ function prodSchemaOrThrow() {
   return sch;
 }
 
+/* =========================
+   Productos (catálogo admin)
+   ========================= */
+
 router.get("/products/_schema", mustBeAdmin, (_req, res) => {
   try {
     const sch = prodSchemaOrThrow();
@@ -245,6 +249,10 @@ router.patch("/products/:id/stock", mustBeAdmin, (req, res) => {
   }
 });
 
+/* =========================
+   Pedidos (admin)
+   ========================= */
+
 router.get("/orders", mustBeAdmin, (_req, res) => {
   try {
     const rows = db.prepare(`
@@ -281,6 +289,10 @@ router.put("/orders/:id/price", mustBeAdmin, (req, res) => {
     res.status(500).json({ error: "Error al actualizar total" });
   }
 });
+
+/* =========================
+   Supervisores y servicios
+   ========================= */
 
 const EMP_ID = "EmpleadosID";
 const EMP_NAME_EXPR = `
@@ -453,6 +465,10 @@ router.delete("/assignments/:id", mustBeAdmin, (req, res) => {
   }
 });
 
+/* =========================
+   Presupuestos por servicio
+   ========================= */
+
 router.get("/service-budgets", mustBeAdmin, (_req, res) => {
   try { res.json(listServiceBudgets()); }
   catch (e) { res.status(500).json({ error: "Error al listar presupuestos" }); }
@@ -475,11 +491,10 @@ router.put("/service-budgets/:id", mustBeAdmin, (req, res) => {
    Emails por servicio
    ========================= */
 
-// Lista agrupada de emails por servicio
 router.get("/service-emails", mustBeAdmin, (_req, res) => {
   try {
     db.exec(`CREATE TABLE IF NOT EXISTS service_emails (service_id TEXT NOT NULL, email TEXT NOT NULL);`);
-    const rows = db.prepare(`
+  const rows = db.prepare(`
       SELECT service_id AS serviceId, email
       FROM service_emails
       ORDER BY CAST(service_id AS TEXT), email
@@ -502,7 +517,6 @@ router.get("/service-emails", mustBeAdmin, (_req, res) => {
   }
 });
 
-// Reemplaza todos los emails de un servicio
 router.put("/service-emails/:serviceId", mustBeAdmin, (req, res) => {
   const serviceId = String(req.params.serviceId || "").trim();
   const raw = String(req.body.emails || "").trim();
@@ -525,7 +539,6 @@ router.put("/service-emails/:serviceId", mustBeAdmin, (req, res) => {
   }
 });
 
-// Envío de prueba (usa entityType permitido por el CHECK de email_log)
 router.post("/email/test", mustBeAdmin, async (req, res) => {
   const to = String(req.body.to || "").trim() || undefined;
   try {
@@ -534,13 +547,92 @@ router.post("/email/test", mustBeAdmin, async (req, res) => {
       subject: "Prueba de correo - Kazaro",
       text: "Esto es un mail de prueba del sistema Kazaro.",
       html: "<p>Esto es un <strong>mail de prueba</strong> del sistema Kazaro.</p>",
-      entityType: "order",   // ✅ cumple el CHECK ('remito','order')
+      entityType: "order",
       entityId: "email-test",
       displayAsUser: false,
     });
     return res.json({ ok: true, info });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+/* ======================================================
+   ⬇⬇⬇  NUEVO: endpoints que usa el front (evita 404)  ⬇⬇⬇
+   GET /admin/sp/assignments/:serviceId
+   PUT /admin/sp/assignments/:serviceId
+   ====================================================== */
+
+function detectSPCols() {
+  const t = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='service_products' LIMIT 1`).get();
+  if (!t) throw new Error("Falta la tabla pivot 'service_products'");
+
+  const cols = db.prepare(`PRAGMA table_info('service_products')`).all()
+                 .map(c => String(c.name).toLowerCase());
+  if (cols.includes("servicioid") && cols.includes("productoid")) return { srv: "ServicioID",  prod: "ProductoID"  };
+  if (cols.includes("servicio_id") && cols.includes("producto_id")) return { srv: "servicio_id", prod: "producto_id" };
+  if (cols.includes("service_id")   && cols.includes("product_id"))  return { srv: "service_id",  prod: "product_id"  };
+  throw new Error("No se reconocen columnas de 'service_products'");
+}
+
+router.get("/sp/assignments/:serviceId", mustBeAdmin, (req, res) => {
+  try {
+    const { srv, prod } = detectSPCols();
+    const sid = String(req.params.serviceId || "").trim();
+    if (!sid) return res.status(400).json({ error: "serviceId requerido" });
+
+    const rows = db.prepare(`
+      SELECT ${prod} AS pid
+      FROM service_products
+      WHERE CAST(${srv} AS TEXT) = CAST(? AS TEXT)
+    `).all(sid);
+
+    res.json({ ok: true, serviceId: sid, productIds: rows.map(r => String(r.pid)) });
+  } catch (e) {
+    console.error("GET /admin/sp/assignments error:", e?.message || e);
+    res.status(500).json({ error: "No se pudo leer asignaciones" });
+  }
+});
+
+router.put("/sp/assignments/:serviceId", mustBeAdmin, (req, res) => {
+  try {
+    const { srv, prod } = detectSPCols();
+    const sid = String(req.params.serviceId || "").trim();
+    const desired = new Set(
+      Array.isArray(req.body?.productIds) ? req.body.productIds.map(x => String(x)) : []
+    );
+    if (!sid) return res.status(400).json({ error: "serviceId requerido" });
+
+    const existing = new Set(
+      db.prepare(`
+        SELECT ${prod} AS pid
+        FROM service_products
+        WHERE CAST(${srv} AS TEXT) = CAST(? AS TEXT)
+      `).all(sid).map(r => String(r.pid))
+    );
+
+    const toAdd = [...desired].filter(id => !existing.has(id));
+    const toDel = [...existing].filter(id => !desired.has(id));
+
+    const ins = db.prepare(`INSERT INTO service_products (${srv}, ${prod}) VALUES (?, ?)`);
+    const del = db.prepare(`
+      DELETE FROM service_products
+      WHERE CAST(${srv} AS TEXT) = CAST(? AS TEXT)
+        AND CAST(${prod} AS TEXT) = CAST(? AS TEXT)
+    `);
+
+    const tx = db.transaction(() => {
+      let added = 0, removed = 0;
+      for (const pid of toAdd)   added  += ins.run(sid, pid).changes;
+      for (const pid of toDel)   removed+= del.run(sid, pid).changes;
+      return { added, removed };
+    });
+
+    const { added, removed } = tx();
+    res.json({ ok: true, serviceId: sid, added, removed });
+  } catch (e) {
+    console.error("PUT /admin/sp/assignments error:", e?.message || e);
+    res.status(500).json({ error: "No se pudieron actualizar las asignaciones" });
   }
 });
 

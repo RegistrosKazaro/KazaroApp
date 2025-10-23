@@ -1,6 +1,6 @@
 // client/src/pages/AdminPanel.jsx
 import { useEffect, useState, useRef, useCallback } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
 import "../styles/admin-panel.css";
@@ -516,7 +516,7 @@ function ServiceProductsSection() {
               ← Cambiar servicio
             </button>
             <div className="sp-service-pill">Servicio: <strong>{service?.name}</strong></div>
-            <div style={{ flex: 1 }} />
+                <div style={{ flex: 1 }} />
             <button className="btn primary" onClick={saveAll} disabled={saving}>
               {saving ? "Guardando…" : (saveOk ? "Guardado ✓" : "Guardar cambios")}
             </button>
@@ -645,8 +645,6 @@ export default function AdminPanel() {
         </button>
 
         <div style={{flex:1}} />
-        {/* Link corregido: relativo a /app/:role/admin → budgets */}
-       
       </div>
 
       {tab==="products" && <ProductsSection />}

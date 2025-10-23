@@ -25,9 +25,9 @@ export default function AuthProvider({ children }) {
   }, []);
 
   async function login(username, password) {
-    await ensureCsrf(); 
+    await ensureCsrf();
     const res = await api.post("/auth/login", { username, password });
-    const payload = res.data?.user || res.data; 
+    const payload = res.data?.user || res.data;
     setUser(payload);
     return payload;
   }
@@ -36,12 +36,16 @@ export default function AuthProvider({ children }) {
     try {
       await api.post("/auth/logout");
     } catch (e) {
-      void e;
+      // no rompemos el flujo si falla el logout del server
+      if (typeof console !== "undefined") console.warn("[logout] fallo en servidor:", e);
     }
-    localStorage.removeItem("cart");
-    localStorage.removeItem("selectedService");
-    window.dispatchEvent(new Event("app:logout"));
-
+    try {
+      localStorage.removeItem("cart");
+      localStorage.removeItem("selectedService");
+      window.dispatchEvent(new Event("app:logout"));
+    } catch (e) {
+      if (typeof console !== "undefined") console.warn("[logout] no se pudo limpiar storage:", e);
+    }
     setUser(null);
     window.location.replace("/login");
   }
