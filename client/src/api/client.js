@@ -1,4 +1,3 @@
-// client/src/api/client.js
 import axios from "axios";
 
 const BASE_URL =
@@ -7,7 +6,7 @@ const BASE_URL =
 
 export const api = axios.create({
   baseURL: BASE_URL,
-  withCredentials: true, 
+  withCredentials: true, // envía cookies (token/sid/csrf) en CORS
   headers: { "Content-Type": "application/json" },
 });
 
@@ -33,6 +32,7 @@ export async function ensureCsrf() {
   return fetchCsrf();
 }
 
+// Inyecta CSRF sólo en métodos inseguros
 api.interceptors.request.use(async (config) => {
   const method = (config.method || "get").toUpperCase();
   const unsafe = /^(POST|PUT|PATCH|DELETE)$/i.test(method);
@@ -53,17 +53,17 @@ api.interceptors.response.use(
     const unsafe = /^(POST|PUT|PATCH|DELETE)$/i.test(method);
     const notRetried = !error?.config?._csrfRetried;
 
+    // Si el server pidió CSRF y el token caducó, lo re-pedimos una vez y reintentamos
     if (status === 403 && unsafe && notRetried) {
       try {
         await ensureCsrf();
         const cfg = { ...error.config, _csrfRetried: true };
         cfg.headers = { ...(cfg.headers || {}), "X-CSRF-Token": _csrf };
         return api(cfg);
-      } catch (e) {
-        void e;
+      } catch {
+        // noop
       }
     }
     return Promise.reject(error);
   }
 );
-//

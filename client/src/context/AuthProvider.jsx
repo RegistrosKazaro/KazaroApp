@@ -6,12 +6,15 @@ export default function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Al montar, intenta restaurar sesión desde la cookie httpOnly (GET /auth/me)
   useEffect(() => {
     let alive = true;
     api
       .get("/auth/me")
       .then((res) => {
-        if (alive) setUser(res.data);
+        // /auth/me devuelve { ok: true, user: {...} }
+        const payload = res?.data?.user ?? res?.data ?? null;
+        if (alive) setUser(payload);
       })
       .catch(() => {
         if (alive) setUser(null);
@@ -24,10 +27,11 @@ export default function AuthProvider({ children }) {
     };
   }, []);
 
+  // Login normal: setea la cookie httpOnly + state de usuario
   async function login(username, password) {
     await ensureCsrf();
     const res = await api.post("/auth/login", { username, password });
-    const payload = res.data?.user || res.data;
+    const payload = res.data?.user || res.data || null;
     setUser(payload);
     return payload;
   }
@@ -36,7 +40,6 @@ export default function AuthProvider({ children }) {
     try {
       await api.post("/auth/logout");
     } catch (e) {
-      // no rompemos el flujo si falla el logout del server
       if (typeof console !== "undefined") console.warn("[logout] fallo en servidor:", e);
     }
     try {
