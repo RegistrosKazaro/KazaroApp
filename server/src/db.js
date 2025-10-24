@@ -267,6 +267,20 @@ export function getRoleNameForEmployee(userId) {
   const hit = roles.find(r => pref.includes(String(r)));
   return hit || roles[0] || null;
 }
+export function normalizeRoleName(role) {
+  if (!role) return null;
+  const r = String(role).trim().toLowerCase();
+  if (["administrativo", "administrador", "admin"].includes(r)) return "administrativo";
+  if (["supervisor"].includes(r)) return "supervisor";
+  return null;
+}
+
+export function userHasRole(userId, role) {
+  const target = normalizeRoleName(role);
+  if (!target) return false;
+  const roles = getUserRoles(userId).map(normalizeRoleName).filter(Boolean);
+  return roles.includes(target);
+}
 
 /* ===================== catálogo productos ===================== */
 const NAME_CANDIDATES  = ["Nombre","NombreProducto","Nombre_Producto","Descripcion","Detalle","Producto","Titulo","title","name","descripcion"];
@@ -607,7 +621,7 @@ function ensureOrdersSchema() {
 }
 ensureOrdersSchema();
 ensureVisibilitySchema();
-
+ensureServiceProductsPivot();
 export function getProductById(productId) {
   const sch = discoverCatalogSchema();
   if (!sch.ok) return null;
@@ -659,11 +673,20 @@ export function getServiceById(serviceId) {
   }
 }
 
-export function createOrder({ empleadoId, servicioId, nota, items }) {
+export function createOrder({ empleadoId, servicioId, nota, items, asRole = null }) {
   if (!empleadoId || !Array.isArray(items) || items.length === 0) {
     throw new Error("Datos de pedido inválidos");
   }
-  const rol = getRoleNameForEmployee(empleadoId) || "";
+
+  // Determinar el rol efectivo del pedido
+  let chosenRole = normalizeRoleName(asRole);
+  if (!chosenRole || !userHasRole(empleadoId, chosenRole)) {
+    // Si no enviaron asRole o no corresponde al usuario, caemos al rol por defecto
+    chosenRole = normalizeRoleName(getRoleNameForEmployee(empleadoId)) || "administrativo";
+  }
+
+  // Si es administrativo, no debe haber servicio asociado
+  const servicioIdForInsert = (chosenRole === "administrativo") ? null : (servicioId || null);
 
   const tx = db.transaction(() => {
     let total = 0;
@@ -678,7 +701,12 @@ export function createOrder({ empleadoId, servicioId, nota, items }) {
       INSERT INTO Pedidos (EmpleadoID, Rol, Nota, ServicioID, Total)
       VALUES (?, ?, ?, ?, 0)
     `);
-    const pedidoId = insPedido.run(empleadoId, String(rol), String(nota || ""), servicioId || null).lastInsertRowid;
+    const pedidoId = insPedido.run(
+      empleadoId,
+      String(chosenRole),
+      String(nota || ""),
+      servicioIdForInsert
+    ).lastInsertRowid;
 
     const insItem = db.prepare(`
       INSERT INTO PedidoItems (PedidoID, ProductoID, Nombre, Precio, Cantidad, Subtotal, Codigo)
@@ -711,7 +739,9 @@ export function createOrder({ empleadoId, servicioId, nota, items }) {
           WHERE ${prodId} = ? AND COALESCE(${prodStock},0) >= ?
         `).run(cantidad, pid, cantidad);
         if (upd.changes !== 1) {
-          const available = db.prepare(`SELECT COALESCE(${prodStock},0) AS stock FROM ${products} WHERE ${prodId} = ? LIMIT 1`).get(pid)?.stock ?? 0;
+          const available = db.prepare(
+            `SELECT COALESCE(${prodStock},0) AS stock FROM ${products} WHERE ${prodId} = ? LIMIT 1`
+          ).get(pid)?.stock ?? 0;
           throw new Error(available <= 0 ? `Sin stock: ${row.name}` : `Stock insuficiente: ${row.name} (máx ${available})`);
         }
       }
@@ -904,7 +934,87 @@ export function getServiceNameById(servicioId) {
   `).get(servicioId);
   return row?.name || null;
 }
+export function ensureServiceProductsPivot() {
+  try {
+    const exists = db.prepare(`
+      SELECT name FROM sqlite_master WHERE type='table' AND name='service_products' LIMIT 1
+    `).get();
 
+    if (!exists) {
+      // Si no existe, la creamos con el layout por defecto (ServicioID/ProductoID)
+      db.exec(`
+        CREATE TABLE service_products (
+          ServicioID  TEXT NOT NULL,
+          ProductoID  TEXT NOT NULL,
+          PRIMARY KEY (ServicioID, ProductoID)
+        );
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_sp_serv ON service_products(ServicioID);`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_sp_prod ON service_products(ProductoID);`);
+      return;
+    }
+
+    // Si ya existe, detectamos columnas reales y creamos índices con esos nombres
+    const det = detectSPCols();
+    if (det) {
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_sp_serv ON service_products(${det.srv});`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_sp_prod ON service_products(${det.prod});`);
+    } else {
+      console.warn("[db] service_products existe pero no se reconocen sus columnas; omitiendo creación de índices.");
+    }
+  } catch (e) {
+    console.error("[db] ensureServiceProductsPivot error:", e?.message || e);
+  }
+}
+
+/** Devuelve sólo los IDs de producto asignados a un servicio */
+export function listProductIdsForService(servicioId) {
+  ensureServiceProductsPivot();
+  const rows = db.prepare(`
+    SELECT ProductoID AS id
+    FROM service_products
+    WHERE CAST(ServicioID AS TEXT) = CAST(? AS TEXT)
+    ORDER BY CAST(ProductoID AS TEXT)
+  `).all(String(servicioId));
+  return rows.map(r => String(r.id));
+}
+
+/** Reemplaza TODAS las asignaciones de un servicio por la lista dada */
+export function replaceServiceProducts(servicioId, productIds = []) {
+  ensureServiceProductsPivot();
+  const tx = db.transaction(() => {
+    db.prepare(`DELETE FROM service_products WHERE CAST(ServicioID AS TEXT) = CAST(? AS TEXT)`)
+      .run(String(servicioId));
+    const ins = db.prepare(`INSERT OR IGNORE INTO service_products (ServicioID, ProductoID) VALUES (?, ?)`);
+    for (const pid of productIds) {
+      if (pid == null || pid === "") continue;
+      ins.run(String(servicioId), String(pid));
+    }
+  });
+  tx();
+  return listProductIdsForService(servicioId);
+}
+function detectSPCols() {
+  const t = db.prepare(`
+    SELECT name FROM sqlite_master WHERE type='table' AND name='service_products' LIMIT 1
+  `).get();
+  if (!t) return null;
+
+  const cols = db.prepare(`PRAGMA table_info('service_products')`).all()
+                 .map(c => String(c.name).toLowerCase());
+
+  if (cols.includes("servicioid") && cols.includes("productoid")) {
+    return { srv: "ServicioID",  prod: "ProductoID" };
+  }
+  if (cols.includes("servicio_id") && cols.includes("producto_id")) {
+    return { srv: "servicio_id", prod: "producto_id" };
+  }
+  if (cols.includes("service_id") && cols.includes("product_id")) {
+    return { srv: "service_id",  prod: "product_id" };
+  }
+  // Si no reconoce el layout, devolvemos null para no romper el server.
+  return null;
+}
 /* ===================== presupuestos ===================== */
 export function ensureServiceBudgetTable() {
   db.exec(`

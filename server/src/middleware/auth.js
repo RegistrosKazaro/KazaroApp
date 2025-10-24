@@ -68,7 +68,7 @@ function readTokenFromReq(req) {
   return null;
 }
 
-/* ================== Login handler (opcional si lo usás desde routes) ================== */
+/* ================== Login handler ================== */
 export async function loginHandler(req, res) {
   try {
     const { user, username, email, password } = req.body || {};

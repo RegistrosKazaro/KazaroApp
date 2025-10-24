@@ -13,7 +13,7 @@ import {
   getUserById,
   db,
 } from "../db.js";
-import { generateRemitoPDFBuffer } from "../utils/remitoPdf.js"; // <— PDF en memoria
+import { generateRemitoPDFBuffer } from "../utils/remitoPdf.js"; // PDF en memoria
 import { sendMail } from "../utils/mailer.js";
 
 const router = Router();
@@ -41,6 +41,12 @@ function primaryRole(userId) {
   if (roles.includes("administrativo") || roles.includes("admin")) return "administrativo";
   return roles[0] || "administrativo";
 }
+function normalizeRoleName(v) {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (s === "supervisor") return "supervisor";
+  if (s === "administrativo" || s === "admin") return "administrativo";
+  return null;
+}
 function resolveServiceName(servicioId, hintedName) {
   if (hintedName && String(hintedName).trim()) return String(hintedName).trim();
   const sid = String(servicioId ?? "").trim();
@@ -52,25 +58,40 @@ function resolveServiceName(servicioId, hintedName) {
 router.post("/", requireAuth, async (req, res) => {
   try {
     const empleadoId = req.user.id;
-    let { servicioId = null, nota = "", items, rol: rolFromClient } = req.body || {};
+
+    // del front puede venir asRole o rol
+    const asRoleClient = normalizeRoleName(req.body?.asRole ?? req.body?.rol);
+    const rolEfectivo = asRoleClient || primaryRole(empleadoId);
+
+    // payload base
+    let { servicioId = null, nota = "", items } = req.body || {};
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: "Faltan items" });
     }
 
-    // Si no vino servicioId y el usuario tiene exactamente 1 servicio, usarlo
-    if (servicioId == null || String(servicioId).trim() === "") {
-      const mios = listServicesByUser(empleadoId);
-      if (Array.isArray(mios) && mios.length === 1) servicioId = mios[0].id;
+    // Reglas por rol: supervisor requiere servicio; administrativo NO lleva servicio
+    if (rolEfectivo === "supervisor") {
+      // Si no vino servicioId, y el usuario tiene exactamente 1 asignado, usarlo
+      if (servicioId == null || String(servicioId).trim() === "") {
+        const mios = listServicesByUser(empleadoId);
+        if (Array.isArray(mios) && mios.length === 1) {
+          servicioId = mios[0].id;
+        }
+      }
+      // A esta altura, si sigue faltando, es error
+      if (servicioId == null || String(servicioId).trim() === "") {
+        return res.status(400).json({ error: "servicioId es requerido para pedidos de supervisor" });
+      }
+    } else {
+      // administrativo: forzar sin servicio
+      servicioId = null;
     }
 
     // Crear pedido
     const pedidoId = createOrder({ empleadoId, servicioId, nota, items });
 
-    // Si el front indicó rol explícito, lo fuerzo
-    if (rolFromClient && String(rolFromClient).trim()) {
-      db.prepare(`UPDATE Pedidos SET Rol = ? WHERE PedidoID = ?`)
-        .run(String(rolFromClient).trim(), Number(pedidoId));
-    }
+    // Guardar el rol explícitamente en la fila creada
+    db.prepare(`UPDATE Pedidos SET Rol = ? WHERE PedidoID = ?`).run(rolEfectivo, Number(pedidoId));
 
     // Leer el pedido persistido
     const pedido = getFullOrder(pedidoId);
@@ -79,17 +100,17 @@ router.post("/", requireAuth, async (req, res) => {
     // Datos base
     const nro = pad7(pedidoId);
     const empleadoNombre = getEmployeeDisplayName(empleadoId) || `Empleado ${empleadoId}`;
-    const usuario = pedido.user || getUserById(empleadoId); // incluye email si existe
-    const rolGuardado = String(pedido.Rol || "").trim().toLowerCase();
-    const rol = rolGuardado || (rolFromClient ? String(rolFromClient).trim().toLowerCase() : primaryRole(empleadoId));
+    const usuario = pedido.user || getUserById(empleadoId);
+    const rol = rolEfectivo; // ya normalizado y persistido
 
-    // Servicio
-    let sid = String(pedido.ServicioID ?? servicioId ?? "").trim();
-    if (!sid) {
-      const mios = listServicesByUser(empleadoId);
-      if (Array.isArray(mios) && mios.length === 1) sid = String(mios[0].id);
-    }
-    const serviceName = resolveServiceName(sid, pedido?.servicio?.name);
+    // Servicio (solo supervisor)
+    const sid = rol === "supervisor"
+      ? String(pedido.ServicioID ?? servicioId ?? "").trim()
+      : ""; // administrativo: vacío
+
+    const serviceName = rol === "supervisor"
+      ? resolveServiceName(sid, pedido?.servicio?.name)
+      : ""; // administrativo: no mostrar
 
     const total      = Number(pedido.Total || 0);
     const fechaLocal = fmtLocal(pedido.Fecha);
@@ -99,7 +120,8 @@ router.post("/", requireAuth, async (req, res) => {
     const pedidoParaPdf = {
       ...pedido,
       rol,
-      servicio: { id: sid || null, name: serviceName },
+      // administrativo: ocultar servicio completamente
+      servicio: rol === "supervisor" ? { id: sid || null, name: serviceName } : null,
     };
     let filename = `remito_${nro}.pdf`;
     let buffer = null;
@@ -122,9 +144,14 @@ router.post("/", requireAuth, async (req, res) => {
         }
       }
 
-      const subject = `NUEVO PEDIDO DE INSUMOS - "${serviceName}"`;
+      const subject =
+        rol === "supervisor"
+          ? `NUEVO PEDIDO DE INSUMOS - "${serviceName}"`
+          : `NUEVO PEDIDO DE INSUMOS - Administrativo`;
 
-      const text = `Se generó el pedido #${nro}.
+      const text =
+        rol === "supervisor"
+          ? `Se generó el pedido #${nro}.
 
 Empleado: ${empleadoNombre}
 Rol: ${rol}
@@ -133,9 +160,20 @@ Fecha: ${fechaLocal}
 Total: ${money(total)}
 Nota: ${notaFinal}${presupuestoLinea}
 
+Se adjunta PDF del remito.`
+          : `Se generó el pedido #${nro}.
+
+Empleado: ${empleadoNombre}
+Rol: ${rol}
+Fecha: ${fechaLocal}
+Total: ${money(total)}
+Nota: ${notaFinal}
+
 Se adjunta PDF del remito.`;
 
-      const html = `
+      const html =
+        rol === "supervisor"
+          ? `
 <p>Se generó el pedido <strong>#${nro}</strong>.</p>
 
 <p><strong>Empleado:</strong> ${empleadoNombre}<br/>
@@ -146,9 +184,20 @@ Se adjunta PDF del remito.`;
 <strong>Nota:</strong> ${notaFinal}</p>
 ${presupuestoLinea ? `<p><strong>${presupuestoLinea.replace("\n", "")}</strong></p>` : ""}
 <p>Se adjunta PDF del remito.</p>
+`.trim()
+          : `
+<p>Se generó el pedido <strong>#${nro}</strong>.</p>
+
+<p><strong>Empleado:</strong> ${empleadoNombre}<br/>
+<strong>Rol:</strong> ${rol}<br/>
+<strong>Fecha:</strong> ${fechaLocal}<br/>
+<strong>Total:</strong> ${money(total)}<br/>
+<strong>Nota:</strong> ${notaFinal}</p>
+<p>Se adjunta PDF del remito.</p>
 `.trim();
 
-      const toArr = getServiceEmails(sid) || [];
+      // Solo enviar a destinatarios del servicio si es supervisor
+      const toArr = rol === "supervisor" && sid ? (getServiceEmails(sid) || []) : [];
       const to = toArr.length ? toArr.join(",") : undefined;
 
       const attachments = buffer
@@ -173,7 +222,7 @@ ${presupuestoLinea ? `<p><strong>${presupuestoLinea.replace("\n", "")}</strong><
     }
 
     const pdfUrl = `/orders/pdf/${pedidoId}`;
-    return res.status(201).json({ ok: true, pedidoId, remito: { pdfUrl } });
+    return res.status(201).json({ ok: true, pedidoId, remito: { pdfUrl }, rol: rolEfectivo });
   } catch (e) {
     console.error("[orders] POST / error:", e);
     return res.status(500).json({ error: "Error interno" });
@@ -185,12 +234,16 @@ router.get("/pdf/:id", requireAuth, async (req, res) => {
   const pedido = getFullOrder(id);
   if (!pedido) return res.status(404).end();
   try {
-    const sid = String(pedido.ServicioID ?? "").trim();
-    const serviceName = resolveServiceName(sid, pedido?.servicio?.name);
+    const rol = String(pedido.Rol || "").trim().toLowerCase();
+
+    // Solo mostrar servicio si el pedido es de supervisor
+    const sid = rol === "supervisor" ? String(pedido.ServicioID ?? "").trim() : "";
+    const serviceName = rol === "supervisor" ? resolveServiceName(sid, pedido?.servicio?.name) : "";
+
     const pedidoParaPdf = {
       ...pedido,
-      servicio: { id: sid || null, name: serviceName },
-      rol: String(pedido.Rol || "").trim().toLowerCase(),
+      rol,
+      servicio: rol === "supervisor" ? { id: sid || null, name: serviceName } : null,
     };
 
     // Generar PDF en memoria y devolverlo

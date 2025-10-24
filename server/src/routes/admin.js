@@ -12,6 +12,7 @@ import {
   reassignServiceToSupervisor,
   unassignService,
   getServiceNameById,
+  ensureServiceProductsPivot,     // <— NUEVO
 } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendMail } from "../utils/mailer.js";
@@ -494,7 +495,7 @@ router.put("/service-budgets/:id", mustBeAdmin, (req, res) => {
 router.get("/service-emails", mustBeAdmin, (_req, res) => {
   try {
     db.exec(`CREATE TABLE IF NOT EXISTS service_emails (service_id TEXT NOT NULL, email TEXT NOT NULL);`);
-  const rows = db.prepare(`
+    const rows = db.prepare(`
       SELECT service_id AS serviceId, email
       FROM service_emails
       ORDER BY CAST(service_id AS TEXT), email
@@ -539,40 +540,18 @@ router.put("/service-emails/:serviceId", mustBeAdmin, (req, res) => {
   }
 });
 
-router.post("/email/test", mustBeAdmin, async (req, res) => {
-  const to = String(req.body.to || "").trim() || undefined;
-  try {
-    const info = await sendMail({
-      to,
-      subject: "Prueba de correo - Kazaro",
-      text: "Esto es un mail de prueba del sistema Kazaro.",
-      html: "<p>Esto es un <strong>mail de prueba</strong> del sistema Kazaro.</p>",
-      entityType: "order",
-      entityId: "email-test",
-      displayAsUser: false,
-    });
-    return res.json({ ok: true, info });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: e?.message || String(e) });
-  }
-});
-
 /* ======================================================
-   ⬇⬇⬇  NUEVO: endpoints que usa el front (evita 404)  ⬇⬇⬇
-   GET /admin/sp/assignments/:serviceId
-   PUT /admin/sp/assignments/:serviceId
+   Endpoints usados por el front para Servicio⇄Productos
    ====================================================== */
 
 function detectSPCols() {
-  const t = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='service_products' LIMIT 1`).get();
-  if (!t) throw new Error("Falta la tabla pivot 'service_products'");
-
-  const cols = db.prepare(`PRAGMA table_info('service_products')`).all()
-                 .map(c => String(c.name).toLowerCase());
+  ensureServiceProductsPivot(); // <— garantiza que exista con columnas esperadas
+  const cols = db.prepare(`PRAGMA table_info('service_products')`).all().map(c => String(c.name).toLowerCase());
   if (cols.includes("servicioid") && cols.includes("productoid")) return { srv: "ServicioID",  prod: "ProductoID"  };
   if (cols.includes("servicio_id") && cols.includes("producto_id")) return { srv: "servicio_id", prod: "producto_id" };
   if (cols.includes("service_id")   && cols.includes("product_id"))  return { srv: "service_id",  prod: "product_id"  };
-  throw new Error("No se reconocen columnas de 'service_products'");
+  // Fallback a los nombres creados por ensureServiceProductsPivot
+  return { srv: "ServicioID", prod: "ProductoID" };
 }
 
 router.get("/sp/assignments/:serviceId", mustBeAdmin, (req, res) => {
@@ -629,7 +608,7 @@ router.put("/sp/assignments/:serviceId", mustBeAdmin, (req, res) => {
     });
 
     const { added, removed } = tx();
-    res.json({ ok: true, serviceId: sid, added, removed });
+    res.json({ ok: true, serviceId: sid, added, removed, productIds: [...desired] });
   } catch (e) {
     console.error("PUT /admin/sp/assignments error:", e?.message || e);
     res.status(500).json({ error: "No se pudieron actualizar las asignaciones" });

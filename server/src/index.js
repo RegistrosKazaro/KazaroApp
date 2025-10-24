@@ -25,6 +25,9 @@ import reportsRoutes from "./routes/reports.js";
 // ✔ verificación SMTP
 import { verifyTransport } from "./utils/mailer.js";
 
+// 🔒 para /auth/me
+import { requireAuth } from "./middleware/auth.js";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
@@ -71,6 +74,15 @@ app.use("/services", servicesRoutes);
 app.use("/supervisor", supervisorRoutes);
 app.use("/service-products", serviceProductsRoutes);
 app.use("/reports", reportsRoutes);
+
+/* ========= NUEVO: restaurar sesión en recarga =========
+   El front debe llamar GET /auth/me con credentials: 'include'
+   Apenas monta la app (por ejemplo en App.jsx useEffect).
+======================================================== */
+app.get("/auth/me", requireAuth, (req, res) => {
+  // req.user viene desde requireAuth usando el token de la cookie
+  return res.json({ ok: true, user: req.user });
+});
 
 // Healthcheck
 app.get("/_health", (_req, res) => res.json({ ok: true }));
