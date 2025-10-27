@@ -1,12 +1,11 @@
 // client/src/pages/AdminPanel.jsx
 import { useEffect, useState, useRef, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
 import "../styles/admin-panel.css";
 import "../styles/a11y.css";
 
-// NUEVO: pestaña de reasignación masiva
 import MassReassignServicesSection from "./MassReassignServicesSection";
 
 /* =======================  PRODUCTS  ======================= */
@@ -476,11 +475,13 @@ function ServiceProductsSection() {
       setSaveOk(`${baseMsg} ✓ — asignados: ${afterIds.length} ( +${added} / -${removed} ) — ${stamp}`);
     } catch (e) {
       setSaveErr(e?.response?.data?.error || e.message || "No se pudieron guardar");
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const totalPages = Math.max(1, Math.ceil(allRows.length / PAGE_SIZE));
-  const canNext = page < totalPages;
+  const PAGE_TOTAL = Math.max(1, Math.ceil(allRows.length / PAGE_SIZE));
+  const canNext = page < PAGE_TOTAL;
   const prevPage = () => setPage(p => Math.max(1, p - 1));
   const nextPage = () => { if (canNext) setPage(p => p + 1); };
 
@@ -516,7 +517,7 @@ function ServiceProductsSection() {
               ← Cambiar servicio
             </button>
             <div className="sp-service-pill">Servicio: <strong>{service?.name}</strong></div>
-                <div style={{ flex: 1 }} />
+            <div style={{ flex: 1 }} />
             <button className="btn primary" onClick={saveAll} disabled={saving}>
               {saving ? "Guardando…" : (saveOk ? "Guardado ✓" : "Guardar cambios")}
             </button>
@@ -559,10 +560,163 @@ function ServiceProductsSection() {
           </div>
 
           <div className="toolbar" style={{ justifyContent: "space-between" }}>
-            <div className="hint">Página {page} / {totalPages}</div>
+            <div className="hint">Página {page} / {PAGE_TOTAL}</div>
             <div>
               <button className="btn" onClick={prevPage} disabled={page <= 1}>Anterior</button>
               <button className="btn" onClick={nextPage} disabled={!canNext} style={{ marginLeft: 8 }}>Siguiente</button>
+            </div>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+/* =======================  SERVICE BUDGETS  ======================= */
+/** NO resetea de página al guardar y persiste la página en URL y sessionStorage */
+function ServiceBudgetsSection() {
+  const PAGE_SIZE = 15;
+  const PAGE_KEY  = "admin:budgets:page";
+
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Página inicial desde URL (?bPage=) o sessionStorage, fallback 1
+  const initPage = (() => {
+    const fromUrl = Number(searchParams.get("bPage"));
+    if (Number.isFinite(fromUrl) && fromUrl > 0) return fromUrl;
+    const fromSS = Number(sessionStorage.getItem(PAGE_KEY));
+    return Number.isFinite(fromSS) && fromSS > 0 ? fromSS : 1;
+  })();
+
+  const [rows, setRows] = useState([]);        // [{id, name, budget}]
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const [page, setPage] = useState(initPage);
+  const [drafts, setDrafts] = useState({});    // id -> texto del input
+  const [savingIds, setSavingIds] = useState(new Set());
+
+  // Mantener URL y sessionStorage sincronizados con el estado de página
+  useEffect(() => {
+    sessionStorage.setItem(PAGE_KEY, String(page));
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      p.set("bPage", String(page));
+      return p;
+    }, { replace: true });
+  }, [page, setSearchParams]);
+
+  const load = useCallback(async () => {
+    setLoading(true); setErr("");
+    try {
+      const data = await api.get("/admin/service-budgets").then(r => r.data || []);
+      setRows(data); // IMPORTANTE: no tocamos 'page' aquí
+    } catch (e) {
+      setErr(e?.response?.data?.error || e.message || "Error al cargar presupuestos");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Derivados de paginado
+  const totalPages = Math.max(1, Math.ceil((rows.length || 0) / PAGE_SIZE));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const start = (safePage - 1) * PAGE_SIZE;
+  const current = rows.slice(start, start + PAGE_SIZE);
+
+  const updateDraft = (id, val) => setDrafts(d => ({ ...d, [id]: val }));
+
+  const saveOne = async (row, ev) => {
+    if (ev) { ev.preventDefault(); ev.stopPropagation(); } // evita submit/recargas
+
+    const raw = String(drafts[row.id] ?? row.budget ?? "").trim();
+    const normalized = raw.replace(/\./g, "").replace(/,/g, ".");
+    const parsed = Number(normalized);
+    const presupuesto = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+
+    setSavingIds(prev => new Set(prev).add(row.id));
+    try {
+      await api.put(`/admin/service-budgets/${row.id}`, { presupuesto });
+
+      // Actualizar solo esa fila en memoria (sin reload y sin tocar 'page')
+      setRows(prev => prev.map(it => it.id === row.id ? { ...it, budget: presupuesto } : it));
+
+      setDrafts(d => {
+        const next = { ...d };
+        delete next[row.id];
+        return next;
+      });
+      // Reafirmamos la página “segura” (no cambia visualmente, solo evita clamps accidentales)
+      setPage(p => Math.min(Math.max(1, p), Math.max(1, Math.ceil((prev => prev.length)(rows) / PAGE_SIZE))));
+    } catch (e) {
+      alert(e?.response?.data?.error || e.message || "No se pudo guardar");
+    } finally {
+      setSavingIds(prev => {
+        const n = new Set(prev);
+        n.delete(row.id);
+        return n;
+      });
+    }
+  };
+
+  const prevPage = () => setPage(p => Math.max(1, p - 1));
+  const nextPage = () => setPage(p => Math.min(totalPages, p + 1));
+
+  return (
+    <section className="card">
+      <h2>Presupuestos por servicio</h2>
+      {err && <div className="alert error">{err}</div>}
+
+      {loading ? (
+        <div className="state">Cargando…</div>
+      ) : (
+        <>
+          <div className="budget-list">
+            {current.map(row => {
+              const saving = savingIds.has(row.id);
+              const value = drafts[row.id] ?? (row.budget ?? "");
+              return (
+                <div key={row.id} className="budget-item">
+                  <div className="budget-title">
+                    <div className="budget-name">{row.name}</div>
+                    <div className="budget-id">ID: {row.id}</div>
+                  </div>
+                  <input
+                    className="input"
+                    type="text"
+                    inputMode="decimal"
+                    value={value}
+                    onChange={(e) => updateDraft(row.id, e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); saveOne(row); } }}
+                    aria-label={`Presupuesto para ${row.name}`}
+                  />
+                  <button
+                    className="btn primary"
+                    onClick={(e) => saveOne(row, e)}
+                    disabled={saving}
+                    type="button"
+                  >
+                    {saving ? "Guardando…" : "Guardar"}
+                  </button>
+                </div>
+              );
+            })}
+            {!current.length && <div className="hint">No hay servicios para mostrar.</div>}
+          </div>
+
+          <div className="toolbar" style={{ justifyContent: "space-between" }}>
+            <div className="hint">
+              Mostrando {start + 1}–{Math.min(start + PAGE_SIZE, rows.length)} de {rows.length} servicios
+            </div>
+            <div>
+              <button className="btn" onClick={() => setPage(1)} disabled={safePage === 1}>«</button>
+              <button className="btn" onClick={prevPage} disabled={safePage === 1} style={{ marginLeft: 8 }}>‹</button>
+              <span style={{ margin: "0 12px" }}>
+                Página <strong>{safePage}</strong> de <strong>{totalPages}</strong>
+              </span>
+              <button className="btn" onClick={nextPage} disabled={safePage === totalPages}>›</button>
+              <button className="btn" onClick={() => setPage(totalPages)} disabled={safePage === totalPages} style={{ marginLeft: 8 }}>»</button>
             </div>
           </div>
         </>
@@ -639,7 +793,7 @@ export default function AdminPanel() {
         <button className={`tab-btn ${tab==="services" ? "is-active" : ""}`} onClick={()=>setTab("services")} role="tab" aria-selected={tab==="services"}>Asignar servicios</button>
         <button className={`tab-btn ${tab==="serviceProducts" ? "is-active" : ""}`} onClick={()=>setTab("serviceProducts")} role="tab" aria-selected={tab==="serviceProducts"}>Servicio ↔ Productos</button>
 
-        {/* NUEVO: pestaña Reasignación masiva */}
+        {/* NO agrego pestañas extra aquí */}
         <button className={`tab-btn ${tab==="massReassign" ? "is-active" : ""}`} onClick={()=>setTab("massReassign")} role="tab" aria-selected={tab==="massReassign"}>
           Reasignación masiva
         </button>
@@ -650,6 +804,7 @@ export default function AdminPanel() {
       {tab==="products" && <ProductsSection />}
       {tab==="services" && <AssignServicesSection />}
       {tab==="serviceProducts" && <ServiceProductsSection />}
+      {tab==="budgets" && <ServiceBudgetsSection />}{/* si ya lo mostrabas con esta condición, queda igual */}
       {tab==="massReassign" && <MassReassignServicesSection />}
       {tab==="orders" && <OrdersSection />}
     </div>
