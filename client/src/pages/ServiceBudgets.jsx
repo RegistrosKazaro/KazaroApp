@@ -11,19 +11,19 @@ const PAGE_SIZE = 15;
 // Parseo flexible de dinero: acepta puntos y comas como separadores.
 // - Usa el ÚLTIMO (.,) como separador decimal, el resto se eliminan como miles.
 // - Soporta: "1.234,56" -> 1234.56 ; "1,234.56" -> 1234.56 ; "1000" -> 1000
-function parseMoneyFlexible(raw){
+function parseMoneyFlexible(raw) {
   if (raw == null) return NaN;
-  let s = String(raw).trim().replace(/\s+/g,"");
-  if (s=== "") return NaN;
+  let s = String(raw).trim().replace(/\s+/g, "");
+  if (s === "") return NaN;
 
-  s=s.replace(/[^\d.,-]/g,"");
+  s = s.replace(/[^\d.,-]/g, "");
 
-  const lastComma= s.lastIndexOf(",");
+  const lastComma = s.lastIndexOf(",");
   const lastDot = s.lastIndexOf(".");
   const last = Math.max(lastComma, lastDot);
 
-  if (last === -1){
-    s =s.replace(/[^\d-]/g,"");
+  if (last === -1) {
+    s = s.replace(/[^\d-]/g, "");
     return s ? Number(s) : NaN;
   }
 
@@ -47,11 +47,14 @@ export default function ServiceBudgets() {
     }
   }, [user, loading, nav]);
 
-  const [rows, setRows] = useState([]);
+  const [rows, setRows] = useState([]);          // [{id, name, budget}]
   const [q, setQ] = useState("");
   const [err, setErr] = useState("");
   const [savingId, setSavingId] = useState(null);
   const [status, setStatus] = useState("");
+
+  // drafts controlados por fila para no depender de recarga
+  const [drafts, setDrafts] = useState({});      // id -> string mostrado en input
 
   // Paginación
   const [page, setPage] = useState(1);
@@ -60,14 +63,15 @@ export default function ServiceBudgets() {
     try {
       const data = (await api.get("/admin/service-budgets")).data || [];
       setRows(data);
+      setDrafts({}); // limpiamos drafts al cargar
     } catch (e) {
       setErr(e?.response?.data?.error || e.message);
     }
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  // Resetear página al cambiar búsqueda o dataset
-  useEffect(() => { setPage(1); }, [q, rows]);
+  // Solo resetea a página 1 cuando cambia la búsqueda (NO cuando cambia rows)
+  useEffect(() => { setPage(1); }, [q]);
 
   const filtered = useMemo(() => {
     const k = q.trim().toLowerCase();
@@ -90,8 +94,20 @@ export default function ServiceBudgets() {
     try {
       const presupuesto = parseMoneyFlexible(valRaw);
       if (!Number.isFinite(presupuesto) || presupuesto < 0) throw new Error("Presupuesto inválido");
+
+      // Persistimos en server
       await api.put(`/admin/service-budgets/${id}`, { presupuesto });
-      await load();
+
+      // ✅ Actualizamos SOLO ese registro en memoria (no recargamos, no movemos la página)
+      setRows(prev => prev.map(r => (r.id === id ? { ...r, budget: presupuesto } : r)));
+
+      // Limpiamos el draft para que el input muestre el valor "oficial"
+      setDrafts(d => {
+        const nx = { ...d };
+        delete nx[id];
+        return nx;
+      });
+
       setStatus("Presupuesto guardado.");
     } catch (e) {
       setErr(e?.response?.data?.error || e.message);
@@ -148,7 +164,11 @@ export default function ServiceBudgets() {
         <div className="sb-tbody" role="rowgroup">
           {pageRows.map(r => {
             const inputId = `b-${r.id}`;
-            const defaultVal = (r.budget ?? "") === "" ? "" : String(r.budget).replace(".", ",");
+            const inputValue =
+              drafts[r.id] ??
+              (r.budget === null || r.budget === undefined || r.budget === ""
+                ? ""
+                : String(r.budget).replace(".", ","));
             return (
               <div key={r.id} className="sb-tr" role="row">
                 <div className="td" role="cell">
@@ -162,11 +182,13 @@ export default function ServiceBudgets() {
                     type="text"
                     inputMode="decimal"
                     placeholder="0,00"
-                    defaultValue={defaultVal}
+                    value={inputValue}
+                    onChange={(e) => setDrafts(d => ({ ...d, [r.id]: e.target.value }))}
                     className="sb-input sb-money mono"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
-                        onSave(r.id, e.currentTarget.value);
+                        e.preventDefault();
+                        onSave(r.id, inputValue);
                       }
                     }}
                   />
@@ -174,11 +196,11 @@ export default function ServiceBudgets() {
                 <div className="td" role="cell">
                   <button
                     className="sb-btn primary"
-                    onClick={() => onSave(r.id, document.getElementById(inputId).value)}
-                    disabled={savingId===r.id}
+                    onClick={() => onSave(r.id, inputValue)}
+                    disabled={savingId === r.id}
                     aria-label={`Guardar presupuesto de ${r.name}`}
                   >
-                    {savingId===r.id ? "Guardando…" : "Guardar"}
+                    {savingId === r.id ? "Guardando…" : "Guardar"}
                   </button>
                 </div>
               </div>
