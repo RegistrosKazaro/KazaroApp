@@ -18,6 +18,10 @@ function ProductsSection() {
   const [err, setErr] = useState("");
   const [statusMsg, setStatusMsg] = useState("");
 
+  // NUEVO: categorías para el selector
+  const [cats, setCats] = useState([]);
+  const [catsErr, setCatsErr] = useState("");
+
   const [stockEdit, setStockEdit] = useState({ id: null, value: "" });
 
   const nameRef = useRef(null);
@@ -38,6 +42,13 @@ function ProductsSection() {
   useEffect(() => { loadSchema(); }, [loadSchema]);
   useEffect(() => { loadRows(); }, [loadRows]);
 
+  // NUEVO: cargar categorías una sola vez
+  useEffect(() => {
+    api.get("/catalog/categories")
+      .then(({ data }) => setCats(Array.isArray(data) ? data : []))
+      .catch((e) => setCatsErr(e?.response?.data?.error || "No se pudieron cargar las categorías"));
+  }, []);
+
   const submit = async (e) => {
     e.preventDefault();
     setErr("");
@@ -48,7 +59,7 @@ function ProductsSection() {
           ...(can("prodPrice") ? { price: form.price === "" ? null : Number(form.price) } : {}),
           ...(can("prodStock") ? { stock: form.stock === "" ? null : Number(form.stock) } : {}),
           ...(can("prodCode")  ? { code:  form.code  } : {}),
-          ...(can("prodCat")   ? { catId: form.catId || null } : {}),
+          ...(can("prodCat")   ? { catId: form.catId || null } : {}), // <- categoría
         });
         setStatusMsg("Producto actualizado.");
       } else {
@@ -57,7 +68,7 @@ function ProductsSection() {
           ...(can("prodPrice") ? { price: form.price === "" ? null : Number(form.price) } : {}),
           ...(can("prodStock") ? { stock: form.stock === "" ? null : Number(form.stock) } : {}),
           ...(can("prodCode")  ? { code:  form.code  } : {}),
-          ...(can("prodCat")   ? { catId: form.catId || null } : {}),
+          ...(can("prodCat")   ? { catId: form.catId || null } : {}), // <- categoría
         });
         setStatusMsg("Producto creado.");
       }
@@ -77,7 +88,7 @@ function ProductsSection() {
       price: row.price ?? "",
       stock: row.stock ?? "",
       code: row.code ?? "",
-      catId: row.catId ?? "",
+      catId: row.catId ?? "", // <- precarga categoría si viene en el listado
     });
     setTimeout(() => nameRef.current?.focus(), 0);
   };
@@ -166,6 +177,25 @@ function ProductsSection() {
             </div>
           )}
 
+          {/* NUEVO: selector de categoría, visible solo si el esquema expone prodCat */}
+          {can("prodCat") && (
+            <div className="field">
+              <label htmlFor="prod-cat">Categoría</label>
+              <select
+                id="prod-cat"
+                className="input"
+                value={form.catId}
+                onChange={(e) => setForm({ ...form, catId: e.target.value })}
+              >
+                <option value="">-- Sin categoría --</option>
+                {cats.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+              {catsErr && <div className="hint error" role="alert">{catsErr}</div>}
+            </div>
+          )}
+
           {can("prodCode") && (
             <div className="field">
               <label htmlFor="prod-code">Código</label>
@@ -179,7 +209,11 @@ function ProductsSection() {
           <div className="buttons">
             <button className="btn primary" type="submit">{editing ? "Guardar cambios" : "Crear producto"}</button>
             {editing && (
-              <button className="btn" type="button" onClick={() => { setEditing(null); setForm({ name:"", price:"", stock:"", code:"", catId:"" }); }}>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => { setEditing(null); setForm({ name:"", price:"", stock:"", code:"", catId:"" }); }}
+              >
                 Cancelar
               </button>
             )}
@@ -226,15 +260,20 @@ function ProductsSection() {
                 ) : (
                   <div className="stock-inline">
                     <span className="stock-value">{r.stock ?? "-"}</span>
-                    <button className="btn xs" type="button" onClick={() => setStockEdit({ id: r.id, value: r.stock ?? 0 })} aria-label={`Editar stock de ${r.name}`}>
+                    <button
+                      className="btn xs"
+                      type="button"
+                      onClick={() => setStockEdit({ id: r.id, value: r.stock ?? 0 })}
+                      aria-label={`Editar stock de ${r.name}`}
+                    >
                       Editar stock
                     </button>
                   </div>
                 )}
               </div>
               <div className="actions" role="cell">
-                <button className="btn tonal" onClick={() => onEdit(r)} type="button" aria-label={`Editar ${r.name}`}>Editar</button>
-                <button className="btn danger" onClick={() => onDelete(r.id)} type="button" aria-label={`Eliminar ${r.name}`}>Eliminar</button>
+                <button className="btn small tonal" onClick={() => onEdit(r)} type="button" aria-label={`Editar ${r.name}`}>Editar</button>
+                <button className="btn small danger" onClick={() => onDelete(r.id)} type="button" aria-label={`Eliminar ${r.name}`}>Eliminar</button>
               </div>
             </div>
           ))}
@@ -580,7 +619,6 @@ function ServiceBudgetsSection() {
 
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Página inicial desde URL (?bPage=) o sessionStorage, fallback 1
   const initPage = (() => {
     const fromUrl = Number(searchParams.get("bPage"));
     if (Number.isFinite(fromUrl) && fromUrl > 0) return fromUrl;
@@ -595,7 +633,6 @@ function ServiceBudgetsSection() {
   const [drafts, setDrafts] = useState({});    // id -> texto del input
   const [savingIds, setSavingIds] = useState(new Set());
 
-  // Mantener URL y sessionStorage sincronizados con el estado de página
   useEffect(() => {
     sessionStorage.setItem(PAGE_KEY, String(page));
     setSearchParams(prev => {
@@ -609,7 +646,7 @@ function ServiceBudgetsSection() {
     setLoading(true); setErr("");
     try {
       const data = await api.get("/admin/service-budgets").then(r => r.data || []);
-      setRows(data); // IMPORTANTE: no tocamos 'page' aquí
+      setRows(data);
     } catch (e) {
       setErr(e?.response?.data?.error || e.message || "Error al cargar presupuestos");
     } finally {
@@ -619,7 +656,6 @@ function ServiceBudgetsSection() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Derivados de paginado
   const totalPages = Math.max(1, Math.ceil((rows.length || 0) / PAGE_SIZE));
   const safePage = Math.min(Math.max(1, page), totalPages);
   const start = (safePage - 1) * PAGE_SIZE;
@@ -628,7 +664,7 @@ function ServiceBudgetsSection() {
   const updateDraft = (id, val) => setDrafts(d => ({ ...d, [id]: val }));
 
   const saveOne = async (row, ev) => {
-    if (ev) { ev.preventDefault(); ev.stopPropagation(); } // evita submit/recargas
+    if (ev) { ev.preventDefault(); ev.stopPropagation(); }
 
     const raw = String(drafts[row.id] ?? row.budget ?? "").trim();
     const normalized = raw.replace(/\./g, "").replace(/,/g, ".");
@@ -639,24 +675,16 @@ function ServiceBudgetsSection() {
     try {
       await api.put(`/admin/service-budgets/${row.id}`, { presupuesto });
 
-      // Actualizar solo esa fila en memoria (sin reload y sin tocar 'page')
+      // actualizar solo esa fila
       setRows(prev => prev.map(it => it.id === row.id ? { ...it, budget: presupuesto } : it));
+      setDrafts(d => { const n = { ...d }; delete n[row.id]; return n; });
 
-      setDrafts(d => {
-        const next = { ...d };
-        delete next[row.id];
-        return next;
-      });
-      // Reafirmamos la página “segura” (no cambia visualmente, solo evita clamps accidentales)
-      setPage(p => Math.min(Math.max(1, p), Math.max(1, Math.ceil((prev => prev.length)(rows) / PAGE_SIZE))));
+      const totalPagesAfter = Math.max(1, Math.ceil((rows.length || 0) / PAGE_SIZE));
+      setPage(p => Math.min(Math.max(1, p), totalPagesAfter));
     } catch (e) {
       alert(e?.response?.data?.error || e.message || "No se pudo guardar");
     } finally {
-      setSavingIds(prev => {
-        const n = new Set(prev);
-        n.delete(row.id);
-        return n;
-      });
+      setSavingIds(prev => { const n = new Set(prev); n.delete(row.id); return n; });
     }
   };
 

@@ -8,9 +8,6 @@ import "../styles/a11y.css";
 
 const PAGE_SIZE = 15;
 
-// Parseo flexible de dinero: acepta puntos y comas como separadores.
-// - Usa el ÚLTIMO (.,) como separador decimal, el resto se eliminan como miles.
-// - Soporta: "1.234,56" -> 1234.56 ; "1,234.56" -> 1234.56 ; "1000" -> 1000
 function parseMoneyFlexible(raw) {
   if (raw == null) return NaN;
   let s = String(raw).trim().replace(/\s+/g, "");
@@ -47,14 +44,14 @@ export default function ServiceBudgets() {
     }
   }, [user, loading, nav]);
 
-  const [rows, setRows] = useState([]);          // [{id, name, budget}]
+  const [rows, setRows] = useState([]);          
   const [q, setQ] = useState("");
   const [err, setErr] = useState("");
   const [savingId, setSavingId] = useState(null);
   const [status, setStatus] = useState("");
 
   // drafts controlados por fila para no depender de recarga
-  const [drafts, setDrafts] = useState({});      // id -> string mostrado en input
+  const [drafts, setDrafts] = useState({});      
 
   // Paginación
   const [page, setPage] = useState(1);
@@ -63,14 +60,13 @@ export default function ServiceBudgets() {
     try {
       const data = (await api.get("/admin/service-budgets")).data || [];
       setRows(data);
-      setDrafts({}); // limpiamos drafts al cargar
+      setDrafts({}); 
     } catch (e) {
       setErr(e?.response?.data?.error || e.message);
     }
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  // Solo resetea a página 1 cuando cambia la búsqueda (NO cuando cambia rows)
   useEffect(() => { setPage(1); }, [q]);
 
   const filtered = useMemo(() => {
@@ -97,8 +93,6 @@ export default function ServiceBudgets() {
 
       // Persistimos en server
       await api.put(`/admin/service-budgets/${id}`, { presupuesto });
-
-      // ✅ Actualizamos SOLO ese registro en memoria (no recargamos, no movemos la página)
       setRows(prev => prev.map(r => (r.id === id ? { ...r, budget: presupuesto } : r)));
 
       // Limpiamos el draft para que el input muestre el valor "oficial"
@@ -116,7 +110,6 @@ export default function ServiceBudgets() {
     }
   };
 
-  // helpers pager
   const goFirst = () => setPage(1);
   const goPrev  = () => setPage(p => Math.max(1, p - 1));
   const goNext  = () => setPage(p => Math.min(totalPages, p + 1));
