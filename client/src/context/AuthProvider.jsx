@@ -12,7 +12,6 @@ export default function AuthProvider({ children }) {
     api
       .get("/auth/me")
       .then((res) => {
-        // /auth/me devuelve { ok: true, user: {...} }
         const payload = res?.data?.user ?? res?.data ?? null;
         if (alive) setUser(payload);
       })
