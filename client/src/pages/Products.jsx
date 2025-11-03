@@ -11,7 +11,6 @@ export default function Products() {
 
   // carrito + servicio seleccionado por el supervisor
   const { add, service, items: cartItems } = useCart();
-  // ⬇️ variable simple para deps del effect (evita expresión compleja y “missing dep”)
   const serviceId = service?.id ?? null;
 
   const cat = sp.get("cat");
@@ -32,12 +31,18 @@ export default function Products() {
   };
 
   useEffect(() => {
-    api.get("/catalog/categories")
+    api
+      .get("/catalog/categories")
       .then(({ data }) => {
         const list = data || [];
         setCats(list);
         if (!sp.get("cat") && list.length) {
-          updateParams((next) => { next.set("cat", list[0].id); }, { replace: true });
+          updateParams(
+            (next) => {
+              next.set("cat", list[0].id);
+            },
+            { replace: true }
+          );
         }
       })
       .catch(() => setError("No se pudieron cargar las categorías"));
@@ -49,7 +54,7 @@ export default function Products() {
 
     setError("");
 
-    // ⬇️ si es supervisor y aún no eligió servicio, no cargamos productos
+    // si es supervisor y aún no eligió servicio, no cargamos productos
     if (isSupervisor && !serviceId) {
       setItems([]);
       setLoading(false);
@@ -63,11 +68,12 @@ export default function Products() {
       ...(isSupervisor && serviceId ? { serviceId } : {}),
     };
 
-    api.get("/catalog/products", { params })
+    api
+      .get("/catalog/products", { params })
       .then(({ data }) => setItems(data || []))
       .catch(() => setError("No se pudieron cargar los productos"))
       .finally(() => setLoading(false));
-  }, [cat, q, isSupervisor, serviceId]); // ✅ deps simples y completas
+  }, [cat, q, isSupervisor, serviceId]); // deps simples y completas
 
   const paginated = useMemo(() => {
     const start = (page - 1) * pageSize;
@@ -89,26 +95,36 @@ export default function Products() {
 
   const onChangeCat = (e) => {
     const v = e.target.value;
-    updateParams((next) => {
-      next.set("cat", v);
-      next.delete("q");
-      next.set("page", "1");
-    }, { replace: true });
+    updateParams(
+      (next) => {
+        next.set("cat", v);
+        next.delete("q");
+        next.set("page", "1");
+      },
+      { replace: true }
+    );
   };
 
   const onSearch = (e) => {
     const v = e.target.value;
-    updateParams((next) => {
-      if (v) next.set("q", v); else next.delete("q");
-      next.set("page", "1");
-    }, { replace: true });
+    updateParams(
+      (next) => {
+        if (v) next.set("q", v);
+        else next.delete("q");
+        next.set("page", "1");
+      },
+      { replace: true }
+    );
   };
 
   const goPage = (p) => {
     const nextPage = Math.min(Math.max(1, p), totalPages);
-    updateParams((next) => {
-      next.set("page", String(nextPage));
-    }, { replace: true });
+    updateParams(
+      (next) => {
+        next.set("page", String(nextPage));
+      },
+      { replace: true }
+    );
   };
 
   return (
@@ -116,8 +132,17 @@ export default function Products() {
       <h2 id="cat-title">Productos</h2>
 
       <div className="catalog-toolbar">
-        <select className="select" value={cat || ""} onChange={onChangeCat} aria-label="Categoría">
-          {cats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        <select
+          className="select"
+          value={cat || ""}
+          onChange={onChangeCat}
+          aria-label="Categoría"
+        >
+          {cats.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
         </select>
 
         <input
@@ -131,23 +156,40 @@ export default function Products() {
 
       {isSupervisor && !serviceId && (
         <div className="state" style={{ marginBottom: 12 }}>
-          Elegí un servicio antes de agregar productos (Menú → Supervisor → Servicios).
+          Elegí un servicio antes de agregar productos (Menú → Supervisor →
+          Servicios).
         </div>
       )}
 
       {loading && <div className="state">Cargando…</div>}
-      {!loading && error && <div className="state error" role="alert">{error}</div>}
-      {!loading && !error && !items.length && !(isSupervisor && !serviceId) && (
-        <div className="state">No hay productos.</div>
+      {!loading && error && (
+        <div className="state error" role="alert">
+          {error}
+        </div>
       )}
+      {!loading &&
+        !error &&
+        !items.length &&
+        !(isSupervisor && !serviceId) && (
+          <div className="state">No hay productos.</div>
+        )}
 
       {!loading && !error && items.length > 0 && (
         <>
           <div className="product-grid">
-            {paginated.map(p => {
-              const totalStock = Number.isFinite(Number(p.stock)) ? Number(p.stock) : undefined;
+            {paginated.map((p) => {
+              const totalStock = Number.isFinite(Number(p.stock))
+                ? Number(p.stock)
+                : undefined;
+              const incoming = Number.isFinite(Number(p.incoming))
+                ? Number(p.incoming)
+                : 0;
+
               const reserved = reservedById.get(Number(p.id)) || 0;
-              const remaining = totalStock !== undefined ? Math.max(0, totalStock - reserved) : undefined;
+              const remaining =
+                totalStock !== undefined
+                  ? Math.max(0, totalStock - reserved)
+                  : undefined;
 
               return (
                 <ProductCard
@@ -155,21 +197,63 @@ export default function Products() {
                   p={p}
                   remainingStock={remaining}
                   onAdd={(qty) => {
-                    const limit = remaining ?? Infinity;
+                    const available = totalStock ?? 0;
+                    const inc = incoming;
+                    let limit;
+
+                    if (available > 0) {
+                      // venta normal: hasta el stock restante (ya descontando lo reservado en el carrito)
+                      limit = remaining ?? available;
+                    } else if (available <= 0 && inc > 0) {
+                      // preventa: sin stock actual pero con ingreso futuro
+                      limit = inc;
+                    } else {
+                      limit = 0;
+                    }
+
                     if (limit <= 0) return;
-                    const safeQty = Math.min(Math.max(1, Number(qty) || 1), limit);
-                    add({ productId: p.id, name: p.name, price: p.price ?? 0, qty: safeQty, stock: totalStock });
+
+                    const safeQty = Math.min(
+                      Math.max(1, Number(qty) || 1),
+                      limit
+                    );
+
+                    add({
+                      productId: p.id,
+                      name: p.name,
+                      price: p.price ?? 0,
+                      qty: safeQty,
+                      stock: totalStock,
+                      incoming: inc,
+                    });
                   }}
-                  addDisabled={(isSupervisor && !serviceId) || ((remaining !== undefined) && remaining <= 0)}
+                  // acá SOLO controlamos la restricción de supervisor sin servicio
+                  addDisabled={isSupervisor && !serviceId}
                 />
               );
             })}
           </div>
 
           <nav className="pager" aria-label="Paginación de productos">
-            <button className="pager-btn" onClick={() => goPage(page - 1)} disabled={page <= 1} aria-label="Anterior">‹</button>
-            <span className="pager-info">Página {page} de {totalPages}</span>
-            <button className="pager-btn" onClick={() => goPage(page + 1)} disabled={page >= totalPages} aria-label="Siguiente">›</button>
+            <button
+              className="pager-btn"
+              onClick={() => goPage(page - 1)}
+              disabled={page <= 1}
+              aria-label="Anterior"
+            >
+              ‹
+            </button>
+            <span className="pager-info">
+              Página {page} de {totalPages}
+            </span>
+            <button
+              className="pager-btn"
+              onClick={() => goPage(page + 1)}
+              disabled={page >= totalPages}
+              aria-label="Siguiente"
+            >
+              ›
+            </button>
           </nav>
         </>
       )}
@@ -184,16 +268,58 @@ function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
     if (p.price == null) return "";
     const n = Number(p.price);
     if (Number.isNaN(n)) return String(p.price);
-    return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", minimumFractionDigits: 2 }).format(n);
+    return new Intl.NumberFormat("es-AR", {
+      style: "currency",
+      currency: "ARS",
+      minimumFractionDigits: 2,
+    }).format(n);
   }, [p.price]);
 
-  const sinRestante = (remainingStock !== undefined) && (remainingStock <= 0);
+  const actualStock = Number.isFinite(Number(p.stock))
+    ? Number(p.stock)
+    : null;
+  const incoming = Number.isFinite(Number(p.incoming))
+    ? Number(p.incoming)
+    : 0;
 
-  useEffect(() => {
-    if (remainingStock !== undefined) {
-      setQty(q => Math.min(Math.max(1, q), Math.max(1, remainingStock)));
+  const hasPreorder =
+    actualStock != null && actualStock <= 0 && incoming > 0;
+
+  // sinRestante ahora significa "no se puede pedir nada", ya sea por stock ni preventa
+  const sinRestante =
+    remainingStock !== undefined &&
+    remainingStock <= 0 &&
+    !hasPreorder;
+
+  const etaText = useMemo(() => {
+    if (!p.nextEta) return null;
+    try {
+      return new Date(p.nextEta).toLocaleDateString("es-AR");
+    } catch {
+      return String(p.nextEta);
     }
-  }, [remainingStock]);
+  }, [p.nextEta]);
+
+  const maxQty = useMemo(() => {
+    if (sinRestante) return 1;
+    if (remainingStock !== undefined && remainingStock > 0) {
+      return Math.max(1, remainingStock);
+    }
+    if (hasPreorder) {
+      return Math.max(1, incoming);
+    }
+    return undefined;
+  }, [sinRestante, remainingStock, hasPreorder, incoming]);
+
+  // Ajustar cantidad si cambia el límite
+  useEffect(() => {
+    if (maxQty !== undefined) {
+      setQty((q) => {
+        const base = Math.max(1, q);
+        return Math.min(base, maxQty);
+      });
+    }
+  }, [maxQty]);
 
   return (
     <article className="product-card">
@@ -202,8 +328,23 @@ function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
       {p.price != null && <div className="product-price">{priceText}</div>}
 
       {remainingStock !== undefined && (
-        <div className="product-stock" aria-live="polite" style={{ marginTop: 6 }}>
-          {sinRestante ? "Sin stock" : `Stock restante: ${remainingStock}`}
+        <div
+          className="product-stock"
+          aria-live="polite"
+          style={{ marginTop: 6 }}
+        >
+          {sinRestante && "Sin stock"}
+          {!sinRestante && remainingStock > 0 && (
+            <>Stock restante: {remainingStock}</>
+          )}
+          {!sinRestante &&
+            remainingStock <= 0 &&
+            hasPreorder &&
+            (etaText ? (
+              <>Sin stock actual. Ingreso disponible: {incoming} (desde {etaText})</>
+            ) : (
+              <>Sin stock actual. Ingreso disponible: {incoming}</>
+            ))}
         </div>
       )}
 
@@ -211,13 +352,19 @@ function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
         <input
           type="number"
           min="1"
-          {...(remainingStock !== undefined ? { max: Math.max(1, remainingStock) } : {})}
+          {...(maxQty !== undefined
+            ? { max: Math.max(1, maxQty) }
+            : {})}
           step="1"
           className="qty-input"
           value={qty}
           onChange={(e) => {
             const v = Math.max(1, Number(e.target.value) || 1);
-            setQty(remainingStock !== undefined ? Math.min(v, Math.max(1, remainingStock)) : v);
+            if (maxQty !== undefined) {
+              setQty(Math.min(v, maxQty));
+            } else {
+              setQty(v);
+            }
           }}
           disabled={sinRestante}
           aria-label={`Cantidad de ${p.name}`}

@@ -310,7 +310,12 @@ function scoreProductTable(tbl) {
   const hasPrice = !!pickCol(info, PRICE_CANDIDATES);
   const hasCode  = !!pickCol(info, CODE_CANDIDATES);
   const maybeCat = !!pickCol(info, CAT_CANDIDATES) || !!pickCol(info, CATNAME_CANDIDATES);
-  const blacklist = ["Empleados","Roles","Roles_Empleados","Pedidos","PedidoItems","Usuarios","Logs","supervisor_services","service_products","Ordenes","OrdenesDetalles","remitos","remito_items","email_log","Stock","sequences","service_emails","service_budget"];
+  const blacklist = [
+    "Empleados","Roles","Roles_Empleados","Pedidos","PedidoItems","Usuarios","Logs",
+    "supervisor_services","service_products","Ordenes","OrdenesDetalles",
+    "remitos","remito_items","email_log","Stock","sequences",
+    "service_emails","service_budget","IncomingStock"
+  ];
   if (blacklist.includes(tbl)) return { score: 0 };
   let score = 0;
   if (hasName)  score += 4;
@@ -348,7 +353,12 @@ function chooseCategoryTable(products, prodCatCol) {
     if (t === products) continue;
     const info = tinfo(t);
     if (!info.length || !hasRows(t)) continue;
-    const black = ["Empleados","Roles","Roles_Empleados","Pedidos","PedidoItems","Usuarios","Logs","supervisor_services","service_products","Ordenes","OrdenesDetalles","remitos","remito_items","email_log","Stock","sequences","service_emails","service_budget"];
+    const black = [
+      "Empleados","Roles","Roles_Empleados","Pedidos","PedidoItems","Usuarios","Logs",
+      "supervisor_services","service_products","Ordenes","OrdenesDetalles",
+      "remitos","remito_items","email_log","Stock","sequences",
+      "service_emails","service_budget","IncomingStock"
+    ];
     if (black.includes(t)) continue;
 
     const catId   = pickCol(info, ["CategoriaID","IdCategoria","categoria_id","RubroID","FamiliaID","ServicioID","SeccionID","GrupoID","TipoID","ClasificacionID","id","ID"]);
@@ -430,6 +440,45 @@ export function revokeVisibility(productId, roleName) {
   `).run(productId, role);
 }
 
+/* ===================== stock futuro (preventa) ===================== */
+export function ensureIncomingStockTable() {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS IncomingStock (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id TEXT    NOT NULL,
+        qty        INTEGER NOT NULL,
+        eta        TEXT    NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_incoming_product ON IncomingStock(product_id);
+      CREATE INDEX IF NOT EXISTS idx_incoming_eta     ON IncomingStock(eta);
+    `);
+  } catch (e) {
+    console.error("[db] ensureIncomingStockTable error:", e?.message || e);
+  }
+}
+
+export function getFutureIncomingForProduct(productId) {
+  ensureIncomingStockTable();
+  try {
+    const row = db.prepare(`
+      SELECT
+        COALESCE(SUM(qty), 0) AS incoming,
+        MIN(eta)              AS nextEta
+      FROM IncomingStock
+      WHERE DATE(eta) >= DATE('now')
+        AND CAST(product_id AS TEXT) = CAST(? AS TEXT)
+    `).get(String(productId));
+    return {
+      incoming: Number(row?.incoming || 0),
+      nextEta : row?.nextEta || null,
+    };
+  } catch (e) {
+    console.error("[db] getFutureIncomingForProduct error:", e?.message || e);
+    return { incoming: 0, nextEta: null };
+  }
+}
+
 /* ===================== categorías ===================== */
 export function listCategories() {
   const sch = discoverCatalogSchema();
@@ -469,6 +518,7 @@ export function listCategories() {
 /* ===================== productos (SOLO Productos) ===================== */
 export function listProductsByCategory(categoryId, { q = "", serviceId = null, role = null, roles = null } = {}) {
   ensureVisibilitySchema();
+  ensureIncomingStockTable();
 
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
@@ -501,6 +551,8 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
     hasCode  ? `p.${prodCode}  AS code`  : `' ' AS code`,
     hasPrice ? `p.${prodPrice} AS price` : `NULL AS price`,
     stockExpr,
+    `COALESCE(inc.incoming, 0) AS incoming`,
+    `inc.nextEta AS nextEta`
   ].join(", ");
 
   const normRoles = []
@@ -513,6 +565,17 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
     ? `JOIN ProductRoleVisibility prv
          ON CAST(prv.product_id AS TEXT) = CAST(p.${prodId} AS TEXT)`
     : ``;
+
+  const incomingJoin = `
+    LEFT JOIN (
+      SELECT
+        CAST(product_id AS TEXT) AS pid,
+        COALESCE(SUM(CASE WHEN DATE(eta) >= DATE('now') THEN qty ELSE 0 END), 0) AS incoming,
+        MIN(CASE WHEN DATE(eta) >= DATE('now') THEN eta END) AS nextEta
+      FROM IncomingStock
+      GROUP BY CAST(product_id AS TEXT)
+    ) inc ON CAST(inc.pid AS TEXT) = CAST(p.${prodId} AS TEXT)
+  `;
 
   const where = [];
   const params = [];
@@ -548,6 +611,7 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
   const sql = `
     SELECT ${cols}
     FROM ${products} p
+    ${incomingJoin}
     ${joinPRV}
     ${whereSQL}
     ORDER BY p.${prodName} COLLATE NOCASE
@@ -622,6 +686,8 @@ function ensureOrdersSchema() {
 ensureOrdersSchema();
 ensureVisibilitySchema();
 ensureServiceProductsPivot();
+ensureIncomingStockTable();
+
 export function getProductById(productId) {
   const sch = discoverCatalogSchema();
   if (!sch.ok) return null;
@@ -733,16 +799,39 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
       const precio = row.price != null ? Number(row.price) : 0;
 
       if (hasStock) {
-        const upd = db.prepare(`
-          UPDATE ${products}
-          SET ${prodStock} = ${prodStock} - ?
-          WHERE ${prodId} = ? AND COALESCE(${prodStock},0) >= ?
-        `).run(cantidad, pid, cantidad);
-        if (upd.changes !== 1) {
-          const available = db.prepare(
-            `SELECT COALESCE(${prodStock},0) AS stock FROM ${products} WHERE ${prodId} = ? LIMIT 1`
-          ).get(pid)?.stock ?? 0;
-          throw new Error(available <= 0 ? `Sin stock: ${row.name}` : `Stock insuficiente: ${row.name} (máx ${available})`);
+        const available = Number(row.stock ?? 0);
+
+        if (available >= cantidad) {
+          // Caso normal: alcanza stock actual → descontamos
+          const upd = db.prepare(`
+            UPDATE ${products}
+            SET ${prodStock} = ${prodStock} - ?
+            WHERE ${prodId} = ? AND COALESCE(${prodStock},0) >= ?
+          `).run(cantidad, pid, cantidad);
+
+          if (upd.changes !== 1) {
+            const again = db.prepare(
+              `SELECT COALESCE(${prodStock},0) AS stock FROM ${products} WHERE ${prodId} = ? LIMIT 1`
+            ).get(pid)?.stock ?? 0;
+            throw new Error(
+              again <= 0
+                ? `Sin stock: ${row.name}`
+                : `Stock insuficiente: ${row.name} (máx ${again})`
+            );
+          }
+        } else {
+          // Stock insuficiente: probamos con ingreso futuro (preventa)
+          const { incoming } = getFutureIncomingForProduct(pid);
+
+          if (available <= 0 && incoming >= cantidad) {
+            // ✅ Aceptamos como preventa: no descontamos stock actual
+          } else {
+            throw new Error(
+              available <= 0
+                ? `Sin stock: ${row.name}`
+                : `Stock insuficiente: ${row.name} (máx ${available})`
+            );
+          }
         }
       }
 
@@ -1015,6 +1104,7 @@ function detectSPCols() {
   // Si no reconoce el layout, devolvemos null para no romper el server.
   return null;
 }
+
 /* ===================== presupuestos ===================== */
 export function ensureServiceBudgetTable() {
   db.exec(`
