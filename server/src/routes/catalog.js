@@ -1,7 +1,7 @@
 // server/src/routes/catalog.js
 import express from "express";
 import { requireAuth } from "../middleware/auth.js";
-import { listCategories, listProductsByCategory } from "../db.js";
+import { listCategories, listProductsByCategory, db } from "../db.js";
 
 const router = express.Router();
 
@@ -25,6 +25,42 @@ router.get("/products", (req, res) => {
   } catch (e) {
     console.error("[/catalog/products]", e);
     res.status(500).json({ error: "No se pudieron cargar los productos" });
+  }
+});
+
+/**
+ * Resumen público de ingresos futuros para un producto.
+ * GET /catalog/incoming-summary/:productId
+ * Responde: { productId, total, eta }
+ *  - total: suma de qty
+ *  - eta: fecha mínima de ingreso (string o null)
+ */
+router.get("/incoming-summary/:productId", (req, res) => {
+  try {
+    const pid = String(req.params.productId || "").trim();
+    if (!pid) return res.status(400).json({ error: "productId requerido" });
+
+    const row =
+      db
+        .prepare(
+          `
+          SELECT SUM(qty) AS total, MIN(eta) AS eta
+          FROM IncomingStock
+          WHERE CAST(product_id AS TEXT) = CAST(? AS TEXT)
+        `
+        )
+        .get(pid) || {};
+
+    res.json({
+      productId: pid,
+      total: Number(row.total || 0),
+      eta: row.eta || null,
+    });
+  } catch (e) {
+    console.error("[/catalog/incoming-summary/:productId]", e);
+    res
+      .status(500)
+      .json({ error: "No se pudo obtener el resumen de ingresos futuros" });
   }
 });
 

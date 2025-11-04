@@ -1,3 +1,4 @@
+// client/src/pages/Products.jsx
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams, useParams } from "react-router-dom";
 import { api } from "../api/client";
@@ -197,25 +198,23 @@ export default function Products() {
                   p={p}
                   remainingStock={remaining}
                   onAdd={(qty) => {
+                    // *** IMPORTANTE ***
+                    // Sólo dejamos pedir si hay stock REAL disponible.
+                    // El stock programado (incoming) es sólo informativo.
                     const available = totalStock ?? 0;
-                    const inc = incoming;
-                    let limit;
+                    const remainingQty =
+                      available > 0 && remaining !== undefined
+                        ? remaining
+                        : Math.max(0, available);
 
-                    if (available > 0) {
-                      // venta normal: hasta el stock restante (ya descontando lo reservado en el carrito)
-                      limit = remaining ?? available;
-                    } else if (available <= 0 && inc > 0) {
-                      // preventa: sin stock actual pero con ingreso futuro
-                      limit = inc;
-                    } else {
-                      limit = 0;
+                    if (remainingQty <= 0) {
+                      // sin stock real → no se puede pedir
+                      return;
                     }
-
-                    if (limit <= 0) return;
 
                     const safeQty = Math.min(
                       Math.max(1, Number(qty) || 1),
-                      limit
+                      remainingQty
                     );
 
                     add({
@@ -224,7 +223,7 @@ export default function Products() {
                       price: p.price ?? 0,
                       qty: safeQty,
                       stock: totalStock,
-                      incoming: inc,
+                      incoming, // lo guardo por si querés mostrarlo en el resumen del carrito
                     });
                   }}
                   // acá SOLO controlamos la restricción de supervisor sin servicio
@@ -282,14 +281,15 @@ function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
     ? Number(p.incoming)
     : 0;
 
-  const hasPreorder =
-    actualStock != null && actualStock <= 0 && incoming > 0;
+  const hasIncoming = incoming > 0;
+  const noStockActual = actualStock != null && actualStock <= 0;
 
-  // sinRestante ahora significa "no se puede pedir nada", ya sea por stock ni preventa
+  // hay info de ingreso programado (pero no queremos que se pueda pedir todavía)
+  const showIncomingInfo = noStockActual && hasIncoming;
+
+  // sinRestante = no hay stock disponible para pedir (ni siquiera por preventa)
   const sinRestante =
-    remainingStock !== undefined &&
-    remainingStock <= 0 &&
-    !hasPreorder;
+    remainingStock !== undefined && remainingStock <= 0;
 
   const etaText = useMemo(() => {
     if (!p.nextEta) return null;
@@ -305,11 +305,8 @@ function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
     if (remainingStock !== undefined && remainingStock > 0) {
       return Math.max(1, remainingStock);
     }
-    if (hasPreorder) {
-      return Math.max(1, incoming);
-    }
     return undefined;
-  }, [sinRestante, remainingStock, hasPreorder, incoming]);
+  }, [sinRestante, remainingStock]);
 
   // Ajustar cantidad si cambia el límite
   useEffect(() => {
@@ -333,18 +330,16 @@ function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
           aria-live="polite"
           style={{ marginTop: 6 }}
         >
-          {sinRestante && "Sin stock"}
-          {!sinRestante && remainingStock > 0 && (
-            <>Stock restante: {remainingStock}</>
+          {remainingStock > 0 && <>Stock restante: {remainingStock}</>}
+
+          {remainingStock <= 0 && showIncomingInfo && (
+            <>
+              Sin stock actual. Ingreso disponible: {incoming}
+              {etaText ? <> (desde {etaText})</> : null}
+            </>
           )}
-          {!sinRestante &&
-            remainingStock <= 0 &&
-            hasPreorder &&
-            (etaText ? (
-              <>Sin stock actual. Ingreso disponible: {incoming} (desde {etaText})</>
-            ) : (
-              <>Sin stock actual. Ingreso disponible: {incoming}</>
-            ))}
+
+          {remainingStock <= 0 && !showIncomingInfo && "Sin stock"}
         </div>
       )}
 
@@ -352,9 +347,7 @@ function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
         <input
           type="number"
           min="1"
-          {...(maxQty !== undefined
-            ? { max: Math.max(1, maxQty) }
-            : {})}
+          {...(maxQty !== undefined ? { max: Math.max(1, maxQty) } : {})}
           step="1"
           className="qty-input"
           value={qty}

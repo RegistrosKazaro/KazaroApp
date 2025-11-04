@@ -6,7 +6,6 @@ import { PassThrough } from "stream";
 
 /* ================= Helpers ================= */
 const pad7 = (n) => String(n ?? "").padStart(7, "0");
-
 const money = (n) => {
   const v = Number(n || 0);
   try {
@@ -18,7 +17,6 @@ const money = (n) => {
     return `$ ${v.toFixed(2)}`;
   }
 };
-
 const fmtDateTime = (s) => {
   if (!s) return "";
   try {
@@ -35,7 +33,6 @@ const fmtDateTime = (s) => {
     return String(s || "");
   }
 };
-
 const nowLocal = () =>
   new Date().toLocaleString("es-AR", {
     year: "numeric",
@@ -56,7 +53,6 @@ function fitText(doc, text, width) {
 
 /* === Nombre de servicio robusto (DB → hinted → ID) === */
 function resolveServiceName(serviceId, hintedName) {
-  // Primero usamos el nombre "hint" que venga en el pedido/cabecera
   if (hintedName) return hintedName;
 
   if (serviceId != null) {
@@ -64,7 +60,6 @@ function resolveServiceName(serviceId, hintedName) {
     if (byDb) return byDb;
   }
 
-  // Como fallback, intentamos leer directo la tabla Servicios de la DB
   try {
     const info = db.prepare(`PRAGMA table_info('Servicios')`).all();
     if (info.length) {
@@ -104,13 +99,11 @@ function resolveServiceName(serviceId, hintedName) {
   } catch {
     /* noop */
   }
-
   return serviceId != null ? String(serviceId) : "—";
 }
 
 /* ================= Layout ================= */
 const M = 36; // margen
-
 function drawHeader(doc, nro, fecha, total) {
   const contentW = doc.page.width - M * 2;
 
@@ -129,8 +122,7 @@ function drawHeader(doc, nro, fecha, total) {
   const RIGHT_W = 320;
   const xR = doc.page.width - M - RIGHT_W;
 
-  doc
-    .font("Helvetica-Bold")
+  doc.font("Helvetica-Bold")
     .fontSize(20)
     .fill("#111")
     .text("REMITO", xR, M + 2, {
@@ -138,8 +130,7 @@ function drawHeader(doc, nro, fecha, total) {
       align: "right",
       lineBreak: false,
     });
-  doc
-    .font("Helvetica")
+  doc.font("Helvetica")
     .fontSize(12)
     .fill("#222")
     .text(`#${nro}`, xR, M + 26, {
@@ -147,8 +138,7 @@ function drawHeader(doc, nro, fecha, total) {
       align: "right",
       lineBreak: false,
     });
-  doc
-    .font("Helvetica")
+  doc.font("Helvetica")
     .fontSize(10)
     .fill("#555")
     .text(fecha || "", xR, M + 42, {
@@ -157,7 +147,7 @@ function drawHeader(doc, nro, fecha, total) {
       lineBreak: false,
     });
 
-  // Caja de TOTAL
+  // Caja de TOTAL (siempre dentro del bloque)
   const totalBoxH = 36;
   doc
     .save()
@@ -197,11 +187,10 @@ function drawHeader(doc, nro, fecha, total) {
 }
 
 function labeledValueBlock(doc, label, value, x, y, width) {
-  doc
-    .font("Helvetica")
-    .fontSize(10)
-    .fill("#666")
-    .text(label, x, y, { width, lineBreak: false });
+  doc.font("Helvetica").fontSize(10).fill("#666").text(label, x, y, {
+    width,
+    lineBreak: false,
+  });
   const y2 = y + 14;
   doc.font("Helvetica").fontSize(12).fill("#111");
   const h = doc.heightOfString(String(value ?? "—"), {
@@ -212,7 +201,6 @@ function labeledValueBlock(doc, label, value, x, y, width) {
   return y2 + h + 8;
 }
 
-// ⬇⬇⬇ Acá está el cambio importante: “Servicio” solo se dibuja si viene valor.
 function drawMeta(doc, y, { empleado, rol, fecha, servicio }) {
   const contentW = doc.page.width - M * 2;
   const GAP = 30;
@@ -225,12 +213,10 @@ function drawMeta(doc, y, { empleado, rol, fecha, servicio }) {
   const yL2 = labeledValueBlock(doc, "Rol", rol || "—", leftX, yL1, COL_W);
 
   const yR1 = labeledValueBlock(doc, "Fecha", fecha || "—", rightX, y, COL_W);
-
-  // Solo dibujamos el bloque “Servicio” si viene un texto no vacío
-  let yR2 = yR1;
-  if (servicio && String(servicio).trim()) {
-    yR2 = labeledValueBlock(doc, "Servicio", servicio, rightX, yR1, COL_W);
-  }
+  // 👇 Solo mostramos "Servicio" si viene valor (es decir, pedidos de supervisor)
+  const yR2 = servicio
+    ? labeledValueBlock(doc, "Servicio", servicio, rightX, yR1, COL_W)
+    : yR1;
 
   const yOut = Math.max(yL2, yR2);
   doc
@@ -295,8 +281,7 @@ function drawItemsTable(doc, y, rows, total) {
       { v: money(it.price), w: W_PRICE, a: "right" },
       {
         v: money(
-          it.subtotal ??
-            (+it.price || 0) * (+it.qty || 0)
+          it.subtotal ?? (+it.price || 0) * (+it.qty || 0)
         ),
         w: W_SUB,
         a: "right",
@@ -325,15 +310,14 @@ function drawItemsTable(doc, y, rows, total) {
   }
 
   if (leftover > 0) {
-    doc
-      .font("Helvetica")
+    doc.font("Helvetica")
       .fontSize(9)
       .fill("#666")
       .text(`(${leftover} ítems no mostrados)`, M, y + 2);
     y += 16;
   }
 
-  // Fila TOTAL al pie
+  // Fila TOTAL
   doc.save().rect(M, y + 2, contentW, rowH).fill("#F1F2F4").restore();
 
   const xTotalLabel = M + W_CODE + W_DESC + W_QTY - 6;
@@ -341,38 +325,25 @@ function drawItemsTable(doc, y, rows, total) {
   const xTotalAmt = xTotalLabel + wTotalLabel;
   const wTotalAmt = W_SUB;
 
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(11)
-    .fill("#111")
-    .text("TOTAL", xTotalLabel, y + 5, {
-      width: wTotalLabel,
-      align: "right",
-      lineBreak: false,
-    });
+  doc.font("Helvetica-Bold").fontSize(11).fill("#111").text("TOTAL", xTotalLabel, y + 5, {
+    width: wTotalLabel,
+    align: "right",
+    lineBreak: false,
+  });
 
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(12)
-    .fill("#000")
-    .text(money(total), xTotalAmt, y + 4, {
-      width: wTotalAmt,
-      align: "right",
-      lineBreak: false,
-    });
+  doc.font("Helvetica-Bold").fontSize(12).fill("#000").text(money(total), xTotalAmt, y + 4, {
+    width: wTotalAmt,
+    align: "right",
+    lineBreak: false,
+  });
 
   return y + rowH + 8;
 }
 
 function drawNote(doc, y, nota) {
   if (!nota) return y;
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(10)
-    .fill("#111")
-    .text("Nota", M, y);
-  doc
-    .font("Helvetica")
+  doc.font("Helvetica-Bold").fontSize(10).fill("#111").text("Nota", M, y);
+  doc.font("Helvetica")
     .fontSize(10)
     .fill("#333")
     .text(String(nota || ""), M, y + 12, {
@@ -394,28 +365,27 @@ function drawFooter(doc) {
 }
 
 /* ================= Generador principal ================= */
-export async function generateRemitoPDF({
-  pedido,
-  outDir = path.resolve(process.cwd(), "tmp"),
-}) {
+export async function generateRemitoPDF({ pedido, outDir = path.resolve(process.cwd(), "tmp") }) {
   const cab = pedido?.cab ? pedido.cab : pedido;
   const itemsRaw = pedido?.items || [];
   const pedidoId = cab?.PedidoID ?? cab?.id ?? 0;
   const nro = pad7(pedidoId);
 
   const empleado = getEmployeeDisplayName(cab?.EmpleadoID);
-  const rolCab = cab?.Rol ?? cab?.rol ?? null;
-  const fecha = fmtDateTime(cab?.Fecha);
+  const rol = String(cab?.Rol || "");
+  const isSupervisorOrder = rol.toLowerCase().includes("super");
+  const baseServicioNombre =
+    cab?.ServicioID != null
+      ? resolveServiceName(
+          cab.ServicioID,
+          pedido?.servicio?.name || cab?.servicio?.name
+        )
+      : null;
+  // 👇 Solo usamos servicio en el remito si el pedido es de supervisor y tiene ServicioID
+  const servicioNombre =
+    isSupervisorOrder && cab?.ServicioID ? baseServicioNombre : null;
 
-  // Solo resolvemos el nombre del servicio si el rol es de supervisor
-  const isSupervisor =
-    String(rolCab || "").toLowerCase().includes("super");
-  const servicioNombre = isSupervisor
-    ? resolveServiceName(
-        cab?.ServicioID,
-        pedido?.servicio?.name || cab?.servicio?.name
-      )
-    : null;
+  const fecha = fmtDateTime(cab?.Fecha);
 
   const items = itemsRaw.map((it) => ({
     code: it.codigo ?? it.code ?? "",
@@ -424,13 +394,12 @@ export async function generateRemitoPDF({
     price: Number(it.precio ?? it.price ?? 0),
     subtotal: Number(
       it.subtotal ??
-        (Number(it.precio ?? it.price ?? 0) *
-          Number(it.cantidad ?? it.qty ?? 0))
+        Number(it.precio ?? it.price ?? 0) *
+          Number(it.cantidad ?? it.qty ?? 0)
     ),
   }));
   const total = Number(
-    cab?.Total ??
-      items.reduce((s, r) => s + (r.subtotal || 0), 0)
+    cab?.Total ?? items.reduce((s, r) => s + (r.subtotal || 0), 0)
   );
 
   fs.mkdirSync(outDir, { recursive: true });
@@ -447,7 +416,7 @@ export async function generateRemitoPDF({
   let y = drawHeader(doc, nro, fecha, total);
   y = drawMeta(doc, y, {
     empleado,
-    rol: rolCab,
+    rol,
     fecha,
     servicio: servicioNombre,
   });
@@ -464,24 +433,25 @@ export async function generateRemitoPDF({
 }
 
 export async function generateRemitoPDFBuffer({ pedido }) {
-  // --- mismas variables que usa generateRemitoPDF ---
   const cab = pedido?.cab ? pedido.cab : pedido;
   const itemsRaw = pedido?.items || [];
   const pedidoId = cab?.PedidoID ?? cab?.id ?? 0;
   const nro = pad7(pedidoId);
 
   const empleado = getEmployeeDisplayName(cab?.EmpleadoID);
-  const rolCab = cab?.Rol ?? cab?.rol ?? null;
-  const fecha = fmtDateTime(cab?.Fecha);
+  const rol = String(cab?.Rol || "");
+  const isSupervisorOrder = rol.toLowerCase().includes("super");
+  const baseServicioNombre =
+    cab?.ServicioID != null
+      ? resolveServiceName(
+          cab.ServicioID,
+          pedido?.servicio?.name || cab?.servicio?.name
+        )
+      : null;
+  const servicioNombre =
+    isSupervisorOrder && cab?.ServicioID ? baseServicioNombre : null;
 
-  const isSupervisor =
-    String(rolCab || "").toLowerCase().includes("super");
-  const servicioNombre = isSupervisor
-    ? resolveServiceName(
-        cab?.ServicioID,
-        pedido?.servicio?.name || cab?.servicio?.name
-      )
-    : null;
+  const fecha = fmtDateTime(cab?.Fecha);
 
   const items = itemsRaw.map((it) => ({
     code: it.codigo ?? it.code ?? "",
@@ -490,20 +460,13 @@ export async function generateRemitoPDFBuffer({ pedido }) {
     price: Number(it.precio ?? it.price ?? 0),
     subtotal: Number(
       it.subtotal ??
-        (Number(it.precio ?? it.price ?? 0) *
-          Number(it.cantidad ?? it.qty ?? 0))
+        Number(it.precio ?? it.price ?? 0) *
+          Number(it.cantidad ?? it.qty ?? 0)
     ),
   }));
-  const total = items.reduce(
-    (a, b) => a + Number(b.subtotal || 0),
-    0
-  );
+  const total = items.reduce((a, b) => a + Number(b.subtotal || 0), 0);
 
-  // --- armamos el PDF con pdfkit igual que la versión a archivo, pero a buffer ---
-  const doc = new PDFDocument({
-    size: "A4",
-    margin: M,
-  });
+  const doc = new PDFDocument({ size: "A4", margin: 36 });
   const chunks = [];
   const passthrough = new PassThrough();
 
@@ -518,7 +481,7 @@ export async function generateRemitoPDFBuffer({ pedido }) {
   let y = drawHeader(doc, nro, fecha, total);
   y = drawMeta(doc, y, {
     empleado,
-    rol: rolCab,
+    rol,
     fecha,
     servicio: servicioNombre,
   });

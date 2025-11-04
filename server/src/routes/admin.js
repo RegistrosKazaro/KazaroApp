@@ -12,7 +12,7 @@ import {
   reassignServiceToSupervisor,
   unassignService,
   getServiceNameById,
-  ensureServiceProductsPivot,     // <— NUEVO
+  ensureServiceProductsPivot,     // para Servicio ⇄ Productos
 } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendMail } from "../utils/mailer.js";
@@ -247,6 +247,216 @@ router.patch("/products/:id/stock", mustBeAdmin, (req, res) => {
     res.json({ ok: true, product: row });
   } catch {
     res.status(500).json({ error: "No se pudo actualizar el stock" });
+  }
+});
+
+/* =========================
+   IncomingStock (ingresos futuros)
+   ========================= */
+
+// Helpers reutilizables
+function listIncomingForProduct(productId) {
+  return db.prepare(`
+    SELECT id, product_id, qty, eta
+    FROM IncomingStock
+    WHERE CAST(product_id AS TEXT) = CAST(? AS TEXT)
+    ORDER BY datetime(eta)
+  `).all(productId);
+}
+
+function createIncomingForProduct(productId, qty, eta) {
+  const info = db.prepare(`
+    INSERT INTO IncomingStock (product_id, qty, eta)
+    VALUES (?, ?, ?)
+  `).run(productId, Math.round(qty), eta);
+
+  return db.prepare(`
+    SELECT id, product_id, qty, eta
+    FROM IncomingStock
+    WHERE id = ?
+  `).get(info.lastInsertRowid);
+}
+
+function deleteIncomingById(id) {
+  const info = db.prepare(`DELETE FROM IncomingStock WHERE id = ?`).run(id);
+  return info.changes > 0;
+}
+
+// Suma al stock del producto y borra el registro de IncomingStock
+function confirmIncomingById(id) {
+  const row = db.prepare(`
+    SELECT id, product_id, qty, eta
+    FROM IncomingStock
+    WHERE id = ?
+  `).get(id);
+  if (!row) return null;
+
+  const sch = prodSchemaOrThrow();
+  const { products } = sch.tables;
+  const { prodId, prodStock } = sch.cols;
+  if (!prodStock) throw new Error("La tabla de productos no tiene columna de stock");
+
+  const tx = db.transaction(() => {
+    db.prepare(
+      `UPDATE ${products}
+       SET ${prodStock} = COALESCE(${prodStock},0) + ?
+       WHERE ${prodId} = ? OR rowid = ?`
+    ).run(row.qty, row.product_id, row.product_id);
+
+    db.prepare(`DELETE FROM IncomingStock WHERE id = ?`).run(id);
+  });
+
+  tx();
+
+  const updated = db.prepare(`
+    SELECT ${prodId} AS id, ${prodStock} AS stock
+    FROM ${products}
+    WHERE ${prodId} = ? OR rowid = ?
+    LIMIT 1
+  `).get(row.product_id, row.product_id);
+
+  return { incoming: row, product: updated };
+}
+
+/**
+ * Lista todos los ingresos futuros de un producto
+ * GET /admin/products/:id/incoming
+ */
+router.get("/products/:id/incoming", mustBeAdmin, (req, res) => {
+  try {
+    const pid = String(req.params.id || "").trim();
+    if (!pid) return res.status(400).json({ error: "id de producto requerido" });
+
+    const rows = listIncomingForProduct(pid);
+    res.json(rows);
+  } catch (e) {
+    console.error("GET /admin/products/:id/incoming error:", e);
+    res.status(500).json({ error: "No se pudieron leer los ingresos futuros" });
+  }
+});
+
+/**
+ * Crea un ingreso futuro para un producto
+ * POST /admin/products/:id/incoming
+ * body: { qty: number, eta: 'YYYY-MM-DD' | 'YYYY-MM-DD HH:mm' }
+ */
+router.post("/products/:id/incoming", mustBeAdmin, (req, res) => {
+  try {
+    const pid = String(req.params.id || "").trim();
+    if (!pid) return res.status(400).json({ error: "id de producto requerido" });
+
+    const rawQty = req.body?.qty ?? req.body?.cantidad;
+    const qty = Number(rawQty);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      return res.status(400).json({ error: "Cantidad inválida" });
+    }
+
+    let eta = String(req.body?.eta || "").trim();
+    if (!eta) return res.status(400).json({ error: "Fecha (eta) requerida" });
+
+    // Si viene de un <input type="date" /> (solo fecha), le agregamos hora 00:00
+    if (/^\d{4}-\d{2}-\d{2}$/.test(eta)) {
+      eta = eta + " 00:00:00";
+    }
+
+    const row = createIncomingForProduct(pid, qty, eta);
+    res.status(201).json(row);
+  } catch (e) {
+    console.error("POST /admin/products/:id/incoming error:", e);
+    res.status(500).json({ error: "No se pudo crear el ingreso futuro" });
+  }
+});
+
+/**
+ * Borra un ingreso futuro por id
+ * DELETE /admin/incoming/:incomingId
+ */
+router.delete("/incoming/:incomingId", mustBeAdmin, (req, res) => {
+  try {
+    const id = Number(req.params.incomingId);
+    if (!id) return res.status(400).json({ error: "id inválido" });
+
+    const ok = deleteIncomingById(id);
+    if (!ok) return res.status(404).json({ error: "Ingreso no encontrado" });
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("DELETE /admin/incoming/:incomingId error:", e);
+    res.status(500).json({ error: "No se pudo borrar el ingreso" });
+  }
+});
+
+/**
+ * Confirma un ingreso: suma al stock del producto y lo elimina de IncomingStock
+ * POST /admin/incoming/:incomingId/confirm
+ */
+router.post("/incoming/:incomingId/confirm", mustBeAdmin, (req, res) => {
+  try {
+    const id = Number(req.params.incomingId);
+    if (!id) return res.status(400).json({ error: "id inválido" });
+
+    const result = confirmIncomingById(id);
+    if (!result) return res.status(404).json({ error: "Ingreso no encontrado" });
+
+    res.json({ ok: true, incoming: result.incoming, product: result.product });
+  } catch (e) {
+    console.error("POST /admin/incoming/:incomingId/confirm error:", e);
+    res.status(500).json({ error: "No se pudo confirmar el ingreso" });
+  }
+});
+
+/**
+ * ALIAS compatibles con el front actual:
+ *  - GET  /admin/incoming-stock?productId=123
+ *  - GET  /admin/incoming-stock/123
+ *  - POST /admin/incoming-stock   body: { productId, qty, eta }
+ */
+router.get("/incoming-stock", mustBeAdmin, (req, res) => {
+  try {
+    const pid = String(req.query.productId || "").trim();
+    if (!pid) return res.status(400).json({ error: "productId requerido" });
+    const rows = listIncomingForProduct(pid);
+    res.json(rows);
+  } catch (e) {
+    console.error("GET /admin/incoming-stock error:", e);
+    res.status(500).json({ error: "No se pudieron leer los ingresos futuros" });
+  }
+});
+
+router.get("/incoming-stock/:productId", mustBeAdmin, (req, res) => {
+  try {
+    const pid = String(req.params.productId || "").trim();
+    if (!pid) return res.status(400).json({ error: "productId requerido" });
+    const rows = listIncomingForProduct(pid);
+    res.json(rows);
+  } catch (e) {
+    console.error("GET /admin/incoming-stock/:productId error:", e);
+    res.status(500).json({ error: "No se pudieron leer los ingresos futuros" });
+  }
+});
+
+router.post("/incoming-stock", mustBeAdmin, (req, res) => {
+  try {
+    const pid = String(req.body?.productId || "").trim();
+    if (!pid) return res.status(400).json({ error: "productId requerido" });
+
+    const rawQty = req.body?.qty ?? req.body?.cantidad;
+    const qty = Number(rawQty);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      return res.status(400).json({ error: "Cantidad inválida" });
+    }
+
+    let eta = String(req.body?.eta || "").trim();
+    if (!eta) return res.status(400).json({ error: "Fecha (eta) requerida" });
+    if (/^\d{4}-\d{2}-\d{2}$/.test(eta)) {
+      eta = eta + " 00:00:00";
+    }
+
+    const row = createIncomingForProduct(pid, qty, eta);
+    res.status(201).json(row);
+  } catch (e) {
+    console.error("POST /admin/incoming-stock error:", e);
+    res.status(500).json({ error: "No se pudo crear el ingreso futuro" });
   }
 });
 
@@ -545,7 +755,7 @@ router.put("/service-emails/:serviceId", mustBeAdmin, (req, res) => {
    ====================================================== */
 
 function detectSPCols() {
-  ensureServiceProductsPivot(); // <— garantiza que exista con columnas esperadas
+  ensureServiceProductsPivot(); // garantiza que exista con columnas esperadas
   const cols = db.prepare(`PRAGMA table_info('service_products')`).all().map(c => String(c.name).toLowerCase());
   if (cols.includes("servicioid") && cols.includes("productoid")) return { srv: "ServicioID",  prod: "ProductoID"  };
   if (cols.includes("servicio_id") && cols.includes("producto_id")) return { srv: "servicio_id", prod: "producto_id" };
