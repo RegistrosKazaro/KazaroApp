@@ -1467,14 +1467,7 @@ export default function AdminPanel() {
         >
           Servicio ↔ Productos
         </button>
-        <button
-          className={`tab-btn ${tab === "budgets" ? "is-active" : ""}`}
-          onClick={() => setTab("budgets")}
-          role="tab"
-          aria-selected={tab === "budgets"}
-        >
-          Presupuestos
-        </button>
+       
         <button
           className={`tab-btn ${
             tab === "incomingStock" ? "is-active" : ""
