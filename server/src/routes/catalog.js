@@ -28,13 +28,6 @@ router.get("/products", (req, res) => {
   }
 });
 
-/**
- * Resumen público de ingresos futuros para un producto.
- * GET /catalog/incoming-summary/:productId
- * Responde: { productId, total, eta }
- *  - total: suma de qty
- *  - eta: fecha mínima de ingreso (string o null)
- */
 router.get("/incoming-summary/:productId", (req, res) => {
   try {
     const pid = String(req.params.productId || "").trim();
