@@ -6,7 +6,6 @@ export default function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Al montar, intenta restaurar sesión desde la cookie httpOnly (GET /auth/me)
   useEffect(() => {
     let alive = true;
     api
@@ -26,7 +25,6 @@ export default function AuthProvider({ children }) {
     };
   }, []);
 
-  // Login normal: setea la cookie httpOnly + state de usuario
   async function login(username, password) {
     await ensureCsrf();
     const res = await api.post("/auth/login", { username, password });
