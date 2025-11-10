@@ -423,9 +423,7 @@ export default function Deposito() {
             onChange={(e) => {
               const v = parseInt(e.target.value, 10);
               setRiskPercent(
-                Number.isNaN(v)
-                  ? 30
-                  : Math.min(100, Math.max(1, v))
+                Number.isNaN(v) ? 30 : Math.min(100, Math.max(1, v))
               );
             }}
           />
@@ -511,21 +509,34 @@ export default function Deposito() {
               Se considera <b>stock bajo</b> cuando{" "}
               <code>stock ≤ {threshold}</code>.
             </div>
+
             <div className="deposito-legend">
               <span className="legend-dot legend-danger"></span>
               <span>
                 Sin stock (0): <b>{resumen.productosSinStock}</b>
               </span>
-              <span className="legend-dot legend-warning"></span>
-              <span>
-                En riesgo (1..{resumen.riesgoLimite}):{" "}
-                <b>{resumen.productosEnRiesgo}</b>
-              </span>
+
+              {resumen.riesgoLimite > 0 && (
+                <>
+                  <span className="legend-dot legend-warning"></span>
+                  <span>
+                    En riesgo (1..{resumen.riesgoLimite}):{" "}
+                    <b>{resumen.productosEnRiesgo}</b>
+                  </span>
+                </>
+              )}
+
               <span className="legend-dot legend-neutral"></span>
               <span>
                 Bajo (resto): <b>{resumen.bajoResto}</b>
               </span>
             </div>
+
+            {resumen.riesgoLimite === 0 && (
+              <div className="deposito-summary-sub">
+                Franja de riesgo desactivada (umbral = 0).
+              </div>
+            )}
           </div>
 
           <div className="deposito-summary-card deposito-summary-card--alert">
