@@ -1,0 +1,477 @@
+/* ==== Layout general del panel de Depósito ==== */
+
+.deposito-page {
+  padding: 1.25rem;
+  background: radial-gradient(circle at top left, #f1f5f9 0, #ffffff 45%, #f9fafb 100%);
+  min-height: calc(100vh - 56px); /* más cómodo */
+  box-sizing: border-box;
+}
+
+.deposito-title {
+  font-size: 1.6rem;
+  margin: 0 0 0.75rem;
+  font-weight: 700;
+  color: #111827;
+}
+
+/* ==== Filtros de cabecera ==== */
+
+.deposito-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+  margin-bottom: 0.75rem;
+}
+
+.deposito-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: #4b5563;
+}
+
+.deposito-field input[type="date"],
+.deposito-field input[type="number"],
+.deposito-search {
+  padding: 0.4rem 0.5rem;
+  border-radius: 0.45rem;
+  border: 1px solid #d1d5db;
+  font-size: 0.85rem;
+  min-width: 8rem;
+  background-color: #ffffff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.deposito-search {
+  min-width: 10rem;
+}
+
+.deposito-field input:focus-visible,
+.deposito-search:focus-visible {
+  outline: none;
+  border-color: #0ea5e9;
+  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.25);
+  background-color: #f9fafb;
+}
+
+/* Rangos rápidos */
+
+.deposito-quickranges {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-left: auto;
+}
+
+.deposito-quickranges-label {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.deposito-quickranges-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+/* Botones pill (se apoyan en tu .pill existente) */
+
+.deposito-page .pill {
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  background-color: #0ea5e9;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  transition: transform 0.1s ease, box-shadow 0.1s ease, background-color 0.15s ease, border-color 0.1s ease;
+}
+
+.deposito-page .pill:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+  background-color: #0284c7;
+}
+
+.deposito-page .pill:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.deposito-page .pill:disabled {
+  opacity: 0.5;
+  cursor: default;
+  box-shadow: none;
+}
+
+.deposito-page .pill--ghost {
+  background-color: #ffffff;
+  color: #0f172a;
+  border-color: #e5e7eb;
+}
+
+.deposito-page .pill--ghost:hover:not(:disabled) {
+  background-color: #f1f5f9;
+}
+
+/* Botón exportar */
+
+.deposito-export-btn {
+  font-size: 0.75rem;
+  padding-inline: 0.9rem;
+}
+
+/* ==== Mensajes de estado ==== */
+
+.deposito-state {
+  margin: 0.5rem 0;
+}
+
+/* ==== Resumen superior ==== */
+
+.deposito-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.deposito-summary-card {
+  border-radius: 0.75rem;
+  border: 1px solid #e5e7eb;
+  padding: 0.65rem 0.75rem;
+  background-color: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.deposito-summary-card--main {
+  background: linear-gradient(135deg, #0ea5e9, #38bdf8);
+  color: #ffffff;
+  border-color: transparent;
+}
+
+.deposito-summary-card--alert {
+  border-color: #fecaca;
+  background: linear-gradient(135deg, #fef2f2, #fee2e2);
+}
+
+.deposito-summary-label {
+  font-size: 0.75rem;
+  color: inherit;
+  opacity: 0.8;
+}
+
+.deposito-summary-value {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: inherit;
+}
+
+.deposito-summary-sub {
+  font-size: 0.7rem;
+  color: inherit;
+  opacity: 0.8;
+}
+
+/* ==== Grid principal de tarjetas ==== */
+
+.deposito-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.3fr);
+  gap: 1rem;
+}
+
+.deposito-card {
+  border-radius: 0.9rem;
+  border: 1px solid #e5e7eb;
+  background-color: #ffffff;
+  padding: 0.75rem;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.deposito-card--alert {
+  border-color: #fecaca;
+  background: linear-gradient(135deg, #fff7f7, #fef2f2);
+}
+
+.deposito-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  gap: 0.5rem;
+}
+
+.deposito-card-header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.deposito-card-header small {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+/* Acciones header derecha */
+
+.deposito-header-actions {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+/* ==== Tablas ==== */
+
+.deposito-table-wrapper {
+  border-radius: 0.75rem;
+  border: 1px solid #e5e7eb;
+  background-color: #ffffff;
+  overflow: auto;
+  max-height: 55vh;
+}
+
+.deposito-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  min-width: 100%;
+}
+
+.deposito-table thead {
+  position: sticky;
+  top: 0;
+  background-color: #f9fafb;
+  z-index: 1;
+}
+
+.deposito-table th,
+.deposito-table td {
+  padding: 0.45rem 0.6rem;
+  text-align: left;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.deposito-th--numeric,
+.deposito-td--numeric {
+  text-align: right;
+}
+
+.deposito-th--sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.deposito-th--sortable:hover {
+  background-color: #e5e7eb;
+}
+
+.deposito-row:nth-child(even) {
+  background-color: #f9fafb;
+}
+
+.deposito-row:hover {
+  background-color: #e5f2ff;
+}
+
+/* Estados especiales de filas de stock */
+
+.deposito-row--sin-stock {
+  background-color: #fee2e2;
+}
+
+.deposito-row--sin-stock:hover {
+  background-color: #fecaca;
+}
+
+.deposito-row--riesgo {
+  background-color: #fef3c7;
+}
+
+.deposito-row--riesgo:hover {
+  background-color: #fde68a;
+}
+
+/* Mensajes dentro de tabla */
+
+.deposito-empty {
+  padding: 0.6rem;
+  font-style: italic;
+  color: #6b7280;
+  text-align: center;
+}
+
+.deposito-subtext {
+  font-size: 0.7rem;
+  color: #6b7280;
+  margin-top: 0.15rem;
+}
+
+/* Badges */
+
+.deposito-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  margin-left: 0.25rem;
+  font-weight: 600;
+}
+
+.deposito-badge--danger {
+  background-color: #b91c1c;
+  color: #fef2f2;
+}
+
+.deposito-badge--warning {
+  background-color: #f97316;
+  color: #fff7ed;
+}
+
+/* Nota al pie */
+
+.deposito-footnote {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+/* ==== Responsivo ==== */
+
+@media (max-width: 960px) {
+  .deposito-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .deposito-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .deposito-page {
+    padding-inline: 0.75rem;
+  }
+
+  .deposito-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .deposito-card-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .deposito-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .deposito-quickranges {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .deposito-quickranges-buttons {
+    justify-content: flex-start;
+  }
+}
+
+/* ==== Accesibilidad: foco visible para todo lo clickeable ==== */
+
+.deposito-page button:focus-visible,
+.deposito-page th.deposito-th--sortable:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.4);
+}
+
+.deposito-page th.deposito-th--sortable {
+  position: relative;
+}
+
+.deposito-page th.deposito-th--sortable:focus-visible::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 0.35rem;
+  border: 2px solid rgba(37, 99, 235, 0.6);
+  pointer-events: none;
+}
+/* Filtros de la tabla de stock bajo */
+.deposito-lowfilter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.deposito-lowfilter-btn {
+  padding-inline: 0.5rem;
+  font-size: 0.7rem;
+}
+
+.deposito-lowfilter-btn.is-active {
+  background-color: #0ea5e9;
+  color: #ffffff;
+  border-color: #0284c7;
+}
+
+/* Barra visual de stock (relación con el umbral) */
+.deposito-stockbar {
+  margin-top: 0.2rem;
+  width: 100%;
+  height: 0.35rem;
+  border-radius: 999px;
+  background-color: #e5e7eb;
+  overflow: hidden;
+}
+
+.deposito-stockbar-fill {
+  height: 100%;
+  width: calc(var(--ratio) * 100%);
+  background: linear-gradient(90deg, #22c55e, #facc15, #f97316, #ef4444);
+  transition: width 0.2s ease;
+}
+/* Leyenda dentro de la tarjeta de Stock bajo */
+.deposito-legend {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+  margin-top: 8px;
+  font-size: 12px;
+  align-items: center;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.legend-danger { background: #ef4444; }   /* rojo */
+.legend-warning { background: #f59e0b; }  /* naranja */
+.legend-neutral { background: #6b7280; }  /* gris */
+.deposito-summary-sub code { background: #f1f5f9; padding: 0 4px; border-radius: 4px; }
+
+.deposito-critical {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  align-items: baseline;
+}
+.deposito-critical > div b { font-size: 20px; display:block; }
+.deposito-critical > div small { color: #6b7280; }

@@ -180,7 +180,8 @@ export function getUserForLogin(userOrEmailInput) {
     const emailCol = pickCol(eInfo, ["email","Email","correo","Correo"]);
 
     const hashCol   = pickCol(eInfo, ["password_hash","hash","pass_hash","PasswordHash"]);
-    const plainCol  = pickCol(eInfo, ["password","contrasena","contraseña","clave","pass","Password"]);
+    // 🔧 AQUÍ el cambio: agrego "password_plain" como primera opción
+    const plainCol  = pickCol(eInfo, ["password_plain","password","contrasena","contraseña","clave","pass","Password"]);
     const activeCol = pickCol(eInfo, ["is_active","activo","Activo","enabled","estado"]);
 
     if (!userCol && !emailCol) return null;
@@ -224,6 +225,7 @@ export function getUserById(id) {
     const emailCol = pickCol(eInfo, ["email","Email","correo","Correo"]);
     const nombre   = pickCol(eInfo, ["Nombre","nombre"]);
     const apellido = pickCol(eInfo, ["Apellido","apellido"]);
+
 
     const sql = `
       SELECT
@@ -1075,6 +1077,7 @@ export function replaceServiceProducts(servicioId, productIds = []) {
     db.prepare(`DELETE FROM service_products WHERE CAST(ServicioID AS TEXT) = CAST(? AS TEXT)`)
       .run(String(servicioId));
     const ins = db.prepare(`INSERT OR IGNORE INTO service_products (ServicioID, ProductoID) VALUES (?, ?)`);
+
     for (const pid of productIds) {
       if (pid == null || pid === "") continue;
       ins.run(String(servicioId), String(pid));
