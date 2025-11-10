@@ -21,6 +21,7 @@ import servicesRoutes from "./routes/services.js";
 import supervisorRoutes from "./routes/supervisor.js";
 import serviceProductsRoutes from "./routes/serviceProducts.js";
 import reportsRoutes from "./routes/reports.js";
+import depositoRoutes from "./routes/deposito.js";
 
 // SMTP check
 import { verifyTransport } from "./utils/mailer.js";
@@ -32,7 +33,8 @@ app.disable("x-powered-by");
 
 app.use(
   cors({
-    origin: (origin, cb) => cb(null, true), // permite cualquier origen (útil en dev)
+    // En dev permitimos cualquier origen; si necesitás, acá se puede restringir
+    origin: (origin, cb) => cb(null, true),
     credentials: true,
   })
 );
@@ -53,7 +55,7 @@ app.get("/csrf-token", (req, res) => {
   let token = req.cookies?.csrf_token;
   if (!token) token = crypto.randomBytes(16).toString("hex");
   res.cookie("csrf_token", token, {
-    httpOnly: false,                  // el front lo debe leer
+    httpOnly: false,                  // el front lo debe poder leer
     sameSite: "lax",
     secure: env.NODE_ENV === "production",
     maxAge: 12 * 60 * 60 * 1000,      // 12h
@@ -71,6 +73,7 @@ app.use("/services", servicesRoutes);
 app.use("/supervisor", supervisorRoutes);
 app.use("/service-products", serviceProductsRoutes);
 app.use("/reports", reportsRoutes);
+app.use("/deposito", depositoRoutes);
 
 // Healthcheck
 app.get("/_health", (_req, res) => res.json({ ok: true }));

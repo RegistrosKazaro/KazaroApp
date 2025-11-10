@@ -20,6 +20,7 @@ import Cart from "./pages/Cart";
 import Services from "./pages/Services";
 import AdminPanel from "./pages/AdminPanel";
 import Reports from "./pages/Reports";
+import Deposito from "./pages/Deposito";
 import ServiceBudgets from "./pages/ServiceBudgets";
 import "./styles/app.css";
 
@@ -28,7 +29,8 @@ function Guarded() {
   const { user, loading } = useAuth();
   const location = useLocation();
   if (loading) return <div className="state">Cargando…</div>;
-  if (!user) return <Navigate to="/login" replace state={{ from: location }} />;
+  if (!user)
+    return <Navigate to="/login" replace state={{ from: location }} />;
   return <Outlet />;
 }
 
@@ -48,6 +50,7 @@ function RoleIndexRedirect() {
   let target = "admin";
   if (role === "administrativo") target = "products";
   else if (role === "supervisor") target = "services";
+  else if (role === "deposito") target = "deposito";
   return <Navigate to={target} replace />;
 }
 
@@ -62,6 +65,7 @@ function Layout() {
 
   const roles = (auth?.user?.roles || []).map((r) => String(r).toLowerCase());
   const isAdmin = roles.includes("admin");
+  const isDeposito = roles.includes("deposito");
 
   const userLabel =
     auth?.user?.username ||
@@ -81,22 +85,39 @@ function Layout() {
 
   return (
     <div className="app">
-      <nav className="appbar" role="navigation" aria-label="Navegación principal">
+      <nav
+        className="appbar"
+        role="navigation"
+        aria-label="Navegación principal"
+      >
         {/* Brand: admin → admin; no admin → carrito */}
-        <Link to={isAdmin ? `${base}/admin` : `${base}/cart`} className="brand">
+        <Link
+          to={isAdmin ? `${base}/admin` : `${base}/cart`}
+          className="brand"
+        >
           Kazaro
         </Link>
 
         <div className="appbar-right">
           {isAdmin ? (
             <>
-              <NavLink to={`${base}/admin`} className={navClass}>Admin</NavLink>
-              <NavLink to={`${base}/admin/budgets`} className={navClass}>Presupuestos</NavLink>
-              <NavLink to={`${base}/reports`} className={navClass}>Informes</NavLink>
+              <NavLink to={`${base}/admin`} className={navClass}>
+                Admin
+              </NavLink>
+              <NavLink to={`${base}/admin/budgets`} className={navClass}>
+                Presupuestos
+              </NavLink>
+              <NavLink to={`${base}/reports`} className={navClass}>
+                Informes
+              </NavLink>
               <NavLink to={`${base}/cart`} className={navClass}>
                 Carrito <span className="count">{count}</span>
               </NavLink>
-              <button type="button" className="pill danger" onClick={handleLogout}>
+              <button
+                type="button"
+                className="pill danger"
+                onClick={handleLogout}
+              >
                 Salir
               </button>
             </>
@@ -104,12 +125,25 @@ function Layout() {
             <>
               {/* Nombre del usuario */}
               <span className="user">{userLabel}</span>
+
+              {/* Link al panel de Depósito si tiene ese rol */}
+              {isDeposito && (
+                <NavLink to={`${base}/deposito`} className={navClass}>
+                  Depósito
+                </NavLink>
+              )}
+
               {/* Carrito (con contador) */}
               <NavLink to={`${base}/cart`} className={navClass}>
                 Carrito <span className="count">{count}</span>
               </NavLink>
+
               {/* Salir */}
-              <button type="button" className="pill danger" onClick={handleLogout}>
+              <button
+                type="button"
+                className="pill danger"
+                onClick={handleLogout}
+              >
                 Salir
               </button>
             </>
@@ -131,7 +165,7 @@ export default function App() {
       <Route path="/" element={<Login />} />
       <Route path="/login" element={<Login />} />
 
-      {/* Pantalla para elegir entre Administrativo / Supervisor */}
+      {/* Pantalla para elegir entre Administrativo / Supervisor / Depósito */}
       <Route path="/roles" element={<RoleSelect />} />
       {/* Alias para compatibilidad con enlaces viejos del botón */}
       <Route path="/role-select" element={<Navigate to="/roles" replace />} />
@@ -171,6 +205,7 @@ export default function App() {
           {/* Rutas de uso general */}
           <Route path="products" element={<Products />} />
           <Route path="services" element={<Services />} />
+          <Route path="deposito" element={<Deposito />} />
           <Route path="cart" element={<Cart />} />
 
           {/* Índice por rol */}
@@ -184,7 +219,11 @@ export default function App() {
       {/* 404 global */}
       <Route
         path="*"
-        element={<div className="state error" style={{ padding: 20 }}>Ruta no encontrada</div>}
+        element={
+          <div className="state error" style={{ padding: 20 }}>
+            Ruta no encontrada
+          </div>
+        }
       />
     </Routes>
   );

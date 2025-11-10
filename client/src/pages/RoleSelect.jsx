@@ -9,11 +9,29 @@ export default function RoleSelect() {
 
   useEffect(() => {
     if (loading) return;
-    if (!user) return nav("/login", { replace: true });
-    const roles = (user.roles || []).map(r => String(r).toLowerCase());
+
+    // Si no hay usuario logueado, mandamos a login
+    if (!user) {
+      nav("/login", { replace: true });
+      return;
+    }
+
+    const roles = (user.roles || []).map((r) => String(r).toLowerCase());
+
+    // Si solo tiene 1 rol, lo mandamos directo sin mostrar la pantalla
     if (roles.length === 1) {
-      if (roles[0].includes("super")) nav("/app/supervisor/services", { replace: true });
-      else nav("/app/administrativo/products", { replace: true });
+      const r = roles[0];
+
+      if (r.includes("super")) {
+        // Supervisor
+        nav("/app/supervisor/services", { replace: true });
+      } else if (r.includes("deposito")) {
+        // Depósito
+        nav("/app/deposito", { replace: true });
+      } else {
+        // Cualquier otro (administrativo, etc.)
+        nav("/app/administrativo/products", { replace: true });
+      }
     }
   }, [user, loading, nav]);
 
@@ -21,16 +39,38 @@ export default function RoleSelect() {
   if (!user) return null;
 
   return (
-    <div className="catalog role-select" style={{ maxWidth: 640, marginInline: "auto" }}>
+    <div
+      className="catalog role-select"
+      style={{ maxWidth: 640, marginInline: "auto" }}
+    >
       <h2>Elegí cómo querés entrar</h2>
+
       <div className="services-grid">
-        <button className="service-card" onClick={() => nav("/app/administrativo/products")}>
+        <button
+          type="button"
+          className="service-card"
+          onClick={() => nav("/app/administrativo/products")}
+        >
           <div>Administrativo</div>
           <small>Ir al catálogo</small>
         </button>
-        <button className="service-card" onClick={() => nav("/app/supervisor/services")}>
+
+        <button
+          type="button"
+          className="service-card"
+          onClick={() => nav("/app/supervisor/services")}
+        >
           <div>Supervisor</div>
           <small>Seleccionar servicio</small>
+        </button>
+
+        <button
+          type="button"
+          className="service-card"
+          onClick={() => nav("/app/deposito")}
+        >
+          <div>Depósito</div>
+          <small>Ver panel de depósito</small>
         </button>
       </div>
     </div>
