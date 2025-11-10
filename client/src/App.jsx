@@ -65,7 +65,8 @@ function Layout() {
 
   const roles = (auth?.user?.roles || []).map((r) => String(r).toLowerCase());
   const isAdmin = roles.includes("admin");
-  const isDeposito = roles.includes("deposito");
+  const hasDeposito = roles.includes("deposito");
+  const isDepositoSolo = hasDeposito && roles.length === 1;
 
   const userLabel =
     auth?.user?.username ||
@@ -126,8 +127,8 @@ function Layout() {
               {/* Nombre del usuario */}
               <span className="user">{userLabel}</span>
 
-              {/* Link al panel de Depósito si tiene ese rol */}
-              {isDeposito && (
+              {/* Depósito: sólo para usuario cuyo ÚNICO rol es Deposito */}
+              {isDepositoSolo && (
                 <NavLink to={`${base}/deposito`} className={navClass}>
                   Depósito
                 </NavLink>

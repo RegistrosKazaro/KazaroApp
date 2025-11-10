@@ -1,12 +1,39 @@
 // server/src/routes/deposito.js
 import { Router } from "express";
-import { requireAuth, requireRole } from "../middleware/auth.js";
-import { db, getFutureIncomingForProduct } from "../db.js";
+import { requireAuth } from "../middleware/auth.js";
+import { db, getFutureIncomingForProduct, getUserRoles } from "../db.js";
 
 const router = Router();
 
-// Solo rol "Deposito" (o "Admin") puede entrar
-const mustWarehouse = [requireAuth, requireRole(["deposito", "admin"])];
+/**
+ * Middleware: sólo usuarios cuyo ÚNICO rol es "Deposito"
+ */
+function requireDepositoSolo(req, res, next) {
+  try {
+    if (!req.user?.id) {
+      return res.status(401).json({ ok: false, error: "No autenticado" });
+    }
+
+    const roles =
+      (req.user.roles?.length ? req.user.roles : getUserRoles(req.user.id) || [])
+        .map((r) => String(r).toLowerCase());
+
+    const hasDeposito = roles.includes("deposito");
+    const isDepositoSolo = hasDeposito && roles.length === 1;
+
+    if (!isDepositoSolo) {
+      return res.status(403).json({ ok: false, error: "Sin permiso para Depósito" });
+    }
+
+    return next();
+  } catch (e) {
+    console.error("[deposito] requireDepositoSolo:", e?.message || e);
+    return res.status(403).json({ ok: false, error: "Sin permiso" });
+  }
+}
+
+// Todas las rutas de depósito usan este guard
+const mustWarehouse = [requireAuth, requireDepositoSolo];
 
 // Helpers de fecha
 function parseISO(d) {
@@ -104,11 +131,6 @@ router.get("/low-stock", mustWarehouse, (req, res) => {
 
 /**
  * GET /deposito/consumo-desde-ultimo-ingreso/:productId?fallbackStart=YYYY-MM-DD
- *
- * - Busca el último ingreso en stock_movements (qty > 0).
- * - Si aún no hay movimientos, usa fallbackStart (por defecto, primer día del mes).
- * - Calcula consumo desde esa fecha con Pedidos + PedidoItems.
- * - Devuelve también los ingresos futuros desde IncomingStock (vía getFutureIncomingForProduct).
  */
 router.get(
   "/consumo-desde-ultimo-ingreso/:productId",
@@ -123,7 +145,6 @@ router.get(
       const fallbackStart =
         parseISO(req.query.fallbackStart) || firstDayOfMonthISO();
 
-      // Último ingreso real registrado en stock_movements (qty > 0)
       const lastInRow = db
         .prepare(
           `
@@ -137,7 +158,6 @@ router.get(
       const lastIn = lastInRow?.ts || null;
       const startDate = (lastIn || fallbackStart).slice(0, 10);
 
-      // Consumo = sumatoria de cantidades de PedidoItems desde esa fecha
       const consumoRow = db
         .prepare(
           `
@@ -153,7 +173,6 @@ router.get(
         )
         .get(productId, startDate);
 
-      // Ingresos futuros desde IncomingStock (sección Futuro Ingreso)
       const incoming = getFutureIncomingForProduct(productId) || {
         incoming: 0,
         nextEta: null,
@@ -183,9 +202,6 @@ router.get(
 
 /**
  * GET /deposito/overview?start&end&threshold
- * Devuelve todo junto para renderizar rápido:
- *  - top: más consumidos
- *  - low: stock bajo
  */
 router.get("/overview", mustWarehouse, (req, res) => {
   try {
