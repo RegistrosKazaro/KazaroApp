@@ -1,204 +1,410 @@
-/* === CONTENEDOR & TITULOS =============================================== */
-.reports-scope{
-  max-width: 1240px;                /* un poco más ancho para que todo respire */
-  margin-inline: auto;
-  padding-inline: 12px;             /* margen interior para que no pegue a los bordes */
+/* ===========================
+   Layout general de Informes
+   =========================== */
+
+.reports-page {
+  padding: 1.25rem;
+  background: radial-gradient(circle at top left, #f1f5f9 0, #ffffff 45%, #f9fafb 100%);
+  min-height: calc(100vh - 56px);
+  box-sizing: border-box;
 }
 
-.reports-scope h2{
-  margin: 10px 0 8px;
+.reports-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-end;
+  margin-bottom: 1rem;
 }
-.reports-scope h3{
-  margin: 0 0 10px;
-  font-size: clamp(1rem, 0.95rem + 0.3vw, 1.15rem);
+
+.reports-page h1 {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.reports-page-subtitle {
+  margin: 0.25rem 0 0;
+  font-size: 0.9rem;
+  color: #6b7280;
+}
+
+/* ===========================
+   Botones tipo "pill"
+   =========================== */
+
+.reports-page .pill {
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  background-color: #0ea5e9;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  transition:
+    transform 0.1s ease,
+    box-shadow 0.1s ease,
+    background-color 0.15s ease,
+    border-color 0.1s ease;
+}
+
+.reports-page .pill:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+  background-color: #0284c7;
+}
+
+.reports-page .pill:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.reports-page .pill:disabled {
+  opacity: 0.5;
+  cursor: default;
+  box-shadow: none;
+}
+
+.reports-page .pill--ghost {
+  background-color: #ffffff;
+  color: #0f172a;
+  border-color: #e5e7eb;
+}
+
+.reports-page .pill--ghost:hover:not(:disabled) {
+  background-color: #f1f5f9;
+}
+
+/* ===========================
+   Filtros de período (Mes/Año)
+   =========================== */
+
+.reports-period-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+}
+
+.reports-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  color: #4b5563;
+}
+
+.reports-field > span {
+  font-weight: 500;
+}
+
+.reports-field select,
+.reports-field input[type="number"],
+.reports-field input[type="date"],
+.reports-field input[type="text"] {
+  padding: 0.4rem 0.5rem;
+  border-radius: 0.45rem;
+  border: 1px solid #d1d5db;
+  font-size: 0.85rem;
+  min-width: 150px;
+  background-color: #ffffff;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.reports-field select:focus-visible,
+.reports-field input:focus-visible {
+  outline: none;
+  border-color: #0ea5e9;
+  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.25);
+  background-color: #f9fafb;
+}
+
+.reports-period-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+/* ===========================
+   Filtro de servicio
+   =========================== */
+
+.reports-service-filter {
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 0.75rem;
+  background-color: #ffffff;
+  border: 1px solid #e5e7eb;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.reports-service-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+/* ===========================
+   Secciones y títulos
+   =========================== */
+
+.reports-section {
+  margin-top: 0.75rem;
+  margin-bottom: 1.25rem;
+  padding: 0.75rem;
+  border-radius: 0.9rem;
+  background-color: #ffffff;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+}
+
+.reports-section-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: baseline;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 0.5rem;
+}
+
+.reports-section-title h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.reports-section-subtitle {
+  margin: 0.15rem 0 0;
+  font-size: 0.8rem;
+  color: #6b7280;
+}
+
+/* ===========================
+   Cards de resumen
+   =========================== */
+
+.reports-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.reports-summary-card {
+  border-radius: 0.75rem;
+  border: 1px solid #e5e7eb;
+  padding: 0.6rem 0.75rem;
+  background-color: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.reports-summary-card--main {
+  background: linear-gradient(135deg, #0ea5e9, #38bdf8);
+  color: #ffffff;
+  border-color: transparent;
+}
+
+.reports-summary-label {
+  font-size: 0.75rem;
+  color: inherit;
+  opacity: 0.85;
+}
+
+.reports-summary-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: inherit;
+}
+
+.reports-summary-sub {
+  font-size: 0.75rem;
+  color: inherit;
+  opacity: 0.85;
+}
+
+/* Bloques dentro de la sección (sub-areas) */
+
+.reports-section-block {
+  margin-top: 0.75rem;
+}
+
+.reports-subtitle {
+  margin: 0 0 0.4rem;
+  font-size: 0.95rem;
+  font-weight: 600;
   color: #111827;
 }
 
-/* === TOOLBAR ============================================================ */
-.reports-toolbar{
-  display: flex;
-  align-items: center;
-  gap: 12px 14px;                   /* column-gap, row-gap */
-  flex-wrap: wrap;
-  margin: 8px 0 14px;
-  padding: 10px 12px;
-  background: #f8fafc;
+/* ===========================
+   Tablas
+   =========================== */
+
+.reports-table-wrapper {
+  border-radius: 0.75rem;
   border: 1px solid #e5e7eb;
-  border-radius: 10px;
+  background-color: #ffffff;
+  overflow: auto;
+  max-height: 55vh;
 }
 
-.reports-toolbar label{
-  font-weight: 700;
-  color: #2563eb; 
-  margin-right: 4px;
-}
-
-.reports-toolbar .select{
-  min-height: 40px;
-  padding: 6px 10px;
-}
-
-.reports-actions{
-  display: flex;
-  gap: 8px;
-  margin-left: auto;                /* empuja las acciones hacia la derecha */
-}
-
-/* === RESUMEN SUPERIOR =================================================== */
-.reports-summary{
-  margin-top: 12px;
-  padding: 10px 12px;
-  background: #f1f5ff;
-  border: 1px solid #dbe7ff;
-  color: #0b1a78;
-  border-radius: 10px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-}
-
-/* === GRID PRINCIPAL ===================================================== */
-.reports-grid{
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 18px;
-  margin-top: 14px;
-}
-
-@media (max-width: 1100px){
-  .reports-grid{ grid-template-columns: 1fr; }
-}
-
-/* === TABLAS ============================================================= */
-.reports-scope .sup-table{
+.reports-table {
   width: 100%;
-  table-layout: fixed;              /* fija proporciones y evita “dientes de sierra” */
-  border-collapse: separate;
-  border-spacing: 0;
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 8px 18px rgba(0,0,0,.05);
+  border-collapse: collapse;
+  font-size: 0.85rem;
 }
 
-/* Proporciones de columnas: #, Servicio, Pedidos, Unidades, Monto */
-.reports-scope .sup-table thead th:nth-child(1),
-.reports-scope .sup-table tbody td:nth-child(1){ width: 52px; }
-
-.reports-scope .sup-table thead th:nth-child(2),
-.reports-scope .sup-table tbody td:nth-child(2){
-  width: auto;                      /* columna flexible */
-  max-width: 420px;                 /* límite para que no invada las numéricas */
+.reports-table thead {
+  position: sticky;
+  top: 0;
+  background-color: #f9fafb;
+  z-index: 1;
 }
 
-.reports-scope .sup-table thead th:nth-child(3),
-.reports-scope .sup-table tbody td:nth-child(3){ width: 120px; }
-
-.reports-scope .sup-table thead th:nth-child(4),
-.reports-scope .sup-table tbody td:nth-child(4){ width: 120px; }
-
-.reports-scope .sup-table thead th:nth-child(5),
-.reports-scope .sup-table tbody td:nth-child(5){ width: 150px; }
-
-.reports-scope .sup-table thead th{
-  background: #eef4ff;
-  color: #0b1a78;
-  font-weight: 800;
+.reports-table th,
+.reports-table td {
+  padding: 0.45rem 0.6rem;
   text-align: left;
-  padding: 10px 12px;
-  border-bottom: 1px solid #dee3ef;
-  font-size: 14px;
-}
-
-.reports-scope .sup-table tbody td{
-  padding: 10px 12px;
-  border-bottom: 1px solid #eef2f7;
-  vertical-align: top;
-  font-size: 14px;
-}
-
-/* Filas y hover */
-.reports-scope .sup-table tbody tr:nth-child(odd){ background: #fafcff; }
-.reports-scope .sup-table tbody tr:hover{ background: #f3f8ff; }
-
-/* Nombre (2da columna) con ellipsis y buen alineado */
-.reports-scope .sup-table tbody td:nth-child(2){
+  border-bottom: 1px solid #f3f4f6;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-weight: 600;
 }
 
-/* Números tabulares y alineados a la derecha */
-.mono{
-  font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+.reports-table th {
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: #4b5563;
+}
+
+.reports-table td {
+  font-size: 0.8rem;
+  color: #111827;
+}
+
+.reports-table tr:nth-child(even) td {
+  background-color: #f9fafb;
+}
+
+.reports-table tr:hover td {
+  background-color: #e5f2ff;
+}
+
+.reports-table .numeric {
   text-align: right;
 }
 
-/* === TARJETAS DE GRÁFICO =============================================== */
-.chart-card{
-  margin-top: 12px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  box-shadow: 0 8px 18px rgba(0,0,0,.05);
+.reports-table .empty {
+  text-align: center;
+  font-style: italic;
+  color: #6b7280;
 }
 
-.chart-title{
-  font-weight: 800;
-  color: #0b1a78;
-  padding: 10px 12px;
-  border-bottom: 1px solid #eef2f7;
+/* ===========================
+   Layout de dos columnas
+   =========================== */
+
+.reports-two-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 0.75rem;
+  margin-top: 0.75rem;
 }
 
-.chart-box{
-  padding: 8px 6px 12px;
-  height: 300px; 
+/* ===========================
+   Accesibilidad y foco
+   =========================== */
+
+.reports-page button:focus-visible,
+.reports-page select:focus-visible,
+.reports-page input:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.45);
 }
 
-/* Ajustes de altura en pantallas más chicas */
-@media (max-width: 1100px){
-  .chart-box{ height: 280px; }
-}
-@media (max-width: 680px){
-  .chart-box{ height: 240px; }
+/* ===========================
+   Responsividad
+   =========================== */
+
+@media (max-width: 900px) {
+  .reports-page {
+    padding-inline: 0.75rem;
+  }
+
+  .reports-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .reports-two-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .reports-section-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 
-/* === PILLS (botones secundarios) ======================================= */
-.pill--secondary{
-  background: #eef4ff;
-  border: 1px solid #cfe0ff;
-  color: #0b1a78;
+@media (max-width: 640px) {
+  .reports-summary-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .reports-period-filters {
+    width: 100%;
+  }
+
+  .reports-service-filter {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .reports-service-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .reports-table-wrapper {
+    max-height: 60vh;
+  }
 }
-.pill--danger{
-  background: #fee2e2;
-  border: 1px solid #fecaca;
-  color: #7f1d1d;
+/* Mostrar/ocultar cosas en el PDF */
+.print-only {
+  display: none;
 }
 
-/* === ACCESIBILIDAD / MOVIMIENTO ======================================== */
-@media (prefers-reduced-motion: reduce){
-  *{ transition: none !important; animation: none !important; }
-}
-
-/* === IMPRESIÓN ========================================================= */
 @media print {
-  body { background: #fff !important; }
-  .appbar, .appbar-right, .reports-toolbar, .pill, .btn { display: none !important; }
-  .reports-scope{
-    max-width: 100%;
-    margin: 0;
-    padding: 0;
+  .no-print {
+    display: none !important;
   }
-  .reports-grid{
-    grid-template-columns: 1fr; /* una columna para caber mejor */
-    gap: 10px;
+
+  .print-only {
+    display: block !important;
   }
-  .chart-box{ height: 230px; }
-  .sup-table{
+
+  body {
+    background: #fff;
+  }
+
+  .reports-page {
     box-shadow: none;
-    border: 1px solid #ccc;
+    border-radius: 0;
   }
 }

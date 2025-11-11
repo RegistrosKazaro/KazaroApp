@@ -24,7 +24,7 @@ export default function Products() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // helper para actualizar search params de forma segura (sin función en setSp)
+  // helper para actualizar search params de forma segura
   const updateParams = (updater, options) => {
     const next = new URLSearchParams(sp);
     updater(next);
@@ -74,7 +74,7 @@ export default function Products() {
       .then(({ data }) => setItems(data || []))
       .catch(() => setError("No se pudieron cargar los productos"))
       .finally(() => setLoading(false));
-  }, [cat, q, isSupervisor, serviceId]); // deps simples y completas
+  }, [cat, q, isSupervisor, serviceId]); // deps simples
 
   const paginated = useMemo(() => {
     const start = (page - 1) * pageSize;
@@ -163,11 +163,13 @@ export default function Products() {
       )}
 
       {loading && <div className="state">Cargando…</div>}
+
       {!loading && error && (
         <div className="state error" role="alert">
           {error}
         </div>
       )}
+
       {!loading &&
         !error &&
         !items.length &&
@@ -198,9 +200,7 @@ export default function Products() {
                   p={p}
                   remainingStock={remaining}
                   onAdd={(qty) => {
-                    // *** IMPORTANTE ***
                     // Sólo dejamos pedir si hay stock REAL disponible.
-                    // El stock programado (incoming) es sólo informativo.
                     const available = totalStock ?? 0;
                     const remainingQty =
                       available > 0 && remaining !== undefined
@@ -208,8 +208,7 @@ export default function Products() {
                         : Math.max(0, available);
 
                     if (remainingQty <= 0) {
-                      // sin stock real → no se puede pedir
-                      return;
+                      return; // sin stock real → no se puede pedir
                     }
 
                     const safeQty = Math.min(
@@ -223,10 +222,9 @@ export default function Products() {
                       price: p.price ?? 0,
                       qty: safeQty,
                       stock: totalStock,
-                      incoming, // lo guardo por si querés mostrarlo en el resumen del carrito
+                      incoming,
                     });
                   }}
-                  // acá SOLO controlamos la restricción de supervisor sin servicio
                   addDisabled={isSupervisor && !serviceId}
                 />
               );
@@ -287,7 +285,7 @@ function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
   // hay info de ingreso programado (pero no queremos que se pueda pedir todavía)
   const showIncomingInfo = noStockActual && hasIncoming;
 
-  // sinRestante = no hay stock disponible para pedir (ni siquiera por preventa)
+  // sinRestante = no hay stock disponible para pedir
   const sinRestante =
     remainingStock !== undefined && remainingStock <= 0;
 

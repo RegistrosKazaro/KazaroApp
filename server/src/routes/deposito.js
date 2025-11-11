@@ -14,15 +14,18 @@ function requireDepositoSolo(req, res, next) {
       return res.status(401).json({ ok: false, error: "No autenticado" });
     }
 
-    const roles =
-      (req.user.roles?.length ? req.user.roles : getUserRoles(req.user.id) || [])
-        .map((r) => String(r).toLowerCase());
+    const roles = (req.user.roles?.length
+      ? req.user.roles
+      : getUserRoles(req.user.id) || []
+    ).map((r) => String(r).toLowerCase());
 
     const hasDeposito = roles.includes("deposito");
     const isDepositoSolo = hasDeposito && roles.length === 1;
 
     if (!isDepositoSolo) {
-      return res.status(403).json({ ok: false, error: "Sin permiso para Depósito" });
+      return res
+        .status(403)
+        .json({ ok: false, error: "Sin permiso para Depósito" });
     }
 
     return next();
@@ -59,25 +62,28 @@ router.get("/top-consumidos", mustWarehouse, (req, res) => {
   try {
     const start = parseISO(req.query.start) || firstDayOfMonthISO();
     const end = parseISO(req.query.end) || todayISO();
-    const limit = Math.min(parseInt(req.query.limit ?? "20", 10) || 20, 200);
+    const limit = Math.min(
+      parseInt(req.query.limit ?? "20", 10) || 20,
+      200
+    );
 
     const rows = db
       .prepare(
         `
         SELECT
-          pi.ProductoID AS productId,
-          p.ProductName AS name,
-          COALESCE(p.Unit, '') AS unit,
-          COALESCE(p.Code, '') AS code,
-          SUM(pi.Cantidad) AS total
+          pi.ProductoID          AS productId,
+          p.ProductName          AS name,
+          COALESCE(p.Unit, '')   AS unit,
+          COALESCE(p.Code, '')   AS code,
+          SUM(pi.Cantidad)       AS total
         FROM PedidoItems pi
-        JOIN Pedidos pe ON pe.PedidoID = pi.PedidoID
-        JOIN Productos p ON p.ProductID = pi.ProductoID
+        JOIN Pedidos pe   ON pe.PedidoID  = pi.PedidoID
+        JOIN Productos p  ON p.ProductID  = pi.ProductoID
         WHERE date(pe.Fecha) BETWEEN date(?) AND date(?)
         GROUP BY pi.ProductoID
         ORDER BY total DESC
         LIMIT ?
-      `,
+      `
       )
       .all(start, end, limit)
       .map((r) => ({ ...r, total: Number(r.total || 0) }));
@@ -85,9 +91,9 @@ router.get("/top-consumidos", mustWarehouse, (req, res) => {
     return res.json({ start, end, rows });
   } catch (e) {
     console.error("[deposito] /top-consumidos error:", e);
-    return res
-      .status(500)
-      .json({ error: "No se pudo calcular los productos más consumidos" });
+    return res.status(500).json({
+      error: "No se pudo calcular los productos más consumidos",
+    });
   }
 });
 
@@ -98,24 +104,25 @@ router.get("/top-consumidos", mustWarehouse, (req, res) => {
 router.get("/low-stock", mustWarehouse, (req, res) => {
   try {
     const threshold =
-      Math.max(0, parseInt(req.query.threshold ?? "10", 10) || 10);
-    const limit = Math.min(parseInt(req.query.limit ?? "200", 10) || 200, 500);
+      Math.max(0, parseInt(req.query.threshold ?? "10", 10)) || 10;
+    const limit =
+      Math.min(parseInt(req.query.limit ?? "200", 10) || 200, 500);
 
     const rows = db
       .prepare(
         `
         SELECT
-          p.ProductID AS productId,
-          p.ProductName AS name,
-          COALESCE(p.Unit, '') AS unit,
-          COALESCE(p.Code, '') AS code,
+          p.ProductID                         AS productId,
+          p.ProductName                       AS name,
+          COALESCE(p.Unit, '')                AS unit,
+          COALESCE(p.Code, '')                AS code,
           COALESCE(s.CantidadActual, p.Stock, 0) AS stock
         FROM Productos p
         LEFT JOIN Stock s ON s.ProductoID = p.ProductID
         WHERE COALESCE(s.CantidadActual, p.Stock, 0) <= ?
         ORDER BY stock ASC, name COLLATE NOCASE
         LIMIT ?
-      `,
+      `
       )
       .all(threshold, limit)
       .map((r) => ({ ...r, stock: Number(r.stock || 0) }));
@@ -123,9 +130,9 @@ router.get("/low-stock", mustWarehouse, (req, res) => {
     return res.json({ threshold, rows });
   } catch (e) {
     console.error("[deposito] /low-stock error:", e);
-    return res
-      .status(500)
-      .json({ error: "No se pudo listar los productos con stock bajo" });
+    return res.status(500).json({
+      error: "No se pudo listar los productos con stock bajo",
+    });
   }
 });
 
@@ -145,13 +152,14 @@ router.get(
       const fallbackStart =
         parseISO(req.query.fallbackStart) || firstDayOfMonthISO();
 
+      // Último ingreso en stock_movements (columna timestamp, NO created_at)
       const lastInRow = db
         .prepare(
           `
           SELECT MAX(timestamp) AS ts
           FROM stock_movements
           WHERE product_id = ? AND qty > 0
-        `,
+        `
         )
         .get(productId);
 
@@ -162,21 +170,22 @@ router.get(
         .prepare(
           `
           SELECT
-            COALESCE(SUM(pi.Cantidad), 0) AS consumido,
-            MIN(date(pe.Fecha)) AS first_date,
-            MAX(date(pe.Fecha)) AS last_date
+            COALESCE(SUM(pi.Cantidad), 0)  AS consumido,
+            MIN(date(pe.Fecha))           AS first_date,
+            MAX(date(pe.Fecha))           AS last_date
           FROM PedidoItems pi
           JOIN Pedidos pe ON pe.PedidoID = pi.PedidoID
           WHERE pi.ProductoID = ?
             AND date(pe.Fecha) >= date(?)
-        `,
+        `
         )
         .get(productId, startDate);
 
-      const incoming = getFutureIncomingForProduct(productId) || {
-        incoming: 0,
-        nextEta: null,
-      };
+      const incoming =
+        getFutureIncomingForProduct(productId) || {
+          incoming: 0,
+          nextEta: null,
+        };
 
       return res.json({
         productId,
@@ -191,42 +200,44 @@ router.get(
     } catch (e) {
       console.error(
         "[deposito] /consumo-desde-ultimo-ingreso error:",
-        e,
+        e
       );
-      return res
-        .status(500)
-        .json({ error: "No se pudo calcular el consumo desde el último ingreso" });
+      return res.status(500).json({
+        error:
+          "No se pudo calcular el consumo desde el último ingreso",
+      });
     }
-  },
+  }
 );
 
 /**
  * GET /deposito/overview?start&end&threshold
+ * Devuelve: top consumidos + lista de stock bajo en un solo payload.
  */
 router.get("/overview", mustWarehouse, (req, res) => {
   try {
     const start = parseISO(req.query.start) || firstDayOfMonthISO();
     const end = parseISO(req.query.end) || todayISO();
     const threshold =
-      Math.max(0, parseInt(req.query.threshold ?? "10", 10) || 10);
+      Math.max(0, parseInt(req.query.threshold ?? "10", 10)) || 10;
 
     const top = db
       .prepare(
         `
         SELECT
-          pi.ProductoID AS productId,
-          p.ProductName AS name,
-          COALESCE(p.Unit, '') AS unit,
-          COALESCE(p.Code, '') AS code,
-          SUM(pi.Cantidad) AS total
+          pi.ProductoID          AS productId,
+          p.ProductName          AS name,
+          COALESCE(p.Unit, '')   AS unit,
+          COALESCE(p.Code, '')   AS code,
+          SUM(pi.Cantidad)       AS total
         FROM PedidoItems pi
-        JOIN Pedidos pe ON pe.PedidoID = pi.PedidoID
-        JOIN Productos p ON p.ProductID = pi.ProductoID
+        JOIN Pedidos pe   ON pe.PedidoID  = pi.PedidoID
+        JOIN Productos p  ON p.ProductID  = pi.ProductoID
         WHERE date(pe.Fecha) BETWEEN date(?) AND date(?)
         GROUP BY pi.ProductoID
         ORDER BY total DESC
         LIMIT 20
-      `,
+      `
       )
       .all(start, end)
       .map((r) => ({ ...r, total: Number(r.total || 0) }));
@@ -235,17 +246,17 @@ router.get("/overview", mustWarehouse, (req, res) => {
       .prepare(
         `
         SELECT
-          p.ProductID AS productId,
-          p.ProductName AS name,
-          COALESCE(p.Unit, '') AS unit,
-          COALESCE(p.Code, '') AS code,
+          p.ProductID                         AS productId,
+          p.ProductName                       AS name,
+          COALESCE(p.Unit, '')                AS unit,
+          COALESCE(p.Code, '')                AS code,
           COALESCE(s.CantidadActual, p.Stock, 0) AS stock
         FROM Productos p
         LEFT JOIN Stock s ON s.ProductoID = p.ProductID
         WHERE COALESCE(s.CantidadActual, p.Stock, 0) <= ?
         ORDER BY stock ASC, name COLLATE NOCASE
         LIMIT 200
-      `,
+      `
       )
       .all(threshold)
       .map((r) => ({ ...r, stock: Number(r.stock || 0) }));
@@ -253,9 +264,9 @@ router.get("/overview", mustWarehouse, (req, res) => {
     return res.json({ start, end, threshold, top, low });
   } catch (e) {
     console.error("[deposito] /overview error:", e);
-    return res
-      .status(500)
-      .json({ error: "No se pudo construir el resumen de Depósito" });
+    return res.status(500).json({
+      error: "No se pudo construir el resumen de Depósito",
+    });
   }
 });
 
@@ -266,32 +277,32 @@ router.get("/_selfcheck", requireAuth, (_req, res) => {
   try {
     const hasPedidos = !!db
       .prepare(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='Pedidos'`,
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='Pedidos'`
       )
       .get();
     const hasPedidoItems = !!db
       .prepare(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='PedidoItems'`,
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='PedidoItems'`
       )
       .get();
     const hasProductos = !!db
       .prepare(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='Productos'`,
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='Productos'`
       )
       .get();
     const hasStock = !!db
       .prepare(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='Stock'`,
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='Stock'`
       )
       .get();
     const hasMov = !!db
       .prepare(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='stock_movements'`,
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='stock_movements'`
       )
       .get();
     const hasIncoming = !!db
       .prepare(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='IncomingStock'`,
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='IncomingStock'`
       )
       .get();
 
@@ -307,7 +318,9 @@ router.get("/_selfcheck", requireAuth, (_req, res) => {
       },
     });
   } catch (e) {
-    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    return res
+      .status(500)
+      .json({ ok: false, error: e?.message || String(e) });
   }
 });
 

@@ -40,13 +40,20 @@ router.get("/products/_schema", mustBeAdmin, (_req, res) => {
       cols: sch.cols,
     });
   } catch (e) {
-    res.status(500).json({ error: e?.message || "No se pudo detectar el esquema" });
+    res
+      .status(500)
+      .json({ error: e?.message || "No se pudo detectar el esquema" });
   }
 });
 
 router.get("/product-categories", mustBeAdmin, (_req, res) => {
-  try { res.json(adminListCategoriesForSelect()); }
-  catch { res.status(500).json({ error: "No se pudieron cargar las categorías" }); }
+  try {
+    res.json(adminListCategoriesForSelect());
+  } catch {
+    res
+      .status(500)
+      .json({ error: "No se pudieron cargar las categorías" });
+  }
 });
 
 router.get("/products", mustBeAdmin, (req, res) => {
@@ -60,7 +67,9 @@ router.get("/products", mustBeAdmin, (req, res) => {
 
     const where = q
       ? `WHERE ${prodName} LIKE @like
-             ${prodCode ? `OR IFNULL(${prodCode},'') LIKE @like` : ""}
+             ${
+               prodCode ? `OR IFNULL(${prodCode},'') LIKE @like` : ""
+             }
              OR CAST(${prodId} AS TEXT) LIKE @like`
       : "";
 
@@ -96,7 +105,14 @@ router.post("/products", mustBeAdmin, (req, res) => {
   try {
     const sch = prodSchemaOrThrow();
     const { products } = sch.tables;
-    const { prodName, prodPrice, prodStock, prodCode, prodCat, prodCatName } = sch.cols;
+    const {
+      prodName,
+      prodPrice,
+      prodStock,
+      prodCode,
+      prodCat,
+      prodCatName,
+    } = sch.cols;
 
     const name = String(req.body?.name ?? "").trim();
     if (!name) return res.status(400).json({ error: "name es requerido" });
@@ -105,27 +121,53 @@ router.post("/products", mustBeAdmin, (req, res) => {
     const vals = [name];
 
     if (prodPrice && req.body?.price !== undefined) {
-      const v = (req.body.price === "" || req.body.price === null) ? null : Number(req.body.price);
-      cols.push(prodPrice); vals.push(v);
+      const v =
+        req.body.price === "" || req.body.price === null
+          ? null
+          : Number(req.body.price);
+      cols.push(prodPrice);
+      vals.push(v);
     }
     if (prodStock && req.body?.stock !== undefined) {
-      const v = (req.body.stock === "" || req.body.stock === null) ? null : Number(req.body.stock);
-      cols.push(prodStock); vals.push(v);
+      const v =
+        req.body.stock === "" || req.body.stock === null
+          ? null
+          : Number(req.body.stock);
+      cols.push(prodStock);
+      vals.push(v);
     }
     if (prodCode && req.body?.code !== undefined) {
-      const v = (req.body.code === "" || req.body.code === null) ? null : String(req.body.code);
-      cols.push(prodCode); vals.push(v);
+      const v =
+        req.body.code === "" || req.body.code === null
+          ? null
+          : String(req.body.code);
+      cols.push(prodCode);
+      vals.push(v);
     }
 
     if (prodCat) {
-      const catId = (req.body?.catId !== undefined) ? req.body.catId : req.body?.categoryId;
-      if (catId !== undefined) { cols.push(prodCat); vals.push((catId === "" || catId === null) ? null : catId); }
+      const catId =
+        req.body?.catId !== undefined
+          ? req.body.catId
+          : req.body?.categoryId;
+      if (catId !== undefined) {
+        cols.push(prodCat);
+        vals.push(catId === "" || catId === null ? null : catId);
+      }
     } else if (prodCatName && req.body?.categoryName !== undefined) {
-      cols.push(prodCatName); vals.push(String(req.body.categoryName ?? "").trim() || null);
+      cols.push(prodCatName);
+      vals.push(String(req.body.categoryName ?? "").trim() || null);
     }
 
     const placeholders = cols.map(() => "?").join(",");
-    const info = db.prepare(`INSERT INTO ${products} (${cols.join(",")}) VALUES (${placeholders})`).run(vals);
+    const info = db
+      .prepare(
+        `INSERT INTO ${products} (${cols.join(
+          ",",
+        )}) VALUES (${placeholders})`,
+      )
+      .run(...vals); // importante: spread de los valores
+
     res.status(201).json({ ok: true, id: info.lastInsertRowid });
   } catch {
     res.status(500).json({ error: "No se pudo crear el producto" });
@@ -136,7 +178,15 @@ router.put("/products/:id", mustBeAdmin, (req, res) => {
   try {
     const sch = prodSchemaOrThrow();
     const { products } = sch.tables;
-    const { prodId, prodName, prodPrice, prodStock, prodCode, prodCat, prodCatName } = sch.cols;
+    const {
+      prodId,
+      prodName,
+      prodPrice,
+      prodStock,
+      prodCode,
+      prodCat,
+      prodCatName,
+    } = sch.cols;
 
     const id = req.params.id;
 
@@ -151,7 +201,7 @@ router.put("/products/:id", mustBeAdmin, (req, res) => {
     if (prodPrice && req.body?.price !== undefined) {
       let v = req.body.price;
       if (v === "") v = 0;
-      v = (v === null) ? null : Number(v);
+      v = v === null ? null : Number(v);
       sets.push(`${prodPrice} = ?`);
       vals.push(v);
     }
@@ -159,35 +209,47 @@ router.put("/products/:id", mustBeAdmin, (req, res) => {
     if (prodStock && req.body?.stock !== undefined) {
       let v = req.body.stock;
       if (v === "") v = 0;
-      v = (v === null) ? null : Number(v);
+      v = v === null ? null : Number(v);
       sets.push(`${prodStock} = ?`);
       vals.push(v);
     }
 
     if (prodCode && req.body?.code !== undefined) {
-      const v = (req.body.code === null) ? null : String(req.body.code ?? "");
+      const v = req.body.code === null ? null : String(req.body.code ?? "");
       sets.push(`${prodCode} = ?`);
       vals.push(v);
     }
 
-    if (prodCat && (req.body?.catId !== undefined || req.body?.categoryId !== undefined)) {
-      const v = (req.body.catId !== undefined) ? req.body.catId : req.body.categoryId;
+    if (
+      prodCat &&
+      (req.body?.catId !== undefined || req.body?.categoryId !== undefined)
+    ) {
+      const v =
+        req.body.catId !== undefined ? req.body.catId : req.body.categoryId;
       sets.push(`${prodCat} = ?`);
-      vals.push((v === "" || v === null) ? null : v);
+      vals.push(v === "" || v === null ? null : v);
     } else if (!prodCat && prodCatName && req.body?.categoryName !== undefined) {
       sets.push(`${prodCatName} = ?`);
       vals.push(String(req.body.categoryName ?? "").trim() || null);
     }
 
-    if (!sets.length) return res.status(400).json({ error: "Nada para actualizar" });
+    if (!sets.length)
+      return res.status(400).json({ error: "Nada para actualizar" });
 
-    const info = db.prepare(
-      `UPDATE ${products} SET ${sets.join(", ")} WHERE ${prodId} = ? OR rowid = ?`
-    ).run(...vals, id, id);
+    const info = db
+      .prepare(
+        `UPDATE ${products} SET ${sets.join(
+          ", ",
+        )} WHERE ${prodId} = ? OR rowid = ?`,
+      )
+      .run(...vals, id, id);
 
-    if (!info.changes) return res.status(404).json({ error: "Producto no encontrado" });
+    if (!info.changes)
+      return res.status(404).json({ error: "Producto no encontrado" });
 
-    const updated = db.prepare(`
+    const updated = db
+      .prepare(
+        `
       SELECT ${prodId} AS id,
              ${prodName} AS name
              ${prodCode  ? `, ${prodCode}  AS code`  : ""}
@@ -196,7 +258,9 @@ router.put("/products/:id", mustBeAdmin, (req, res) => {
       FROM ${products}
       WHERE ${prodId} = ? OR rowid = ?
       LIMIT 1
-    `).get(id, id);
+    `,
+      )
+      .get(id, id);
 
     res.json({ ok: true, product: updated });
   } catch (e) {
@@ -211,11 +275,14 @@ router.delete("/products/:id", mustBeAdmin, (req, res) => {
     const { prodId } = sch.cols;
     const id = req.params.id;
 
-    const info = db.prepare(
-      `DELETE FROM ${products} WHERE ${prodId} = ? OR rowid = ?`
-    ).run(id, id);
+    const info = db
+      .prepare(
+        `DELETE FROM ${products} WHERE ${prodId} = ? OR rowid = ?`,
+      )
+      .run(id, id);
 
-    if (!info.changes) return res.status(404).json({ error: "Producto no encontrado" });
+    if (!info.changes)
+      return res.status(404).json({ error: "Producto no encontrado" });
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "No se pudo eliminar" });
@@ -228,21 +295,30 @@ router.patch("/products/:id/stock", mustBeAdmin, (req, res) => {
     const { products } = sch.tables;
     const { prodId, prodStock } = sch.cols;
 
-    if (!prodStock) return res.status(400).json({ error: "La tabla de productos no tiene columna de stock" });
+    if (!prodStock)
+      return res
+        .status(400)
+        .json({ error: "La tabla de productos no tiene columna de stock" });
 
     const id = req.params.id;
     const delta = Number(req.body?.delta ?? NaN);
-    if (!Number.isFinite(delta)) return res.status(400).json({ error: "delta inválido" });
+    if (!Number.isFinite(delta))
+      return res.status(400).json({ error: "delta inválido" });
 
-    const r = db.prepare(
-      `UPDATE ${products} SET ${prodStock} = COALESCE(${prodStock},0) + ? WHERE ${prodId} = ? OR rowid = ?`
-    ).run(delta, id, id);
+    const r = db
+      .prepare(
+        `UPDATE ${products} SET ${prodStock} = COALESCE(${prodStock},0) + ? WHERE ${prodId} = ? OR rowid = ?`,
+      )
+      .run(delta, id, id);
 
-    if (!r.changes) return res.status(404).json({ error: "Producto no encontrado" });
+    if (!r.changes)
+      return res.status(404).json({ error: "Producto no encontrado" });
 
-    const row = db.prepare(
-      `SELECT ${prodId} AS id, ${prodStock} AS stock FROM ${products} WHERE ${prodId} = ? OR rowid = ? LIMIT 1`
-    ).get(id, id);
+    const row = db
+      .prepare(
+        `SELECT ${prodId} AS id, ${prodStock} AS stock FROM ${products} WHERE ${prodId} = ? OR rowid = ? LIMIT 1`,
+      )
+      .get(id, id);
 
     res.json({ ok: true, product: row });
   } catch {
@@ -256,51 +332,70 @@ router.patch("/products/:id/stock", mustBeAdmin, (req, res) => {
 
 // Helpers reutilizables
 function listIncomingForProduct(productId) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT id, product_id, qty, eta
     FROM IncomingStock
     WHERE CAST(product_id AS TEXT) = CAST(? AS TEXT)
     ORDER BY datetime(eta)
-  `).all(productId);
+  `,
+    )
+    .all(productId);
 }
 
 function createIncomingForProduct(productId, qty, eta) {
-  const info = db.prepare(`
+  const info = db
+    .prepare(
+      `
     INSERT INTO IncomingStock (product_id, qty, eta)
     VALUES (?, ?, ?)
-  `).run(productId, Math.round(qty), eta);
+  `,
+    )
+    .run(productId, Math.round(qty), eta);
 
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT id, product_id, qty, eta
     FROM IncomingStock
     WHERE id = ?
-  `).get(info.lastInsertRowid);
+  `,
+    )
+    .get(info.lastInsertRowid);
 }
 
 function deleteIncomingById(id) {
-  const info = db.prepare(`DELETE FROM IncomingStock WHERE id = ?`).run(id);
+  const info = db
+    .prepare(`DELETE FROM IncomingStock WHERE id = ?`)
+    .run(id);
   return info.changes > 0;
 }
 
 // Suma al stock del producto y borra el registro de IncomingStock
 function confirmIncomingById(id) {
-  const row = db.prepare(`
+  const row = db
+    .prepare(
+      `
     SELECT id, product_id, qty, eta
     FROM IncomingStock
     WHERE id = ?
-  `).get(id);
+  `,
+    )
+    .get(id);
   if (!row) return null;
 
   const sch = prodSchemaOrThrow();
   const { products } = sch.tables;
   const { prodId, prodStock } = sch.cols;
-  if (!prodStock) throw new Error("La tabla de productos no tiene columna de stock");
+  if (!prodStock)
+    throw new Error("La tabla de productos no tiene columna de stock");
 
   const tx = db.transaction(() => {
     db.prepare(
       `UPDATE ${products}
        SET ${prodStock} = COALESCE(${prodStock},0) + ?
-       WHERE ${prodId} = ? OR rowid = ?`
+       WHERE ${prodId} = ? OR rowid = ?`,
     ).run(row.qty, row.product_id, row.product_id);
 
     db.prepare(`DELETE FROM IncomingStock WHERE id = ?`).run(id);
@@ -308,12 +403,16 @@ function confirmIncomingById(id) {
 
   tx();
 
-  const updated = db.prepare(`
+  const updated = db
+    .prepare(
+      `
     SELECT ${prodId} AS id, ${prodStock} AS stock
     FROM ${products}
     WHERE ${prodId} = ? OR rowid = ?
     LIMIT 1
-  `).get(row.product_id, row.product_id);
+  `,
+    )
+    .get(row.product_id, row.product_id);
 
   return { incoming: row, product: updated };
 }
@@ -325,13 +424,16 @@ function confirmIncomingById(id) {
 router.get("/products/:id/incoming", mustBeAdmin, (req, res) => {
   try {
     const pid = String(req.params.id || "").trim();
-    if (!pid) return res.status(400).json({ error: "id de producto requerido" });
+    if (!pid)
+      return res.status(400).json({ error: "id de producto requerido" });
 
     const rows = listIncomingForProduct(pid);
     res.json(rows);
   } catch (e) {
     console.error("GET /admin/products/:id/incoming error:", e);
-    res.status(500).json({ error: "No se pudieron leer los ingresos futuros" });
+    res
+      .status(500)
+      .json({ error: "No se pudieron leer los ingresos futuros" });
   }
 });
 
@@ -343,7 +445,8 @@ router.get("/products/:id/incoming", mustBeAdmin, (req, res) => {
 router.post("/products/:id/incoming", mustBeAdmin, (req, res) => {
   try {
     const pid = String(req.params.id || "").trim();
-    if (!pid) return res.status(400).json({ error: "id de producto requerido" });
+    if (!pid)
+      return res.status(400).json({ error: "id de producto requerido" });
 
     const rawQty = req.body?.qty ?? req.body?.cantidad;
     const qty = Number(rawQty);
@@ -396,7 +499,8 @@ router.post("/incoming/:incomingId/confirm", mustBeAdmin, (req, res) => {
     if (!id) return res.status(400).json({ error: "id inválido" });
 
     const result = confirmIncomingById(id);
-    if (!result) return res.status(404).json({ error: "Ingreso no encontrado" });
+    if (!result)
+      return res.status(404).json({ error: "Ingreso no encontrado" });
 
     res.json({ ok: true, incoming: result.incoming, product: result.product });
   } catch (e) {
@@ -414,31 +518,38 @@ router.post("/incoming/:incomingId/confirm", mustBeAdmin, (req, res) => {
 router.get("/incoming-stock", mustBeAdmin, (req, res) => {
   try {
     const pid = String(req.query.productId || "").trim();
-    if (!pid) return res.status(400).json({ error: "productId requerido" });
+    if (!pid)
+      return res.status(400).json({ error: "productId requerido" });
     const rows = listIncomingForProduct(pid);
     res.json(rows);
   } catch (e) {
     console.error("GET /admin/incoming-stock error:", e);
-    res.status(500).json({ error: "No se pudieron leer los ingresos futuros" });
+    res
+      .status(500)
+      .json({ error: "No se pudieron leer los ingresos futuros" });
   }
 });
 
 router.get("/incoming-stock/:productId", mustBeAdmin, (req, res) => {
   try {
     const pid = String(req.params.productId || "").trim();
-    if (!pid) return res.status(400).json({ error: "productId requerido" });
+    if (!pid)
+      return res.status(400).json({ error: "productId requerido" });
     const rows = listIncomingForProduct(pid);
     res.json(rows);
   } catch (e) {
     console.error("GET /admin/incoming-stock/:productId error:", e);
-    res.status(500).json({ error: "No se pudieron leer los ingresos futuros" });
+    res
+      .status(500)
+      .json({ error: "No se pudieron leer los ingresos futuros" });
   }
 });
 
 router.post("/incoming-stock", mustBeAdmin, (req, res) => {
   try {
     const pid = String(req.body?.productId || "").trim();
-    if (!pid) return res.status(400).json({ error: "productId requerido" });
+    if (!pid)
+      return res.status(400).json({ error: "productId requerido" });
 
     const rawQty = req.body?.qty ?? req.body?.cantidad;
     const qty = Number(rawQty);
@@ -466,12 +577,16 @@ router.post("/incoming-stock", mustBeAdmin, (req, res) => {
 
 router.get("/orders", mustBeAdmin, (_req, res) => {
   try {
-    const rows = db.prepare(`
+    const rows = db
+      .prepare(
+        `
       SELECT PedidoID AS id, EmpleadoID AS empleadoId, Rol AS rol, Total AS total, Fecha AS fecha
       FROM Pedidos
       ORDER BY PedidoID DESC
       LIMIT 200
-    `).all();
+    `,
+      )
+      .all();
     res.json(rows);
   } catch {
     res.status(500).json({ error: "Error al listar pedidos" });
@@ -480,8 +595,11 @@ router.get("/orders", mustBeAdmin, (_req, res) => {
 
 router.delete("/orders/:id", mustBeAdmin, (req, res) => {
   try {
-    const r = db.prepare(`DELETE FROM Pedidos WHERE PedidoID = ?`).run(Number(req.params.id));
-    if (!r.changes) return res.status(404).json({ error: "Pedido no encontrado" });
+    const r = db
+      .prepare(`DELETE FROM Pedidos WHERE PedidoID = ?`)
+      .run(Number(req.params.id));
+    if (!r.changes)
+      return res.status(404).json({ error: "Pedido no encontrado" });
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Error al eliminar pedido" });
@@ -492,9 +610,13 @@ router.put("/orders/:id/price", mustBeAdmin, (req, res) => {
   try {
     const id = Number(req.params.id);
     const newPrice = Number(req.body?.newPrice ?? NaN);
-    if (!Number.isFinite(newPrice)) return res.status(400).json({ error: "newPrice inválido" });
-    const r = db.prepare(`UPDATE Pedidos SET Total = ? WHERE PedidoID = ?`).run(newPrice, id);
-    if (!r.changes) return res.status(404).json({ error: "Pedido no encontrado" });
+    if (!Number.isFinite(newPrice))
+      return res.status(400).json({ error: "newPrice inválido" });
+    const r = db
+      .prepare(`UPDATE Pedidos SET Total = ? WHERE PedidoID = ?`)
+      .run(newPrice, id);
+    if (!r.changes)
+      return res.status(404).json({ error: "Pedido no encontrado" });
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Error al actualizar total" });
@@ -515,13 +637,18 @@ const SRV_NAME = "ServicioNombre";
 
 router.get("/services", mustBeAdmin, (req, res) => {
   try {
-    ensureSupervisorPivotExclusive(); 
+    ensureSupervisorPivotExclusive();
     const q = String(req.query.q ?? "").trim();
-    const limit = Math.min(Math.max(parseInt(req.query.limit ?? "25", 10) || 25, 1), 100);
+    const limit = Math.min(
+      Math.max(parseInt(req.query.limit ?? "25", 10) || 25, 1),
+      100,
+    );
     if (!q) return res.json([]);
     const like = `%${q}%`;
 
-    const rows = db.prepare(`
+    const rows = db
+      .prepare(
+        `
       SELECT 
         s.${SRV_ID} AS id, 
         s.${SRV_NAME} AS name,
@@ -546,11 +673,13 @@ router.get("/services", mustBeAdmin, (req, res) => {
       WHERE (s.${SRV_NAME} LIKE @like OR CAST(s.${SRV_ID} AS TEXT) LIKE @like)
       ORDER BY s.${SRV_NAME} COLLATE NOCASE
       LIMIT ${limit}
-    `).all({ like });
+    `,
+      )
+      .all({ like });
 
-    const normalized = rows.map(r => ({
+    const normalized = rows.map((r) => ({
       ...r,
-      is_assigned: Number(r.is_assigned) === 1 ? 1 : 0
+      is_assigned: Number(r.is_assigned) === 1 ? 1 : 0,
     }));
 
     res.json(normalized);
@@ -562,7 +691,9 @@ router.get("/services", mustBeAdmin, (req, res) => {
 
 router.get("/supervisors", mustBeAdmin, (_req, res) => {
   try {
-    const rows = db.prepare(`
+    const rows = db
+      .prepare(
+        `
       SELECT e.${EMP_ID} AS id, ${EMP_NAME_EXPR} AS username
       FROM Empleados e
       WHERE EXISTS (
@@ -572,7 +703,9 @@ router.get("/supervisors", mustBeAdmin, (_req, res) => {
         WHERE re.EmpleadoID = e.${EMP_ID} AND lower(r.Nombre) = 'supervisor'
       )
       ORDER BY username COLLATE NOCASE
-    `).all();
+    `,
+      )
+      .all();
     res.json(rows);
   } catch {
     res.status(500).json({ error: "Error al listar supervisores" });
@@ -581,8 +714,10 @@ router.get("/supervisors", mustBeAdmin, (_req, res) => {
 
 router.get("/assignments", mustBeAdmin, (req, res) => {
   try {
-    ensureSupervisorPivotExclusive(); 
-    const EmpleadoID = req.query.EmpleadoID ? Number(req.query.EmpleadoID) : null;
+    ensureSupervisorPivotExclusive();
+    const EmpleadoID = req.query.EmpleadoID
+      ? Number(req.query.EmpleadoID)
+      : null;
     const base = `
       SELECT a.rowid AS id, a.EmpleadoID, a.ServicioID,
              (${EMP_NAME_EXPR}) AS supervisor_username,
@@ -592,8 +727,18 @@ router.get("/assignments", mustBeAdmin, (req, res) => {
       LEFT JOIN Servicios s ON s.${SRV_ID} = a.ServicioID
     `;
     const rows = EmpleadoID
-      ? db.prepare(base + ` WHERE a.EmpleadoID = ? ORDER BY s.${SRV_NAME} COLLATE NOCASE`).all(EmpleadoID)
-      : db.prepare(base + ` ORDER BY supervisor_username COLLATE NOCASE, s.${SRV_NAME} COLLATE NOCASE`).all();
+      ? db
+          .prepare(
+            base +
+              ` WHERE a.EmpleadoID = ? ORDER BY s.${SRV_NAME} COLLATE NOCASE`,
+          )
+          .all(EmpleadoID)
+      : db
+          .prepare(
+            base +
+              ` ORDER BY supervisor_username COLLATE NOCASE, s.${SRV_NAME} COLLATE NOCASE`,
+          )
+          .all();
     res.json(rows);
   } catch (e) {
     console.error("GET /admin/assignments error:", e);
@@ -606,12 +751,16 @@ router.post("/assignments", mustBeAdmin, (req, res) => {
     const EmpleadoID = Number(req.body?.EmpleadoID);
     const ServicioID = Number(req.body?.ServicioID);
     if (!Number.isFinite(EmpleadoID) || !Number.isFinite(ServicioID)) {
-      return res.status(400).json({ error: "EmpleadoID y ServicioID son requeridos" });
+      return res
+        .status(400)
+        .json({ error: "EmpleadoID y ServicioID son requeridos" });
     }
 
     assignServiceToSupervisorExclusive(EmpleadoID, ServicioID);
 
-    const assigned = db.prepare(`
+    const assigned = db
+      .prepare(
+        `
       SELECT a.rowid AS id, a.EmpleadoID, a.ServicioID,
              (${EMP_NAME_EXPR}) AS supervisor_username,
              s.${SRV_NAME}      AS service_name
@@ -620,19 +769,25 @@ router.post("/assignments", mustBeAdmin, (req, res) => {
       LEFT JOIN Servicios s ON s.${SRV_ID} = a.ServicioID
       WHERE CAST(a.ServicioID AS TEXT) = CAST(? AS TEXT)
       LIMIT 1
-    `).get(ServicioID);
+    `,
+      )
+      .get(ServicioID);
 
     return res.status(201).json({
       ok: true,
-      assignment: assigned || { EmpleadoID, ServicioID }
+      assignment: assigned || { EmpleadoID, ServicioID },
     });
   } catch (e) {
     if (e?.status === 409 || e?.code === "SERVICE_TAKEN") {
       return res.status(409).json({ error: e.message });
     }
-    const isUnique = /UNIQUE constraint failed: supervisor_services\.ServicioID/i.test(String(e?.message || ""));
+    const isUnique = /UNIQUE constraint failed: supervisor_services\.ServicioID/i.test(
+      String(e?.message || ""),
+    );
     if (isUnique) {
-      return res.status(409).json({ error: "El servicio ya está asignado a otro supervisor" });
+      return res
+        .status(409)
+        .json({ error: "El servicio ya está asignado a otro supervisor" });
     }
     console.error("POST /admin/assignments error:", e);
     res.status(500).json({ error: "Error al crear asignación" });
@@ -644,11 +799,15 @@ router.post("/assignments/reassign", mustBeAdmin, (req, res) => {
     const EmpleadoID = Number(req.body?.EmpleadoID);
     const ServicioID = Number(req.body?.ServicioID);
     if (!Number.isFinite(EmpleadoID) || !Number.isFinite(ServicioID)) {
-      return res.status(400).json({ error: "EmpleadoID y ServicioID son requeridos" });
+      return res
+        .status(400)
+        .json({ error: "EmpleadoID y ServicioID son requeridos" });
     }
     reassignServiceToSupervisor(EmpleadoID, ServicioID);
 
-    const assigned = db.prepare(`
+    const assigned = db
+      .prepare(
+        `
       SELECT a.rowid AS id, a.EmpleadoID, a.ServicioID,
              (${EMP_NAME_EXPR}) AS supervisor_username,
              s.${SRV_NAME}      AS service_name
@@ -657,9 +816,14 @@ router.post("/assignments/reassign", mustBeAdmin, (req, res) => {
       LEFT JOIN Servicios s ON s.${SRV_ID} = a.ServicioID
       WHERE CAST(a.ServicioID AS TEXT) = CAST(? AS TEXT)
       LIMIT 1
-    `).get(ServicioID);
+    `,
+      )
+      .get(ServicioID);
 
-    res.json({ ok: true, assignment: assigned || { EmpleadoID, ServicioID } });
+    res.json({
+      ok: true,
+      assignment: assigned || { EmpleadoID, ServicioID },
+    });
   } catch (e) {
     console.error("POST /admin/assignments/reassign error:", e);
     res.status(500).json({ error: e?.message || "No se pudo reasignar" });
@@ -669,7 +833,8 @@ router.post("/assignments/reassign", mustBeAdmin, (req, res) => {
 router.delete("/assignments/:id", mustBeAdmin, (req, res) => {
   try {
     const ok = unassignService({ id: Number(req.params.id) });
-    if (!ok) return res.status(404).json({ error: "Asignación no encontrada" });
+    if (!ok)
+      return res.status(404).json({ error: "Asignación no encontrada" });
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Error al eliminar asignación" });
@@ -681,14 +846,20 @@ router.delete("/assignments/:id", mustBeAdmin, (req, res) => {
    ========================= */
 
 router.get("/service-budgets", mustBeAdmin, (_req, res) => {
-  try { res.json(listServiceBudgets()); }
-  catch (e) { res.status(500).json({ error: "Error al listar presupuestos" }); }
+  try {
+    res.json(listServiceBudgets());
+  } catch (e) {
+    res.status(500).json({ error: "Error al listar presupuestos" });
+  }
 });
 
 router.put("/service-budgets/:id", mustBeAdmin, (req, res) => {
   const id = req.params.id;
-  const presupuesto = Number(req.body?.presupuesto ?? req.body?.budget ?? NaN);
-  if (!Number.isFinite(presupuesto) || presupuesto < 0) return res.status(400).json({ error: "Presupuesto inválido" });
+  const presupuesto = Number(
+    req.body?.presupuesto ?? req.body?.budget ?? NaN,
+  );
+  if (!Number.isFinite(presupuesto) || presupuesto < 0)
+    return res.status(400).json({ error: "Presupuesto inválido" });
   try {
     const newVal = setBudgetForService(id, presupuesto);
     return res.json({ servicioId: id, presupuesto: newVal });
@@ -704,12 +875,18 @@ router.put("/service-budgets/:id", mustBeAdmin, (req, res) => {
 
 router.get("/service-emails", mustBeAdmin, (_req, res) => {
   try {
-    db.exec(`CREATE TABLE IF NOT EXISTS service_emails (service_id TEXT NOT NULL, email TEXT NOT NULL);`);
-    const rows = db.prepare(`
+    db.exec(
+      `CREATE TABLE IF NOT EXISTS service_emails (service_id TEXT NOT NULL, email TEXT NOT NULL);`,
+    );
+    const rows = db
+      .prepare(
+        `
       SELECT service_id AS serviceId, email
       FROM service_emails
       ORDER BY CAST(service_id AS TEXT), email
-    `).all();
+    `,
+      )
+      .all();
 
     const map = new Map();
     for (const r of rows) {
@@ -717,14 +894,18 @@ router.get("/service-emails", mustBeAdmin, (_req, res) => {
       if (!map.has(k)) map.set(k, []);
       map.get(k).push(r.email);
     }
-    const out = Array.from(map.entries()).map(([serviceId, emails]) => ({
-      serviceId,
-      serviceName: getServiceNameById(serviceId) || serviceId,
-      emails,
-    }));
+    const out = Array.from(map.entries()).map(
+      ([serviceId, emails]) => ({
+        serviceId,
+        serviceName: getServiceNameById(serviceId) || serviceId,
+        emails,
+      }),
+    );
     return res.json(out);
   } catch (e) {
-    return res.status(500).json({ error: "Error al listar emails por servicio" });
+    return res
+      .status(500)
+      .json({ error: "Error al listar emails por servicio" });
   }
 });
 
@@ -732,21 +913,29 @@ router.put("/service-emails/:serviceId", mustBeAdmin, (req, res) => {
   const serviceId = String(req.params.serviceId || "").trim();
   const raw = String(req.body.emails || "").trim();
   try {
-    db.exec(`CREATE TABLE IF NOT EXISTS service_emails (service_id TEXT NOT NULL, email TEXT NOT NULL);`);
+    db.exec(
+      `CREATE TABLE IF NOT EXISTS service_emails (service_id TEXT NOT NULL, email TEXT NOT NULL);`,
+    );
     const list = raw
       .split(/[,;]+/)
-      .map(s => s.trim())
+      .map((s) => s.trim())
       .filter(Boolean);
 
-    const del = db.prepare(`DELETE FROM service_emails WHERE CAST(service_id AS TEXT) = CAST(? AS TEXT)`);
+    const del = db.prepare(
+      `DELETE FROM service_emails WHERE CAST(service_id AS TEXT) = CAST(? AS TEXT)`,
+    );
     del.run(serviceId);
 
-    const ins = db.prepare(`INSERT INTO service_emails (service_id, email) VALUES (?, ?)`);
+    const ins = db.prepare(
+      `INSERT INTO service_emails (service_id, email) VALUES (?, ?)`,
+    );
     for (const e of list) ins.run(serviceId, e);
 
     return res.json({ ok: true, serviceId, count: list.length });
   } catch (e) {
-    return res.status(500).json({ error: "Error al actualizar emails de servicio" });
+    return res
+      .status(500)
+      .json({ error: "Error al actualizar emails de servicio" });
   }
 });
 
@@ -756,10 +945,16 @@ router.put("/service-emails/:serviceId", mustBeAdmin, (req, res) => {
 
 function detectSPCols() {
   ensureServiceProductsPivot(); // garantiza que exista con columnas esperadas
-  const cols = db.prepare(`PRAGMA table_info('service_products')`).all().map(c => String(c.name).toLowerCase());
-  if (cols.includes("servicioid") && cols.includes("productoid")) return { srv: "ServicioID",  prod: "ProductoID"  };
-  if (cols.includes("servicio_id") && cols.includes("producto_id")) return { srv: "servicio_id", prod: "producto_id" };
-  if (cols.includes("service_id")   && cols.includes("product_id"))  return { srv: "service_id",  prod: "product_id"  };
+  const cols = db
+    .prepare(`PRAGMA table_info('service_products')`)
+    .all()
+    .map((c) => String(c.name).toLowerCase());
+  if (cols.includes("servicioid") && cols.includes("productoid"))
+    return { srv: "ServicioID", prod: "ProductoID" };
+  if (cols.includes("servicio_id") && cols.includes("producto_id"))
+    return { srv: "servicio_id", prod: "producto_id" };
+  if (cols.includes("service_id") && cols.includes("product_id"))
+    return { srv: "service_id", prod: "product_id" };
   // Fallback a los nombres creados por ensureServiceProductsPivot
   return { srv: "ServicioID", prod: "ProductoID" };
 }
@@ -770,13 +965,21 @@ router.get("/sp/assignments/:serviceId", mustBeAdmin, (req, res) => {
     const sid = String(req.params.serviceId || "").trim();
     if (!sid) return res.status(400).json({ error: "serviceId requerido" });
 
-    const rows = db.prepare(`
+    const rows = db
+      .prepare(
+        `
       SELECT ${prod} AS pid
       FROM service_products
       WHERE CAST(${srv} AS TEXT) = CAST(? AS TEXT)
-    `).all(sid);
+    `,
+      )
+      .all(sid);
 
-    res.json({ ok: true, serviceId: sid, productIds: rows.map(r => String(r.pid)) });
+    res.json({
+      ok: true,
+      serviceId: sid,
+      productIds: rows.map((r) => String(r.pid)),
+    });
   } catch (e) {
     console.error("GET /admin/sp/assignments error:", e?.message || e);
     res.status(500).json({ error: "No se pudo leer asignaciones" });
@@ -788,40 +991,60 @@ router.put("/sp/assignments/:serviceId", mustBeAdmin, (req, res) => {
     const { srv, prod } = detectSPCols();
     const sid = String(req.params.serviceId || "").trim();
     const desired = new Set(
-      Array.isArray(req.body?.productIds) ? req.body.productIds.map(x => String(x)) : []
+      Array.isArray(req.body?.productIds)
+        ? req.body.productIds.map((x) => String(x))
+        : [],
     );
     if (!sid) return res.status(400).json({ error: "serviceId requerido" });
 
     const existing = new Set(
-      db.prepare(`
+      db
+        .prepare(
+          `
         SELECT ${prod} AS pid
         FROM service_products
         WHERE CAST(${srv} AS TEXT) = CAST(? AS TEXT)
-      `).all(sid).map(r => String(r.pid))
+      `,
+        )
+        .all(sid)
+        .map((r) => String(r.pid)),
     );
 
-    const toAdd = [...desired].filter(id => !existing.has(id));
-    const toDel = [...existing].filter(id => !desired.has(id));
+    const toAdd = [...desired].filter((id) => !existing.has(id));
+    const toDel = [...existing].filter((id) => !desired.has(id));
 
-    const ins = db.prepare(`INSERT INTO service_products (${srv}, ${prod}) VALUES (?, ?)`);
-    const del = db.prepare(`
+    const ins = db.prepare(
+      `INSERT INTO service_products (${srv}, ${prod}) VALUES (?, ?)`,
+    );
+    const del = db.prepare(
+      `
       DELETE FROM service_products
       WHERE CAST(${srv} AS TEXT) = CAST(? AS TEXT)
         AND CAST(${prod} AS TEXT) = CAST(? AS TEXT)
-    `);
+    `,
+    );
 
     const tx = db.transaction(() => {
-      let added = 0, removed = 0;
-      for (const pid of toAdd)   added  += ins.run(sid, pid).changes;
-      for (const pid of toDel)   removed+= del.run(sid, pid).changes;
+      let added = 0,
+        removed = 0;
+      for (const pid of toAdd) added += ins.run(sid, pid).changes;
+      for (const pid of toDel) removed += del.run(sid, pid).changes;
       return { added, removed };
     });
 
     const { added, removed } = tx();
-    res.json({ ok: true, serviceId: sid, added, removed, productIds: [...desired] });
+    res.json({
+      ok: true,
+      serviceId: sid,
+      added,
+      removed,
+      productIds: [...desired],
+    });
   } catch (e) {
     console.error("PUT /admin/sp/assignments error:", e?.message || e);
-    res.status(500).json({ error: "No se pudieron actualizar las asignaciones" });
+    res
+      .status(500)
+      .json({ error: "No se pudieron actualizar las asignaciones" });
   }
 });
 
