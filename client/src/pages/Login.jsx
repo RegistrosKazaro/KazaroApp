@@ -1,3 +1,4 @@
+// client/src/pages/Login.jsx
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
@@ -13,18 +14,33 @@ export default function Login() {
   const [password, setP] = useState("");
   const [show, setShow] = useState(false);
   const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
 
   async function onSubmit(e) {
     e.preventDefault();
+    if (loading) return; // evita doble click
+
+    const u = username.trim();
+    const p = password;
+
+    if (!u || !p) {
+      setErr("Ingresá usuario y contraseña");
+      return;
+    }
+
     setErr("");
+    setLoading(true);
     try {
-      const { roles = [] } = await login(username, password);
+      const { roles = [] } = await login(u, p);
       const rolesLower = roles.map((r) => String(r).toLowerCase());
 
-      // Si el usuario tiene más de un rol -> pantalla de selección
-      if (rolesLower.length > 1) return nav("/roles", { replace: true });
+      // Más de un rol → pantalla de selección
+      if (rolesLower.length > 1) {
+        nav("/roles", { replace: true });
+        return;
+      }
 
-      // Si tiene un solo rol, lo mandamos a su landing directa
+      // Un solo rol → lo mandamos a su landing directa
       if (rolesLower.some((r) => r.includes("super"))) {
         nav("/app/supervisor/services", { replace: true });
       } else {
@@ -32,7 +48,13 @@ export default function Login() {
       }
     } catch (error) {
       console.error(error);
-      setErr("Usuario o contraseña inválidos");
+      const message =
+        error?.response?.data?.error ||
+        error?.message ||
+        "Usuario o contraseña inválidos";
+      setErr(message);
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -50,9 +72,12 @@ export default function Login() {
           <label>Usuario</label>
           <input
             className="input"
+            type="text"
             value={username}
             onChange={(e) => setU(e.target.value)}
             autoFocus
+            autoComplete="username"
+            disabled={loading}
           />
 
           <label>Contraseña</label>
@@ -62,6 +87,8 @@ export default function Login() {
               className="input"
               value={password}
               onChange={(e) => setP(e.target.value)}
+              autoComplete="current-password"
+              disabled={loading}
             />
             <button
               type="button"
@@ -75,8 +102,8 @@ export default function Login() {
 
           {err && <div className="state error">{err}</div>}
 
-          <button className="btn" type="submit">
-            Entrar
+          <button className="btn" type="submit" disabled={loading}>
+            {loading ? "Entrando..." : "Entrar"}
           </button>
         </form>
       </div>

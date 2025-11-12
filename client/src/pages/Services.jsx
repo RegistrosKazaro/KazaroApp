@@ -16,10 +16,13 @@ export default function ServicesPage() {
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-
   const [q, setQ] = useState("");
+  const [showOnlyAssigned, setShowOnlyAssigned] = useState(false); // solo admin
 
-  const roles = useMemo(() => (user?.roles || []).map((r) => String(r).toLowerCase()), [user]);
+  const roles = useMemo(
+    () => (user?.roles || []).map((r) => String(r).toLowerCase()),
+    [user]
+  );
   const isAdmin = roles.includes("admin");
   const isSupervisor = roles.includes("supervisor");
 
@@ -49,19 +52,68 @@ export default function ServicesPage() {
       try {
         let rows = [];
         if (isAdmin) {
-          const r = await api.get("/admin/services", { params: { q: String(q || "").trim(), limit: 50 } });
+          const r = await api.get("/admin/services", {
+            params: { q: String(q || "").trim(), limit: 50 },
+          });
           rows = Array.isArray(r.data) ? r.data : [];
         } else {
-          const r = await api.get("/supervisor/services", { withCredentials: true });
+          const r = await api.get("/supervisor/services", {
+            withCredentials: true,
+          });
           rows = Array.isArray(r.data) ? r.data : [];
         }
 
         if (!alive) return;
-        setServices(rows);
 
-        // auto-seleccionar el primero si no hay ninguno elegido (solo para supervisor)
-        if (!isAdmin && rows.length && !service?.id) {
-          setService({ id: rows[0].id, name: rows[0].name });
+        // Normalizo y deduplico por ID para evitar filas repetidas
+        const byId = new Map();
+        for (const raw of rows) {
+          const id =
+            raw?.id ??
+            raw?.ServiciosID ??
+            raw?.ServicioID ??
+            raw?.serviceId ??
+            raw?.ServicioID;
+
+          if (id == null) continue;
+
+          const name =
+            raw?.name ??
+            raw?.ServicioNombre ??
+            raw?.Nombre ??
+            raw?.descripcion ??
+            raw?.Descripcion ??
+            `Servicio ${id}`;
+
+          const is_assigned =
+            raw?.is_assigned ??
+            raw?.isAssigned ??
+            raw?.asignado ??
+            raw?.Asignado ??
+            null;
+
+          const assigned_to = raw?.assigned_to ?? null;
+          const assigned_to_id = raw?.assigned_to_id ?? null;
+
+          if (!byId.has(id)) {
+            byId.set(id, {
+              id,
+              name,
+              is_assigned,
+              isAssigned: !!is_assigned,
+              assigned_to,
+              assigned_to_id,
+            });
+          }
+        }
+
+        const list = Array.from(byId.values());
+        setServices(list);
+
+        // Mejora: si el supervisor solo tiene 1 servicio, lo seleccionamos automáticamente
+        if (!isAdmin && !service?.id && list.length === 1) {
+          const only = list[0];
+          setService({ id: only.id, name: only.name });
         }
 
         setLoading(false);
@@ -80,14 +132,24 @@ export default function ServicesPage() {
 
   // Filtrado por nombre o ID (sobre lo que ya trajo el endpoint)
   const filtered = useMemo(() => {
+    let base = services;
+
+    // Para admin: filtro opcional "Solo asignados"
+    if (isAdmin && showOnlyAssigned) {
+      base = base.filter(
+        (it) => Number(it?.is_assigned) === 1 || !!it?.isAssigned
+      );
+    }
+
     const term = String(q || "").trim().toLowerCase();
-    if (!term) return services;
-    return services.filter((it) => {
+    if (!term) return base;
+
+    return base.filter((it) => {
       const name = String(it?.name ?? "").toLowerCase();
       const idStr = String(it?.id ?? "").toLowerCase();
       return name.includes(term) || idStr.includes(term);
     });
-  }, [q, services]);
+  }, [q, services, isAdmin, showOnlyAssigned]);
 
   // Paginación
   const [page, setPage] = useState(1);
@@ -100,9 +162,12 @@ export default function ServicesPage() {
     if (page < 1) setPage(1);
   }, [filtered.length, page, pageCount]);
 
-  useEffect(() => { setPage(1); }, [q]);
+  useEffect(() => {
+    setPage(1);
+  }, [q, showOnlyAssigned]);
 
   const handlePick = (it) => setService({ id: it.id, name: it.name });
+
   const goNext = () => {
     if (!service?.id) return;
     nav("/app/supervisor/products");
@@ -120,6 +185,16 @@ export default function ServicesPage() {
     <div className="catalog" style={{ maxWidth: 920, marginInline: "auto" }}>
       <h2>{isAdmin ? "Servicios (Administrador)" : "Seleccioná tu servicio"}</h2>
 
+      {/* Supervisor: resumen del servicio elegido */}
+      {!isAdmin && service?.id && (
+        <div className="state" style={{ marginBottom: 10 }}>
+          Servicio seleccionado:{" "}
+          <strong>
+            #{service.id} – {service.name}
+          </strong>
+        </div>
+      )}
+
       {err && <div className="state error">{err}</div>}
 
       {loading ? (
@@ -129,9 +204,18 @@ export default function ServicesPage() {
           {/* Barra de búsqueda */}
           <div
             className="catalog-toolbar"
-            style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}
+            style={{
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+              marginBottom: 10,
+              flexWrap: "wrap",
+            }}
           >
-            <label htmlFor="serviceSearch" style={{ fontWeight: 700, color: "#000000" }}>
+            <label
+              htmlFor="serviceSearch"
+              style={{ fontWeight: 700, color: "#000000" }}
+            >
               Buscar
             </label>
             <input
@@ -139,7 +223,11 @@ export default function ServicesPage() {
               className="input"
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder={isAdmin ? "Buscá servicios para asignar… (nombre o ID)" : "Nombre o ID del servicio…"}
+              placeholder={
+                isAdmin
+                  ? "Buscá servicios para asignar… (nombre o ID)"
+                  : "Nombre o ID del servicio…"
+              }
               autoComplete="off"
               style={{ flex: 1, maxWidth: 420 }}
             />
@@ -153,6 +241,26 @@ export default function ServicesPage() {
                 Limpiar
               </button>
             )}
+
+            {isAdmin && (
+              <label
+                className="pill pill--primary"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={showOnlyAssigned}
+                  onChange={(e) => setShowOnlyAssigned(e.target.checked)}
+                  style={{ margin: 0 }}
+                />
+                <span>Solo asignados</span>
+              </label>
+            )}
           </div>
 
           {/* Resultados */}
@@ -163,7 +271,10 @@ export default function ServicesPage() {
                 : `No hay servicios que coincidan con “${q}”.`}
               {q && (
                 <div style={{ marginTop: 8 }}>
-                  <button className="pill pill--primary" onClick={() => setQ("")}>
+                  <button
+                    className="pill pill--primary"
+                    onClick={() => setQ("")}
+                  >
                     Ver todos
                   </button>
                 </div>
@@ -176,15 +287,16 @@ export default function ServicesPage() {
                   const selected = Number(service?.id) === Number(it.id);
 
                   // ¿Está asignado?
-                  const isAssigned =
-                    isAdmin
-                      ? (Number(it?.is_assigned) === 1 || !!it?.isAssigned)
-                      : true; // en supervisor, todos los que ve están asignados a él
+                  const isAssigned = isAdmin
+                    ? Number(it?.is_assigned) === 1 || !!it?.isAssigned
+                    : true; // en supervisor, todos los que ve están asignados a él
 
                   return (
                     <button
                       key={String(it.id)}
-                      className={`service-card${selected ? " selected" : ""}`}
+                      className={`service-card${
+                        selected && !isAdmin ? " selected" : ""
+                      }`}
                       onClick={() => !isAdmin && handlePick(it)}
                       title={it.name}
                       disabled={isAdmin && isAssigned} // en admin, deshabilito si ya está asignado
@@ -192,7 +304,7 @@ export default function ServicesPage() {
                       <div className="service-card__row">
                         <div className="service-card__name">{it.name}</div>
 
-                        {/* 👉 PILL sin nombre del supervisor */}
+                        {/* 👉 PILL sin nombre del supervisor (solo Asignado/Disponible) */}
                         {isAssigned ? (
                           <span className="pill pill--assigned">
                             <strong>Asignado</strong>
@@ -219,22 +331,53 @@ export default function ServicesPage() {
                 }}
               >
                 <span style={{ fontSize: 12, opacity: 0.8 }}>
-                  Mostrando {start + 1}-{Math.min(start + PER_PAGE, filtered.length)} de {filtered.length}
+                  Mostrando {start + 1}-
+                  {Math.min(start + PER_PAGE, filtered.length)} de{" "}
+                  {filtered.length}
                 </span>
-                <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-                  <button className="pill pill--primary" onClick={goFirst} disabled={page === 1}>
+                <div
+                  style={{
+                    marginLeft: "auto",
+                    display: "flex",
+                    gap: 6,
+                    alignItems: "center",
+                  }}
+                >
+                  <button
+                    className="pill pill--primary"
+                    onClick={goFirst}
+                    disabled={page === 1}
+                  >
                     &laquo;
                   </button>
-                  <button className="pill pill--primary" onClick={goPrev} disabled={page === 1}>
+                  <button
+                    className="pill pill--primary"
+                    onClick={goPrev}
+                    disabled={page === 1}
+                  >
                     Anterior
                   </button>
-                  <span style={{ padding: "4px 8px", fontSize: 16, color: "black" }}>
+                  <span
+                    style={{
+                      padding: "4px 8px",
+                      fontSize: 16,
+                      color: "black",
+                    }}
+                  >
                     Página {page} / {pageCount}
                   </span>
-                  <button className="pill pill--primary" onClick={goNextP} disabled={page === pageCount}>
+                  <button
+                    className="pill pill--primary"
+                    onClick={goNextP}
+                    disabled={page === pageCount}
+                  >
                     Siguiente
                   </button>
-                  <button className="pill pill--primary" onClick={goLast} disabled={page === pageCount}>
+                  <button
+                    className="pill pill--primary"
+                    onClick={goLast}
+                    disabled={page === pageCount}
+                  >
                     &raquo;
                   </button>
                 </div>
@@ -243,19 +386,31 @@ export default function ServicesPage() {
           )}
 
           <div className="actions-row">
-
             {!isAdmin && (
               <>
-                <button className="btn" onClick={() => nav("/role-select")}>
+                <button
+                  className="btn"
+                  onClick={() => nav("/role-select")}
+                  type="button"
+                >
                   Cambiar modo (Administrativo / Supervisor)
                 </button>
-                <button className="btn" disabled={!service?.id} onClick={goNext}>
+                <button
+                  className="btn"
+                  type="button"
+                  disabled={!service?.id}
+                  onClick={goNext}
+                >
                   Continuar al catálogo
                 </button>
               </>
             )}
             {isAdmin && (
-              <button className="btn" onClick={() => nav("/app/administrativo/products")}>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => nav("/app/administrativo/products")}
+              >
                 Ir a Productos (Admin)
               </button>
             )}

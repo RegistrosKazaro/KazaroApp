@@ -1,118 +1,251 @@
 // client/src/pages/AdminPanel.jsx
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
 import "../styles/admin-panel.css";
 import "../styles/a11y.css";
 
+// (Opcional) ya existe en tu repo:
 import MassReassignServicesSection from "./MassReassignServicesSection";
 
-/* =======================  PRODUCTS  ======================= */
+/* -----------------------------------------------------------
+ * Utilidades locales
+ * --------------------------------------------------------- */
+const money = (v) => {
+  const n = Number(v || 0);
+  try {
+    return new Intl.NumberFormat("es-AR", {
+      style: "currency",
+      currency: "ARS",
+      maximumFractionDigits: 2,
+    }).format(n);
+  } catch {
+    return `$ ${n.toFixed(2)}`;
+  }
+};
+const clampInt = (v, min = 0, max = Number.MAX_SAFE_INTEGER) =>
+  Math.min(max, Math.max(min, parseInt(v ?? 0, 10) || 0));
+const useDebounced = (value, delay = 300) => {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return v;
+};
+
+/* ===========================================================
+ * 1) Productos
+ *    - Lista + búsqueda
+ *    - Alta/edición básica (nombre, precio, stock, código)
+ *    - Edición rápida de stock
+ *    - Borrado con confirmación
+ *    (Usa /admin/products, /admin/products/:id)
+ * ========================================================= */
 function ProductsSection() {
-  const [schema, setSchema] = useState(null);
   const [rows, setRows] = useState([]);
   const [q, setQ] = useState("");
-  const [form, setForm] = useState({ name: "", price: "", stock: "", code: "", catId: "" });
-  const [editing, setEditing] = useState(null);
+  const qDeb = useDebounced(q, 350);
+  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [statusMsg, setStatusMsg] = useState("");
 
-  // categorías para el selector
+  // Categorías
   const [cats, setCats] = useState([]);
   const [catsErr, setCatsErr] = useState("");
 
-  const [stockEdit, setStockEdit] = useState({ id: null, value: "" });
-
+  // Edición/alta
+  const [editingId, setEditingId] = useState(null); // null | "__new__" | id
+  const [draft, setDraft] = useState({
+    name: "",
+    price: "",
+    stock: "",
+    code: "",
+    catId: "",
+  });
+  const [catTouched, setCatTouched] = useState(false);
+  const [editingLoading, setEditingLoading] = useState(false);
   const nameRef = useRef(null);
-  const headingRef = useRef(null);
 
-  const can = (k) => !!(schema?.cols?.[k]);
+  // Edición rápida de stock
+  const [stockEdit, setStockEdit] = useState(null); // { id, value }
 
-  const loadSchema = useCallback(async () => {
-    try {
-      setSchema((await api.get("/admin/products/_schema")).data);
-    } catch (e) {
-      setErr(e?.response?.data?.error || e.message);
-    }
-  }, []);
-
-  const loadRows = useCallback(async () => {
-    try {
-      setRows((await api.get("/admin/products", { params: { q, limit: 200 } })).data || []);
-    } catch (e) {
-      setErr(e?.response?.data?.error || e.message);
-    }
-  }, [q]);
-
-  useEffect(() => { loadSchema(); }, [loadSchema]);
-  useEffect(() => { loadRows(); }, [loadRows]);
-
-  // cargar categorías una sola vez
-  useEffect(() => {
-    api.get("/catalog/categories")
-      .then(({ data }) => setCats(Array.isArray(data) ? data : []))
-      .catch((e) => setCatsErr(e?.response?.data?.error || "No se pudieron cargar las categorías"));
-  }, []);
-
-  const submit = async (e) => {
-    e.preventDefault();
+  const load = useCallback(async () => {
+    setLoading(true);
     setErr("");
     try {
-      const payload = {
-        name: form.name,
-        ...(can("prodPrice") ? { price: form.price === "" ? null : Number(form.price) } : {}),
-        ...(can("prodStock") ? { stock: form.stock === "" ? null : Number(form.stock) } : {}),
-        ...(can("prodCode")  ? { code:  form.code  } : {}),
-        ...(can("prodCat")   ? { catId: form.catId || null } : {}),
-      };
+      const { data } = await api.get("/admin/products", {
+        params: { q: String(qDeb || "").trim(), limit: 200 },
+      });
+      setRows(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setErr(e?.response?.data?.error || e.message || "Error al cargar");
+    } finally {
+      setLoading(false);
+    }
+  }, [qDeb]);
 
-      if (editing) {
-        await api.put(`/admin/products/${editing}`, payload);
+  const loadCats = useCallback(async () => {
+    try {
+      const { data } = await api.get("/catalog/categories");
+      setCats(Array.isArray(data) ? data : []);
+      setCatsErr("");
+    } catch (e) {
+      setCats([]);
+      setCatsErr(
+        e?.response?.data?.error ||
+          e.message ||
+          "No se pudieron cargar las categorías"
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    loadCats();
+  }, [loadCats]);
+
+  const startNew = () => {
+    setEditingId("__new__");
+    setCatTouched(false);
+    setDraft({
+      name: "",
+      price: "",
+      stock: "",
+      code: "",
+      catId: "",
+    });
+    setTimeout(() => nameRef.current?.focus(), 0);
+  };
+
+  const onEdit = async (row) => {
+    if (!row || !row.id) {
+      startNew();
+      return;
+    }
+    setStatusMsg("");
+    setErr("");
+    setCatTouched(false);
+
+    // Mostrar algo inmediato
+    setEditingId(row.id);
+    setDraft({
+      name: row.name ?? "",
+      price: row.price ?? "",
+      stock: row.stock ?? "",
+      code: row.code ?? "",
+      catId: "",
+    });
+
+    setEditingLoading(true);
+    try {
+      const { data } = await api.get(`/admin/products/${row.id}`);
+      setDraft((prev) => ({
+        ...prev,
+        name: data?.name ?? prev.name ?? "",
+        price: data?.price ?? prev.price ?? "",
+        stock: data?.stock ?? prev.stock ?? "",
+        code: data?.code ?? prev.code ?? "",
+        catId:
+          data?.categoryId != null
+            ? String(data.categoryId)
+            : data?.categoryName != null
+            ? String(data.categoryName)
+            : prev.catId ?? "",
+      }));
+    } catch (e) {
+      setErr(
+        e?.response?.data?.error ||
+          e.message ||
+          "No se pudo cargar el producto completo"
+      );
+    } finally {
+      setEditingLoading(false);
+      setTimeout(() => nameRef.current?.focus(), 0);
+    }
+  };
+
+  const onCancel = () => {
+    setEditingId(null);
+    setCatTouched(false);
+    setDraft({ name: "", price: "", stock: "", code: "", catId: "" });
+    setStatusMsg("");
+    setErr("");
+  };
+
+  const onSave = async () => {
+    setStatusMsg("");
+    setErr("");
+
+    const payload = {
+      name: String(draft.name || "").trim(),
+      price:
+        draft.price === "" || draft.price === null
+          ? null
+          : Number(draft.price),
+      stock:
+        draft.stock === "" || draft.stock === null
+          ? null
+          : Number(draft.stock),
+      code:
+        draft.code === "" || draft.code === null ? null : String(draft.code),
+    };
+
+    if (!payload.name) {
+      setErr("El nombre es requerido");
+      return;
+    }
+
+    // Categoría:
+    // - Producto nuevo: siempre mandamos catId
+    // - Editando: sólo si el usuario tocó el select
+    if (editingId === "__new__") {
+      payload.catId = draft.catId || null;
+    } else if (catTouched) {
+      payload.catId = draft.catId || null;
+    }
+
+    try {
+      if (editingId && editingId !== "__new__") {
+        await api.put(`/admin/products/${editingId}`, payload);
         setStatusMsg("Producto actualizado.");
       } else {
         await api.post("/admin/products", payload);
         setStatusMsg("Producto creado.");
       }
-
-      setForm({ name: "", price: "", stock: "", code: "", catId: "" });
-      setEditing(null);
-      await loadRows();
-      headingRef.current?.focus();
+      await load();
+      onCancel();
     } catch (e) {
       setErr(e?.response?.data?.error || e.message);
     }
-  };
-
-  const onEdit = (row) => {
-    setEditing(row.id);
-    setForm({
-      name: row.name ?? "",
-      price: row.price ?? "",
-      stock: row.stock ?? "",
-      code: row.code ?? "",
-      catId: row.catId ?? "",
-    });
-    setTimeout(() => nameRef.current?.focus(), 0);
   };
 
   const onDelete = async (id) => {
     if (!confirm("¿Eliminar producto?")) return;
     try {
       await api.delete(`/admin/products/${id}`);
-      await loadRows();
+      await load();
       setStatusMsg("Producto eliminado.");
     } catch (e) {
       setErr(e?.response?.data?.error || e.message);
     }
   };
 
-  const cancelStockEdit = () => setStockEdit({ id: null, value: "" });
+  const startStockEdit = (row) =>
+    setStockEdit({ id: row.id, value: row.stock ?? 0 });
+
+  const cancelStockEdit = () => setStockEdit(null);
 
   const saveStock = async () => {
     try {
-      await api.put(`/admin/products/${stockEdit.id}`, { stock: Number(stockEdit.value) });
-      await loadRows();
+      await api.put(`/admin/products/${stockEdit.id}`, {
+        stock: Number(stockEdit.value),
+      });
+      await load();
       setStatusMsg("Stock actualizado.");
     } catch (e) {
       setErr(e?.response?.data?.error || e.message);
@@ -122,245 +255,238 @@ function ProductsSection() {
   };
 
   const onKeyDownStock = (e) => {
-    if (e.key === "Enter") { e.preventDefault(); saveStock(); }
-    if (e.key === "Escape") { e.preventDefault(); cancelStockEdit(); }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveStock();
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      cancelStockEdit();
+    }
   };
 
-  const onSearchKeyDown = (e) => { if (e.key === "Enter") { e.preventDefault(); loadRows(); } };
-
   return (
-    <section className="card" aria-labelledby="products-heading">
-      <h2 id="products-heading" ref={headingRef} tabIndex={-1}>Productos</h2>
-      <p className="sr-only" aria-live="polite">{statusMsg}</p>
-      {err && <div role="alert" className="alert error">{err}</div>}
-
-      <div className="toolbar" role="region" aria-label="Búsqueda de productos">
-        <label htmlFor="prod-search" className="sr-only">Buscar productos</label>
-        <input
-          id="prod-search"
-          className="input"
-          placeholder="Buscar…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          onKeyDown={onSearchKeyDown}
-        />
+    <section className="srv-card" aria-labelledby="products-heading">
+      <div className="section-header">
+        <h3 id="products-heading">Productos</h3>
+        <div className="toolbar" role="search">
+          <input
+            className="input"
+            placeholder="Buscar… (mín. 2 letras)"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            aria-label="Buscar productos"
+          />
+          <button className="btn" onClick={load} disabled={loading}>
+            {loading ? "Buscando…" : "Buscar"}
+          </button>
+          <div style={{ flex: 1 }} />
+          <button className="btn primary" onClick={startNew}>
+            + Nuevo
+          </button>
+        </div>
+        {(statusMsg || err) && (
+          <div
+            className={`state ${err ? "error" : "success"}`}
+            role={err ? "alert" : "status"}
+          >
+            {err || statusMsg}
+          </div>
+        )}
       </div>
 
-      <form onSubmit={submit} className="form-grid" aria-describedby="prod-form-help">
-        <fieldset>
-          <legend>{editing ? "Editar producto" : "Crear producto"}</legend>
-          <p id="prod-form-help" className="sr-only">Los campos marcados con * son obligatorios.</p>
-
-          <div className="field">
-            <label htmlFor="prod-name">Nombre *</label>
-            <input
-              id="prod-name"
-              ref={nameRef}
-              className="input"
-              placeholder="Nombre *"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              required
-              aria-required="true"
-            />
-          </div>
-
-          {can("prodPrice") && (
-            <div className="field">
-              <label htmlFor="prod-price">Precio</label>
+      {/* Form alta/edición */}
+      {editingId !== null && (
+        <div className="card" style={{ marginBottom: 12 }}>
+          <div className="grid-4">
+            <label>
+              <span>Nombre</span>
               <input
-                id="prod-price"
+                ref={nameRef}
+                className="input"
+                value={draft.name}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, name: e.target.value }))
+                }
+              />
+            </label>
+            <label>
+              <span>Precio</span>
+              <input
                 className="input"
                 type="number"
-                step="0.01"
                 inputMode="decimal"
-                placeholder="Precio"
-                value={form.price}
-                onChange={(e) => setForm({ ...form, price: e.target.value })}
+                value={draft.price}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, price: e.target.value }))
+                }
               />
-            </div>
-          )}
-
-          {can("prodStock") && (
-            <div className="field">
-              <label htmlFor="prod-stock">Stock</label>
+            </label>
+            <label>
+              <span>Stock</span>
               <input
-                id="prod-stock"
                 className="input"
                 type="number"
                 inputMode="numeric"
-                placeholder="Stock"
-                value={form.stock}
-                onChange={(e) => setForm({ ...form, stock: e.target.value })}
+                value={draft.stock}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, stock: e.target.value }))
+                }
               />
-            </div>
-          )}
-
-          {can("prodCat") && (
-            <div className="field">
-              <label htmlFor="prod-cat">Categoría</label>
-              <select
-                id="prod-cat"
-                className="input"
-                value={form.catId}
-                onChange={(e) => setForm({ ...form, catId: e.target.value })}
-              >
-                <option value="">-- Sin categoría --</option>
-                {cats.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-              {catsErr && <div className="hint error" role="alert">{catsErr}</div>}
-            </div>
-          )}
-
-          {can("prodCode") && (
-            <div className="field">
-              <label htmlFor="prod-code">Código</label>
+            </label>
+            <label>
+              <span>Código</span>
               <input
-                id="prod-code"
                 className="input"
-                placeholder="Código"
-                value={form.code}
-                onChange={(e) => setForm({ ...form, code: e.target.value })}
+                value={draft.code}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, code: e.target.value }))
+                }
               />
-            </div>
-          )}
-
-          <div className="buttons">
-            <button className="btn primary" type="submit">
-              {editing ? "Guardar cambios" : "Crear producto"}
-            </button>
-            {editing && (
-              <button
-                className="btn"
-                type="button"
-                onClick={() => {
-                  setEditing(null);
-                  setForm({ name: "", price: "", stock: "", code: "", catId: "" });
+            </label>
+            <label>
+              <span>Categoría</span>
+              <select
+                className="select"
+                value={draft.catId}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setDraft((d) => ({ ...d, catId: value }));
+                  setCatTouched(true);
                 }}
               >
-                Cancelar
-              </button>
-            )}
+                <option value="">— Sin categoría —</option>
+                {cats.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              {catsErr && (
+                <div className="hint" role="alert">
+                  {catsErr}
+                </div>
+              )}
+            </label>
           </div>
-        </fieldset>
-      </form>
 
-      <div className="table table-products" role="table" aria-label="Listado de productos">
-        <div className="thead" role="rowgroup">
-          <div className="tr" role="row">
-            <div role="columnheader">ID</div>
-            <div role="columnheader">Nombre</div>
-            <div role="columnheader">Código</div>
-            <div role="columnheader" className="num">Precio</div>
-            <div role="columnheader" className="num">Stock</div>
-            <div role="columnheader">Acciones</div>
+          {editingLoading && editingId !== "__new__" && (
+            <div className="hint" style={{ marginTop: 6 }}>
+              Cargando datos del producto…
+            </div>
+          )}
+
+          <div className="actions-row">
+            <button className="btn primary" onClick={onSave}>
+              Guardar
+            </button>
+            <button className="btn ghost" onClick={onCancel}>
+              Cancelar
+            </button>
           </div>
         </div>
-        <div className="tbody" role="rowgroup">
-          {rows.map(r => (
-            <div key={r.id} className="tr" role="row">
-              <div role="cell">{r.id}</div>
-              <div role="cell" className="truncate-2">{r.name}</div>
-              <div role="cell">{r.code ?? "-"}</div>
-              <div role="cell" className="num">
-                {r.price == null
-                  ? "-"
-                  : new Intl.NumberFormat("es-AR", {
-                      style: "currency",
-                      currency: "ARS",
-                    }).format(r.price)}
+      )}
+
+      {/* Tabla */}
+      {loading ? (
+        <div className="state">Cargando…</div>
+      ) : rows.length === 0 ? (
+        <div className="state">Sin resultados</div>
+      ) : (
+        <div className="table like" role="table" aria-label="Lista de productos">
+          <div className="t-head" role="row">
+            <div style={{ flex: 4 }}>Nombre</div>
+            <div style={{ flex: 2, textAlign: "right" }}>Precio</div>
+            <div style={{ flex: 2, textAlign: "center" }}>Stock</div>
+            <div style={{ flex: 2 }}>Código</div>
+            <div style={{ width: 160 }} />
+          </div>
+          {rows.map((r) => (
+            <div key={r.id} className="t-row" role="row">
+              <div style={{ flex: 4, minWidth: 0 }}>
+                <div className="truncate">
+                  {r.name} <span className="muted">#{r.id}</span>
+                </div>
               </div>
-              <div role="cell">
-                {stockEdit.id === r.id ? (
-                  <div className="stock-inline">
-                    <label htmlFor={`stk-${r.id}`} className="sr-only">
-                      Stock para {r.name}
-                    </label>
-                    <input
-                      id={`stk-${r.id}`}
-                      className="input stock-input"
-                      type="number"
-                      value={stockEdit.value}
-                      onChange={(e) =>
-                        setStockEdit((s) => ({ ...s, value: e.target.value }))
-                      }
-                      onKeyDown={onKeyDownStock}
-                      autoFocus
-                    />
-                    <button
-                      className="btn primary xs"
-                      type="button"
-                      onClick={saveStock}
-                      aria-label={`Guardar stock de ${r.name}`}
-                    >
-                      Guardar
-                    </button>
-                    <button
-                      className="btn xs"
-                      type="button"
-                      onClick={cancelStockEdit}
-                    >
-                      Cancelar
-                    </button>
-                  </div>
+              <div style={{ flex: 2, textAlign: "right" }}>
+                {r.price == null ? "—" : money(r.price)}
+              </div>
+              <div style={{ flex: 2, textAlign: "center" }}>
+                {stockEdit?.id === r.id ? (
+                  <input
+                    className="input"
+                    type="number"
+                    inputMode="numeric"
+                    value={stockEdit.value}
+                    onChange={(e) =>
+                      setStockEdit((s) => ({
+                        ...s,
+                        value: clampInt(e.target.value, 0),
+                      }))
+                    }
+                    onKeyDown={onKeyDownStock}
+                    style={{ width: 94, textAlign: "center" }}
+                    aria-label={`Stock para ${r.name}`}
+                  />
                 ) : (
-                  <div className="stock-inline">
-                    <span className="stock-value">{r.stock ?? "-"}</span>
-                    <button
-                      className="btn xs"
-                      type="button"
-                      onClick={() =>
-                        setStockEdit({ id: r.id, value: r.stock ?? 0 })
-                      }
-                      aria-label={`Editar stock de ${r.name}`}
-                    >
-                      Editar stock
-                    </button>
-                  </div>
+                  r.stock ?? 0
                 )}
               </div>
-              <div className="actions" role="cell">
-                <button
-                  className="btn small tonal"
-                  onClick={() => onEdit(r)}
-                  type="button"
-                  aria-label={`Editar ${r.name}`}
-                >
-                  Editar
-                </button>
-                <button
-                  className="btn small danger"
-                  onClick={() => onDelete(r.id)}
-                  type="button"
-                  aria-label={`Eliminar ${r.name}`}
-                >
-                  Eliminar
-                </button>
+              <div style={{ flex: 2 }}>{r.code ?? "—"}</div>
+              <div
+                style={{
+                  width: 160,
+                  display: "flex",
+                  gap: 6,
+                  justifyContent: "flex-end",
+                }}
+              >
+                {stockEdit?.id === r.id ? (
+                  <>
+                    <button className="pill" onClick={saveStock}>
+                      Guardar
+                    </button>
+                    <button className="pill ghost" onClick={cancelStockEdit}>
+                      Cancelar
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button className="pill" onClick={() => startStockEdit(r)}>
+                      Stock
+                    </button>
+                    <button className="pill" onClick={() => onEdit(r)}>
+                      Editar
+                    </button>
+                    <button
+                      className="pill danger"
+                      onClick={() => onDelete(r.id)}
+                      aria-label={`Eliminar ${r.name}`}
+                    >
+                      Eliminar
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           ))}
-          {rows.length === 0 && (
-            <div className="tr" role="row">
-              <div role="cell" style={{ gridColumn: "1 / -1" }}>
-                Sin productos
-              </div>
-            </div>
-          )}
         </div>
-      </div>
+      )}
     </section>
   );
 }
 
-/* =======================  ASSIGN / REASSIGN SERVICES (unitario) ======================= */
+/* ===========================================================
+ * 2) Asignar servicios a supervisores
+ *    (/admin/supervisors, /admin/services?q=, /admin/assignments)
+ * ========================================================= */
 function AssignServicesSection() {
   const [supervisors, setSupervisors] = useState([]);
   const [selectedSupervisor, setSelectedSupervisor] = useState("");
   const [assignments, setAssignments] = useState([]);
 
   const [q, setQ] = useState("");
+  const qDeb = useDebounced(q, 300);
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
@@ -373,114 +499,115 @@ function AssignServicesSection() {
     }
   }, []);
 
-  const loadAssignments = useCallback(async (EmpleadoID) => {
-    setMsg("");
-    if (!EmpleadoID) {
+  const loadAssignments = useCallback(async () => {
+    if (!selectedSupervisor) {
       setAssignments([]);
       return;
     }
     try {
-      setAssignments(
-        (await api.get("/admin/assignments", { params: { EmpleadoID } }))
-          .data || []
-      );
+      const { data } = await api.get("/admin/assignments", {
+        params: { EmpleadoID: selectedSupervisor },
+      });
+      setAssignments(Array.isArray(data) ? data : []);
     } catch (e) {
       setMsg(e?.response?.data?.error || "Error al listar asignaciones");
     }
-  }, []);
+  }, [selectedSupervisor]);
 
-  useEffect(() => { loadSupervisors(); }, [loadSupervisors]);
-  useEffect(() => { loadAssignments(selectedSupervisor); }, [selectedSupervisor, loadAssignments]);
-
-  const isAssigned = (srvId) =>
-    assignments.some((a) => String(a.ServicioID) === String(srvId));
-  const pivotIdOf = (srvId) =>
-    assignments.find((a) => String(a.ServicioID) === String(srvId))?.id ?? null;
-
-  const searchServices = async () => {
-    setMsg("");
-    if (q.trim().length < 2) {
-      setServices([]);
-      setMsg("Escribí al menos 2 letras para buscar.");
-      return;
-    }
+  const searchServices = useCallback(async () => {
     setLoading(true);
+    setMsg("");
     try {
-      const res = await api.get("/admin/services", { params: { q, limit: 25 } });
-      setServices(res.data || []);
-      if ((res.data || []).length === 0) setMsg("No se encontraron servicios.");
+      if (!qDeb || String(qDeb).trim().length < 2) {
+        setServices([]);
+        return;
+      }
+      const { data } = await api.get("/admin/services", {
+        params: { q: String(qDeb).trim(), limit: 50 },
+      });
+      setServices(Array.isArray(data) ? data : []);
     } catch (e) {
-      setMsg(e?.response?.data?.error || "Error buscando servicios");
+      setMsg(e?.response?.data?.error || "Error al buscar servicios");
     } finally {
       setLoading(false);
     }
-  };
+  }, [qDeb]);
 
-  const onKeyDownSearch = (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      searchServices();
+  useEffect(() => {
+    loadSupervisors();
+  }, [loadSupervisors]);
+
+  useEffect(() => {
+    loadAssignments();
+  }, [loadAssignments]);
+
+  useEffect(() => {
+    searchServices();
+  }, [searchServices]);
+
+  const onAssign = async (serviceId) => {
+    if (!selectedSupervisor) {
+      setMsg("Elegí un supervisor");
+      return;
+    }
+    try {
+      await api.post("/admin/assignments", {
+        EmpleadoID: Number(selectedSupervisor),
+        ServicioID: Number(serviceId),
+      });
+      setMsg("Servicio asignado");
+      await loadAssignments();
+      await searchServices();
+    } catch (e) {
+      setMsg(e?.response?.data?.error || "No se pudo asignar");
     }
   };
 
-  const toggle = async (srvId) => {
-    if (!selectedSupervisor) return;
-    setMsg("");
+  const onUnassign = async (assignmentRowId, serviceName) => {
+    if (!confirm(`¿Quitar ${serviceName} del supervisor?`)) return;
     try {
-      if (isAssigned(srvId)) {
-        const pid = pivotIdOf(srvId);
-        if (pid) {
-          await api.delete(`/admin/assignments/${pid}`);
-        } else {
-          await api.delete(`/admin/assignments/by-key`, {
-            params: { EmpleadoID: selectedSupervisor, ServicioID: srvId },
-          });
-        }
-      } else {
-        await api.post("/admin/assignments", {
-          EmpleadoID: String(selectedSupervisor),
-          ServicioID: String(srvId),
-        });
-      }
-      await loadAssignments(selectedSupervisor);
+      await api.delete(`/admin/assignments/${assignmentRowId}`);
+      setMsg("Asignación eliminada");
+      await loadAssignments();
+      await searchServices();
     } catch (e) {
-      setMsg(e?.response?.data?.error || "No se pudo actualizar la asignación");
+      setMsg(e?.response?.data?.error || "No se pudo eliminar");
     }
   };
 
   return (
-    <section className="card">
-      <h2>Asignar / Reasignar servicios</h2>
-      {msg && <div className="alert error">{msg}</div>}
+    <section className="srv-card" aria-labelledby="assign-heading">
+      <div className="section-header">
+        <h3 id="assign-heading">Asignar servicios a supervisores</h3>
+        {msg && <div className="state">{msg}</div>}
+      </div>
 
-      <div className="assign-toolbar">
-        <select
-          className="input"
-          value={selectedSupervisor}
-          onChange={(e) => {
-            setSelectedSupervisor(e.target.value);
-            setMsg("");
-          }}
-        >
-          <option value="">-- Elegir supervisor --</option>
-          {supervisors.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.username || `Supervisor #${s.id}`}
-            </option>
-          ))}
-        </select>
+      <div className="toolbar">
+        <label className="select-row">
+          <span>Supervisor</span>
+          <select
+            className="select"
+            value={selectedSupervisor}
+            onChange={(e) => setSelectedSupervisor(e.target.value)}
+            aria-label="Supervisor"
+          >
+            <option value="">— Elegí —</option>
+            {supervisors.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.username} (#{s.id})
+              </option>
+            ))}
+          </select>
+        </label>
 
         <input
           className="input"
           placeholder="Buscar servicio… (mín. 2 letras)"
           value={q}
-          onChange={(e) => {
-            setQ(e.target.value);
-            setMsg("");
-          }}
-          onKeyDown={onKeyDownSearch}
+          onChange={(e) => setQ(e.target.value)}
+          aria-label="Buscar servicio"
         />
-        <button className="btn primary" onClick={searchServices} disabled={loading}>
+        <button className="btn" onClick={searchServices} disabled={loading}>
           {loading ? "Buscando…" : "Buscar"}
         </button>
       </div>
@@ -488,350 +615,296 @@ function AssignServicesSection() {
       {!selectedSupervisor ? (
         <div className="hint">Elegí un supervisor y buscá un servicio.</div>
       ) : (
-        <>
-          <div className="assign-list">
-            {services.map((s) => (
-              <label
-                key={s.id}
-                className={`assign-item ${isAssigned(s.id) ? "assigned" : ""}`}
-              >
-                <input
-                  type="checkbox"
-                  checked={isAssigned(s.id)}
-                  onChange={() => toggle(s.id)}
-                />
-                <div className="assign-content">
-                  <div className="assign-title">{s.name}</div>
-                  <div className="assign-badges">
-                    {isAssigned(s.id) ? (
-                      <span className="badge">Asignado</span>
-                    ) : (
-                      <span className="badge">Disponible</span>
-                    )}
-                  </div>
+        <div className="grid-2">
+          <div>
+            <h4>Resultados</h4>
+            <div className="list">
+              {services.length === 0 ? (
+                <div className="state">
+                  {qDeb?.length >= 2
+                    ? "Sin coincidencias."
+                    : "Escribí para buscar…"}
                 </div>
-              </label>
-            ))}
+              ) : (
+                services.map((s) => (
+                  <div key={s.id} className="list-row">
+                    <div className="truncate">
+                      {s.name} <span className="muted">#{s.id}</span>
+                    </div>
+                    <div>
+                      {s.is_assigned ? (
+                        <span className="pill">Asignado</span>
+                      ) : (
+                        <button
+                          className="pill"
+                          onClick={() => onAssign(s.id)}
+                          aria-label={`Asignar ${s.name}`}
+                        >
+                          Asignar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
 
-          <div className="hint small" style={{ marginTop: 12 }}>
-            <strong>Asignados:</strong>{" "}
-            {assignments.length
-              ? assignments.map((a) => a.service_name).join(", ")
-              : "ninguno"}
+          <div>
+            <h4>Asignados</h4>
+            <div className="list">
+              {assignments.length === 0 ? (
+                <div className="state">Sin asignaciones.</div>
+              ) : (
+                assignments.map((a) => (
+                  <div key={a.id} className="list-row">
+                    <div className="truncate">
+                      {a.service_name}{" "}
+                      <span className="muted">ID: {a.ServicioID}</span>
+                    </div>
+                    <button
+                      className="pill danger"
+                      onClick={() => onUnassign(a.id, a.service_name)}
+                      aria-label={`Quitar ${a.service_name}`}
+                    >
+                      Quitar
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
-        </>
+        </div>
       )}
     </section>
   );
 }
 
-/* =======================  SERVICE ↔ PRODUCTS  ======================= */
+/* ===========================================================
+ * 3) Relación Servicio ↔ Productos
+ *    (/admin/services?q=..., /admin/sp/assignments/:serviceId)
+ * ========================================================= */
 function ServiceProductsSection() {
-  const PAGE_SIZE = 12;
-  const [step, setStep] = useState("pick");
+  const [step, setStep] = useState("pick"); // pick | manage
   const [service, setService] = useState(null);
+
+  // Búsqueda de servicio
   const [qSrv, setQSrv] = useState("");
+  const qSrvDeb = useDebounced(qSrv, 300);
   const [srvResults, setSrvResults] = useState([]);
-  const [srvMsg, setSrvMsg] = useState("");
   const [srvLoading, setSrvLoading] = useState(false);
-  const debounceRef = useRef(null);
-  const lastQueryRef = useRef("");
+  const [srvMsg, setSrvMsg] = useState("");
 
-  const [cats, setCats] = useState([]);
-  const [catId, setCatId] = useState("__all__");
+  // Productos (cat opcional + búsqueda simple)
   const [q, setQ] = useState("");
-  const [allRows, setAllRows] = useState([]);
-  const [rows, setRows] = useState([]);
-  const [page, setPage] = useState(1);
+  const qDeb = useDebounced(q, 300);
+  const [allRows, setAllRows] = useState([]); // todos los productos
+  const [rows, setRows] = useState([]); // filtrados
   const [selected, setSelected] = useState(new Set());
-
-  const [loading, setLoading] = useState(false);
-  const [loadErr, setLoadErr] = useState("");
-  const [saveErr, setSaveErr] = useState("");
-  const [saveOk, setSaveOk] = useState("");
+  const [assignMsg, setAssignMsg] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // búsqueda de servicios (paso "pick")
-  useEffect(() => {
-    if (step !== "pick") return;
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(async () => {
-      const term = qSrv.trim();
-      if (term === lastQueryRef.current) return;
-      lastQueryRef.current = term;
-      if (!term) {
+  // Buscar servicio
+  const searchServices = useCallback(async () => {
+    setSrvLoading(true);
+    setSrvMsg("");
+    try {
+      const term = String(qSrvDeb || "").trim();
+      if (!term || term.length < 2) {
         setSrvResults([]);
-        setSrvMsg("");
         return;
       }
-      try {
-        setSrvLoading(true);
-        const { data } = await api.get("/admin/services", {
-          params: { q: term, limit: 25 },
-        });
-        setSrvResults(data || []);
-        setSrvMsg((data || []).length ? "" : "No se encontraron servicios.");
-      } catch (e) {
-        setSrvMsg(e?.response?.data?.error || "Error buscando servicios");
-      } finally {
-        setSrvLoading(false);
-      }
-    }, 250);
-    return () => clearTimeout(debounceRef.current);
-  }, [qSrv, step]);
-
-  // al entrar a "assign" y elegir servicio
-  useEffect(() => {
-    if (step !== "assign" || !service) return;
-    setPage(1);
-    setSaveOk("");
-    setSaveErr("");
-    setLoadErr("");
-    api
-      .get("/catalog/categories")
-      .then(({ data }) => setCats(Array.isArray(data) ? data : []))
-      .catch(() => setCats([]));
-    api
-      .get(`/admin/sp/assignments/${service.id}`)
-      .then(({ data }) =>
-        setSelected(new Set((data?.productIds || []).map(String)))
-      )
-      .catch(() => setSelected(new Set()));
-  }, [step, service]);
-
-  const loadProducts = useCallback(async () => {
-    if (step !== "assign" || !service) return;
-    setLoadErr("");
-    setLoading(true);
-    try {
-      const { data } = await api.get("/catalog/products", {
-        params: { catId: catId || "__all__", q: q || "" },
+      const { data } = await api.get("/admin/services", {
+        params: { q: term, limit: 50 },
       });
-      setAllRows(Array.isArray(data) ? data : []);
-      setPage(1);
+      setSrvResults(Array.isArray(data) ? data : []);
     } catch (e) {
-      setAllRows([]);
-      setLoadErr(
-        e?.response?.data?.error || "No se pudieron cargar los productos"
-      );
+      setSrvMsg(e?.response?.data?.error || "Error al buscar servicios");
     } finally {
-      setLoading(false);
+      setSrvLoading(false);
     }
-  }, [step, service, catId, q]);
+  }, [qSrvDeb]);
 
-  useEffect(() => { loadProducts(); }, [loadProducts]);
+  // Cargar productos y preselección por servicio
+  const loadProductsAndSelection = useCallback(async () => {
+    if (!service) return;
+    setAssignMsg("");
+    try {
+      const { data: products } = await api.get("/admin/products", {
+        params: { q: "", limit: 500 },
+      });
+      setAllRows(Array.isArray(products) ? products : []);
+
+      const current = await api.get(
+        `/admin/sp/assignments/${service.id}`
+      );
+      const ids = new Set((current.data?.productIds || []).map(String));
+      setSelected(ids);
+    } catch (e) {
+      setAssignMsg(e?.response?.data?.error || "Error al cargar datos");
+    }
+  }, [service]);
+
+  // Filtro de productos
+  useEffect(() => {
+    const term = String(qDeb || "").trim().toLowerCase();
+    if (!term) {
+      setRows(allRows);
+    } else {
+      setRows(
+        allRows.filter((p) => {
+          const name = String(p?.name ?? "").toLowerCase();
+          const idStr = String(p?.id ?? "");
+          const code = String(p?.code ?? "").toLowerCase();
+          return (
+            name.includes(term) ||
+            idStr.includes(term) ||
+            (!!code && code.includes(term))
+          );
+        })
+      );
+    }
+  }, [qDeb, allRows]);
 
   useEffect(() => {
-    const start = (page - 1) * PAGE_SIZE;
-    setRows(allRows.slice(start, start + PAGE_SIZE));
-  }, [allRows, page]);
+    searchServices();
+  }, [searchServices]);
 
-  useEffect(() => { setPage(1); }, [catId, q]);
+  useEffect(() => {
+    loadProductsAndSelection();
+  }, [loadProductsAndSelection]);
 
-  const toggle = (id, checked) => {
-    const next = new Set(selected);
-    if (checked) next.add(String(id));
-    else next.delete(String(id));
-    setSelected(next);
-    setSaveOk("");
-    setSaveErr("");
+  const toggle = (id) => {
+    setSelected((prev) => {
+      const s = new Set(prev);
+      const k = String(id);
+      if (s.has(k)) s.delete(k);
+      else s.add(k);
+      return s;
+    });
   };
 
-  const saveAll = async () => {
+  const save = async () => {
     if (!service) return;
     setSaving(true);
-    setSaveErr("");
-    setSaveOk("");
-    const before = new Set(selected);
+    setAssignMsg("");
     try {
       const res = await api.put(`/admin/sp/assignments/${service.id}`, {
         productIds: Array.from(selected),
       });
-      const { data } = await api.get(`/admin/sp/assignments/${service.id}`);
-      const afterIds = (data?.productIds || []).map(String);
-      const afterSet = new Set(afterIds);
-      let added = 0,
-        removed = 0;
-      for (const id of afterSet) if (!before.has(id)) added++;
-      for (const id of before) if (!afterSet.has(id)) removed++;
-      setSelected(new Set(afterSet));
-      const stamp = new Date().toLocaleTimeString();
-      const baseMsg = res?.data?.message || "Asignaciones guardadas";
-      setSaveOk(
-        `${baseMsg} ✓ — asignados: ${afterIds.length} ( +${added} / -${removed} ) — ${stamp}`
-      );
+      const added = res?.data?.added?.length || 0;
+      const removed = res?.data?.removed?.length || 0;
+      setAssignMsg(`Guardado. +${added} / -${removed}`);
     } catch (e) {
-      setSaveErr(e?.response?.data?.error || e.message || "No se pudieron guardar");
+      setAssignMsg(e?.response?.data?.error || "No se pudo guardar");
     } finally {
       setSaving(false);
     }
   };
 
-  const PAGE_TOTAL = Math.max(1, Math.ceil(allRows.length / PAGE_SIZE));
-  const canNext = page < PAGE_TOTAL;
-  const prevPage = () => setPage((p) => Math.max(1, p - 1));
-  const nextPage = () => {
-    if (canNext) setPage((p) => p + 1);
-  };
-
   return (
-    <section className="card">
-      <h2>Servicio ↔ Productos</h2>
+    <section className="srv-card" aria-labelledby="sp-heading">
+      <h3 id="sp-heading">Servicio ↔ Productos</h3>
 
       {step === "pick" && (
         <>
           <div className="toolbar">
             <input
               className="input"
-              placeholder="Buscar servicio…"
               value={qSrv}
               onChange={(e) => setQSrv(e.target.value)}
+              placeholder="Buscar servicio (mín. 2 letras)…"
             />
-            <button
-              className="btn primary"
-              onClick={() => setQSrv(qSrv)}
-              disabled={srvLoading}
-            >
+            <button className="btn" onClick={searchServices} disabled={srvLoading}>
               {srvLoading ? "Buscando…" : "Buscar"}
             </button>
           </div>
-          {srvMsg && <div className="alert error">{srvMsg}</div>}
-          <div className="assign-list">
-            {srvResults.map((s) => (
-              <label key={s.id} className="assign-item">
-                <input
-                  type="radio"
-                  name="srv-pick"
-                  onChange={() => {
-                    setService(s);
-                    setStep("assign");
-                  }}
-                />
-                <div className="assign-content">
-                  <div className="assign-title">{s.name}</div>
+
+          {srvMsg && <div className="state">{srvMsg}</div>}
+
+          <div className="list">
+            {srvResults.length === 0 ? (
+              <div className="state">Sin resultados</div>
+            ) : (
+              srvResults.map((s) => (
+                <div key={s.id} className="list-row">
+                  <div className="truncate">
+                    {s.name} <span className="muted">#{s.id}</span>
+                  </div>
+                  <button
+                    className="pill"
+                    onClick={() => {
+                      setService({ id: s.id, name: s.name });
+                      setStep("manage");
+                    }}
+                  >
+                    Elegir
+                  </button>
                 </div>
-              </label>
-            ))}
-            {!srvResults.length && !srvMsg && (
-              <div className="hint">Empezá a escribir para ver resultados.</div>
+              ))
             )}
           </div>
         </>
       )}
 
-      {step === "assign" && (
+      {step === "manage" && (
         <>
-          <div className="toolbar">
-            <button
-              className="btn"
-              onClick={() => {
-                setStep("pick");
-                setService(null);
-                setAllRows([]);
-                setRows([]);
-                setSelected(new Set());
-              }}
-            >
-              ← Cambiar servicio
-            </button>
-            <div className="sp-service-pill">
-              Servicio: <strong>{service?.name}</strong>
+          <div className="section-header">
+            <div className="muted">
+              Servicio seleccionado: <strong>{service.name}</strong> (#{service.id})
             </div>
-            <div style={{ flex: 1 }} />
-            <button className="btn primary" onClick={saveAll} disabled={saving}>
-              {saving ? "Guardando…" : saveOk ? "Guardado ✓" : "Guardar cambios"}
-            </button>
+            <div className="actions-row">
+              <button className="btn ghost" onClick={() => setStep("pick")}>
+                Cambiar servicio
+              </button>
+              <button className="btn primary" onClick={save} disabled={saving}>
+                {saving ? "Guardando…" : "Guardar asignaciones"}
+              </button>
+            </div>
+            {assignMsg && <div className="state">{assignMsg}</div>}
           </div>
 
           <div className="toolbar">
-            <select
-              className="input"
-              value={catId}
-              onChange={(e) => setCatId(e.target.value)}
-            >
-              <option value="__all__">Todas las categorías</option>
-              {cats.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
             <input
               className="input"
-              placeholder="Buscar producto…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
+              placeholder="Filtrar productos (ID, nombre o código)…"
             />
           </div>
 
-          {loadErr && (
-            <div className="alert error">
-              {loadErr}{" "}
-              <button
-                className="btn xs"
-                type="button"
-                onClick={loadProducts}
-              >
-                Reintentar
-              </button>
+          <div className="table like">
+            <div className="t-head">
+              <div style={{ flex: 4 }}>Producto</div>
+              <div style={{ flex: 2 }}>Código</div>
+              <div style={{ flex: 2, textAlign: "right" }}>Precio</div>
+              <div style={{ width: 120, textAlign: "right" }}>Asignado</div>
             </div>
-          )}
-          {saveErr && <div className="alert error">{saveErr}</div>}
-          {saveOk && <div className="alert">{saveOk}</div>}
 
-          <div className="assign-list">
-            {rows.map((r) => {
-              const on = selected.has(String(r.id));
+            {rows.map((p) => {
+              const checked = selected.has(String(p.id));
               return (
-                <label
-                  key={r.id}
-                  className={`assign-item ${on ? "assigned" : ""}`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={on}
-                    onChange={(e) => toggle(r.id, e.target.checked)}
-                  />
-                  <div className="assign-content">
-                    <div className="assign-title">{r.name}</div>
-                    <div className="assign-badges">
-                      <span className="badge">{r.code || "s/código"}</span>
-                      {typeof r.price === "number" && (
-                        <span className="badge">${r.price}</span>
-                      )}
-                      {typeof r.stock === "number" && (
-                        <span className="badge">stock {r.stock}</span>
-                      )}
+                <label key={p.id} className="t-row" style={{ cursor: "pointer" }}>
+                  <div style={{ flex: 4, minWidth: 0 }}>
+                    <div className="truncate">
+                      {p.name} <span className="muted">#{p.id}</span>
                     </div>
+                  </div>
+                  <div style={{ flex: 2 }}>{p.code ?? "—"}</div>
+                  <div style={{ flex: 2, textAlign: "right" }}>
+                    {p.price == null ? "—" : money(p.price)}
+                  </div>
+                  <div style={{ width: 120, textAlign: "right" }}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggle(p.id)}
+                      aria-label={`Asignar ${p.name}`}
+                    />
                   </div>
                 </label>
               );
             })}
-            {!rows.length && !loadErr && (
-              <div className="hint">
-                {loading ? "Cargando…" : "No hay productos para mostrar."}
-              </div>
-            )}
-          </div>
-
-          <div className="toolbar" style={{ justifyContent: "space-between" }}>
-            <div className="hint">
-              Página {page} / {PAGE_TOTAL}
-            </div>
-            <div>
-              <button className="btn" onClick={prevPage} disabled={page <= 1}>
-                Anterior
-              </button>
-              <button
-                className="btn"
-                onClick={nextPage}
-                disabled={!canNext}
-                style={{ marginLeft: 8 }}
-              >
-                Siguiente
-              </button>
-            </div>
           </div>
         </>
       )}
@@ -839,39 +912,22 @@ function ServiceProductsSection() {
   );
 }
 
-/* =======================  SERVICE BUDGETS  ======================= */
-/** NO resetea de página al guardar y persiste la página en URL y sessionStorage */
+/* ===========================================================
+ * 4) Presupuestos por servicio
+ *    (/admin/service-budgets, PUT /admin/service-budgets/:id)
+ * ========================================================= */
 function ServiceBudgetsSection() {
-  const PAGE_SIZE = 15;
-  const PAGE_KEY = "admin:budgets:page";
-
-  const [searchParams, setSearchParams] = useSearchParams();
-
-  const initPage = (() => {
-    const fromUrl = Number(searchParams.get("bPage"));
-    if (Number.isFinite(fromUrl) && fromUrl > 0) return fromUrl;
-    const fromSS = Number(sessionStorage.getItem(PAGE_KEY));
-    return Number.isFinite(fromSS) && fromSS > 0 ? fromSS : 1;
-  })();
-
   const [rows, setRows] = useState([]); // [{id, name, budget}]
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-  const [page, setPage] = useState(initPage);
-  const [drafts, setDrafts] = useState({}); // id -> texto del input
+  const [page, setPage] = useState(1);
+  const [drafts, setDrafts] = useState({}); // id -> texto
   const [savingIds, setSavingIds] = useState(new Set());
 
-  useEffect(() => {
-    sessionStorage.setItem(PAGE_KEY, String(page));
-    setSearchParams(
-      (prev) => {
-        const p = new URLSearchParams(prev);
-        p.set("bPage", String(page));
-        return p;
-      },
-      { replace: true }
-    );
-  }, [page, setSearchParams]);
+  const PER_PAGE = 15;
+  const pageCount = Math.max(1, Math.ceil(rows.length / PER_PAGE));
+  const start = (page - 1) * PER_PAGE;
+  const current = rows.slice(start, start + PER_PAGE);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -890,442 +946,326 @@ function ServiceBudgetsSection() {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  const totalPages = Math.max(1, Math.ceil((rows.length || 0) / PAGE_SIZE));
-  const safePage = Math.min(Math.max(1, page), totalPages);
-  const start = (safePage - 1) * PAGE_SIZE;
-  const current = rows.slice(start, start + PAGE_SIZE);
-
-  const updateDraft = (id, val) =>
-    setDrafts((d) => ({
-      ...d,
-      [id]: val,
-    }));
-
-  const saveOne = async (row, ev) => {
-    if (ev) {
-      ev.preventDefault();
-      ev.stopPropagation();
+  const onSaveOne = async (row) => {
+    const raw = drafts[row.id] ?? (row.budget ?? "");
+    const presupuesto = Number(raw);
+    if (!Number.isFinite(presupuesto) || presupuesto < 0) {
+      setErr("Presupuesto inválido");
+      return;
     }
 
-    const raw = String(drafts[row.id] ?? row.budget ?? "").trim();
-    const normalized = raw.replace(/\./g, "").replace(/,/g, ".");
-    const parsed = Number(normalized);
-    const presupuesto = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
-
-    setSavingIds((prev) => new Set(prev).add(row.id));
+    setSavingIds((s) => new Set(s).add(row.id));
+    setErr("");
     try {
       await api.put(`/admin/service-budgets/${row.id}`, { presupuesto });
-
       setRows((prev) =>
         prev.map((it) =>
           it.id === row.id ? { ...it, budget: presupuesto } : it
         )
       );
-      setDrafts((d) => {
-        const n = { ...d };
-        delete n[row.id];
-        return n;
-      });
-
-      const totalPagesAfter = Math.max(
-        1,
-        Math.ceil((rows.length || 0) / PAGE_SIZE)
-      );
-      setPage((p) => Math.min(Math.max(1, p), totalPagesAfter));
     } catch (e) {
-      alert(e?.response?.data?.error || e.message || "No se pudo guardar");
+      setErr(e?.response?.data?.error || e.message || "No se pudo guardar");
     } finally {
-      setSavingIds((prev) => {
-        const n = new Set(prev);
+      setSavingIds((s) => {
+        const n = new Set(s);
         n.delete(row.id);
         return n;
       });
     }
   };
 
-  const prevPage = () => setPage((p) => Math.max(1, p - 1));
-  const nextPage = () => setPage((p) => Math.min(totalPages, p + 1));
+  if (loading) return <section className="srv-card"><div className="state">Cargando…</div></section>;
 
   return (
-    <section className="card">
-      <h2>Presupuestos por servicio</h2>
-      {err && <div className="alert error">{err}</div>}
+    <section className="srv-card" aria-labelledby="budgets-heading">
+      <div className="section-header">
+        <h3 id="budgets-heading">Presupuestos por servicio</h3>
+        {err && <div className="state error">{err}</div>}
+      </div>
 
-      {loading ? (
-        <div className="state">Cargando…</div>
-      ) : (
-        <>
-          <div className="budget-list">
-            {current.map((row) => {
-              const saving = savingIds.has(row.id);
-              const value = drafts[row.id] ?? (row.budget ?? "");
-              return (
-                <div key={row.id} className="budget-item">
-                  <div className="budget-title">
-                    <div className="budget-name">{row.name}</div>
-                    <div className="budget-id">ID: {row.id}</div>
-                  </div>
-                  <input
-                    className="input"
-                    type="text"
-                    inputMode="decimal"
-                    value={value}
-                    onChange={(e) => updateDraft(row.id, e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        saveOne(row);
-                      }
-                    }}
-                    aria-label={`Presupuesto para ${row.name}`}
-                  />
-                  <button
-                    className="btn primary"
-                    onClick={(e) => saveOne(row, e)}
-                    disabled={saving}
-                    type="button"
-                  >
-                    {saving ? "Guardando…" : "Guardar"}
-                  </button>
-                </div>
-              );
-            })}
-            {!current.length && (
-              <div className="hint">No hay servicios para mostrar.</div>
-            )}
-          </div>
-
-          <div className="toolbar" style={{ justifyContent: "space-between" }}>
-            <div className="hint">
-              Mostrando {start + 1}–{Math.min(start + PAGE_SIZE, rows.length)}{" "}
-              de {rows.length} servicios
-            </div>
-            <div>
+      <div className="list">
+        {current.map((row) => {
+          const saving = savingIds.has(row.id);
+          const value = drafts[row.id] ?? (row.budget ?? "");
+          return (
+            <div key={row.id} className="budget-item">
+              <div className="budget-title">
+                <div className="budget-name">{row.name}</div>
+                <div className="budget-id">ID: {row.id}</div>
+              </div>
+              <input
+                className="input"
+                type="text"
+                inputMode="decimal"
+                value={value}
+                onChange={(e) =>
+                  setDrafts((d) => ({ ...d, [row.id]: e.target.value }))
+                }
+                placeholder="0"
+                style={{ width: 140 }}
+                aria-label={`Presupuesto para ${row.name}`}
+              />
               <button
                 className="btn"
-                onClick={() => setPage(1)}
-                disabled={safePage === 1}
+                onClick={() => onSaveOne(row)}
+                disabled={saving}
               >
-                «
-              </button>
-              <button
-                className="btn"
-                onClick={prevPage}
-                disabled={safePage === 1}
-                style={{ marginLeft: 8 }}
-              >
-                ‹
-              </button>
-              <span style={{ margin: "0 12px" }}>
-                Página <strong>{safePage}</strong> de{" "}
-                <strong>{totalPages}</strong>
-              </span>
-              <button
-                className="btn"
-                onClick={nextPage}
-                disabled={safePage === totalPages}
-              >
-                ›
-              </button>
-              <button
-                className="btn"
-                onClick={() => setPage(totalPages)}
-                disabled={safePage === totalPages}
-                style={{ marginLeft: 8 }}
-              >
-                »
+                {saving ? "Guardando…" : "Guardar"}
               </button>
             </div>
-          </div>
-        </>
-      )}
+          );
+        })}
+      </div>
+
+      <div className="pager">
+        <button className="pill" onClick={() => setPage(1)} disabled={page <= 1}>
+          «
+        </button>
+        <button
+          className="pill"
+          onClick={() => setPage((p) => Math.max(1, p - 1))}
+          disabled={page <= 1}
+        >
+          Anterior
+        </button>
+        <span className="muted">
+          Página {page} / {pageCount}
+        </span>
+        <button
+          className="pill"
+          onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+          disabled={page >= pageCount}
+        >
+          Siguiente
+        </button>
+        <button
+          className="pill"
+          onClick={() => setPage(pageCount)}
+          disabled={page >= pageCount}
+        >
+          »
+        </button>
+      </div>
     </section>
   );
 }
 
-/* =======================  INCOMING STOCK (Ingresos programados)  ======================= */
+/* ===========================================================
+ * 5) Ingresos de stock programados (preventa)
+ *    (/admin/incoming-stock)
+ * ========================================================= */
 function IncomingStockSection() {
   const [search, setSearch] = useState("");
+  const searchDeb = useDebounced(search, 300);
   const [searchResults, setSearchResults] = useState([]);
   const [searchMsg, setSearchMsg] = useState("");
   const [searchLoading, setSearchLoading] = useState(false);
 
   const [product, setProduct] = useState(null);
-
   const [rows, setRows] = useState([]); // [{id, product_id, qty, eta}]
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  const [form, setForm] = useState({
-    qty: "",
-    eta: "",
-  });
-  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ qty: "", eta: "" });
 
-  const loadIncoming = useCallback(async (productId) => {
-    if (!productId) {
-      setRows([]);
-      return;
-    }
-    setErr("");
-    setLoading(true);
-    try {
-      const { data } = await api.get("/admin/incoming-stock", {
-        params: { productId },
-      });
-      setRows(Array.isArray(data) ? data : []);
-    } catch (e) {
-      setErr(e?.response?.data?.error || "No se pudieron cargar los ingresos");
-      setRows([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const searchProducts = async () => {
-    setSearchMsg("");
-    setSearchResults([]);
-    if (search.trim().length < 2) {
-      setSearchMsg("Escribí al menos 2 letras para buscar productos.");
-      return;
-    }
+  const doFindProduct = useCallback(async () => {
     setSearchLoading(true);
+    setSearchMsg("");
     try {
-      const res = await api.get("/admin/products", {
-        params: { q: search.trim(), limit: 50 },
+      const term = String(searchDeb || "").trim();
+      if (!term || term.length < 2) {
+        setSearchResults([]);
+        return;
+      }
+      const { data } = await api.get("/admin/products", {
+        params: { q: term, limit: 50 },
       });
-      const list = res.data || [];
-      setSearchResults(list);
-      if (!list.length) setSearchMsg("No se encontraron productos.");
+      setSearchResults(Array.isArray(data) ? data : []);
     } catch (e) {
-      setSearchMsg(e?.response?.data?.error || "Error buscando productos");
+      setSearchMsg(e?.response?.data?.error || "Error al buscar");
     } finally {
       setSearchLoading(false);
     }
-  };
+  }, [searchDeb]);
 
-  const onSelectProduct = async (p) => {
-    setProduct(p);
-    setForm({ qty: "", eta: "" });
-    await loadIncoming(p.id);
-  };
+  useEffect(() => {
+    doFindProduct();
+  }, [doFindProduct]);
 
-  const submit = async (e) => {
-    e.preventDefault();
-    if (!product) {
-      setErr("Elegí un producto primero.");
-      return;
-    }
-    const qtyNum = Number(form.qty);
-    if (!Number.isFinite(qtyNum) || qtyNum <= 0) {
-      setErr("Cantidad inválida.");
-      return;
-    }
-    if (!form.eta) {
-      setErr("Fecha estimada requerida.");
-      return;
-    }
-    setSaving(true);
+  const load = useCallback(async () => {
+    if (!product?.id) return;
+    setLoading(true);
     setErr("");
+    try {
+      const { data } = await api.get(`/admin/incoming-stock/${product.id}`);
+      setRows(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setErr(e?.response?.data?.error || "Error al cargar ingresos");
+    } finally {
+      setLoading(false);
+    }
+  }, [product?.id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const create = async () => {
+    setErr("");
+    if (!product?.id) {
+      setErr("Elegí un producto");
+      return;
+    }
+    const qty = Number(form.qty);
+    const eta = String(form.eta || "").trim();
+    if (!Number.isFinite(qty) || qty <= 0) {
+      setErr("Cantidad inválida");
+      return;
+    }
+    if (!eta) {
+      setErr("Fecha estimada requerida");
+      return;
+    }
     try {
       await api.post("/admin/incoming-stock", {
         productId: product.id,
-        qty: qtyNum,
-        eta: form.eta,
+        qty,
+        eta, // Acepta "YYYY-MM-DD" o "YYYY-MM-DD HH:mm:ss"
       });
       setForm({ qty: "", eta: "" });
-      await loadIncoming(product.id);
+      await load();
     } catch (e) {
-      setErr(e?.response?.data?.error || "No se pudo guardar el ingreso");
-    } finally {
-      setSaving(false);
+      setErr(e?.response?.data?.error || "No se pudo crear");
     }
   };
 
-  const removeRow = async (id) => {
-    if (!confirm("¿Eliminar este ingreso programado?")) return;
+  const onDelete = async (row) => {
+    if (!confirm("¿Eliminar ingreso programado?")) return;
     try {
-      await api.delete(`/admin/incoming/${id}`);
-      if (product) await loadIncoming(product.id);
+      await api.delete(`/admin/incoming-stock/${row.id}`);
+      await load();
     } catch (e) {
       setErr(e?.response?.data?.error || "No se pudo eliminar");
     }
   };
 
-  const confirmRow = async (id) => {
-    if (!confirm("¿Confirmar este ingreso y sumarlo al stock actual?")) return;
-    try {
-      await api.post(`/admin/incoming/${id}/confirm`);
-      if (product) await loadIncoming(product.id);
-    } catch (e) {
-      setErr(e?.response?.data?.error || "No se pudo confirmar el ingreso");
-    }
-  };
-
-  const onSearchKeyDown = (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      searchProducts();
-    }
-  };
-
   return (
-    <section className="card">
-      <h2>Ingresos programados (stock futuro)</h2>
+    <section className="srv-card" aria-labelledby="incoming-heading">
+      <h3 id="incoming-heading">Ingresos programados de stock</h3>
 
-      {/* Búsqueda de producto */}
       <div className="toolbar" aria-label="Búsqueda de producto">
         <input
           className="input"
           placeholder="Buscar producto… (mín. 2 letras)"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          onKeyDown={onSearchKeyDown}
         />
         <button
-          className="btn primary"
+          className="btn"
           type="button"
-          onClick={searchProducts}
+          onClick={doFindProduct}
           disabled={searchLoading}
         >
           {searchLoading ? "Buscando…" : "Buscar"}
         </button>
       </div>
-      {searchMsg && <div className="hint">{searchMsg}</div>}
 
-      {searchResults.length > 0 && (
-        <div className="assign-list" style={{ marginBottom: 16 }}>
-          {searchResults.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className={
-                "assign-item as-button " +
-                (product && String(product.id) === String(p.id)
-                  ? "assigned"
-                  : "")
-              }
-              onClick={() => onSelectProduct(p)}
-            >
-              <div className="assign-content">
-                <div className="assign-title">
-                  #{p.id} – {p.name}
-                </div>
-                <div className="assign-badges">
-                  {p.code && <span className="badge">{p.code}</span>}
-                  {typeof p.price === "number" && (
-                    <span className="badge">
-                      {new Intl.NumberFormat("es-AR", {
-                        style: "currency",
-                        currency: "ARS",
-                      }).format(p.price)}
-                    </span>
-                  )}
-                  {typeof p.stock === "number" && (
-                    <span className="badge">stock {p.stock}</span>
-                  )}
-                </div>
+      {searchMsg && <div className="state">{searchMsg}</div>}
+
+      <div className="list">
+        {searchResults.length === 0 ? (
+          <div className="state">Sin resultados</div>
+        ) : (
+          searchResults.map((p) => (
+            <div key={p.id} className="list-row">
+              <div className="truncate">
+                {p.name} <span className="muted">#{p.id}</span>
               </div>
-            </button>
-          ))}
-        </div>
-      )}
+              <button
+                className="pill"
+                onClick={() => setProduct(p)}
+                aria-label={`Elegir ${p.name}`}
+              >
+                Elegir
+              </button>
+            </div>
+          ))
+        )}
+      </div>
 
       {product && (
         <>
-          <div className="hint" style={{ marginBottom: 12 }}>
-            Producto seleccionado: <strong>#{product.id} – {product.name}</strong>
+          <div className="section-header">
+            <div className="muted">
+              Producto seleccionado: <strong>{product.name}</strong> (#{product.id})
+            </div>
           </div>
 
-          {err && <div className="alert error">{err}</div>}
-
-          {/* Form de alta de ingreso programado */}
-          <form onSubmit={submit} className="form-grid">
-            <fieldset>
-              <legend>Nuevo ingreso programado</legend>
-              <div className="field">
-                <label htmlFor="inc-qty">Cantidad *</label>
+          <div className="card">
+            <div className="grid-3">
+              <label>
+                <span>Cantidad</span>
                 <input
-                  id="inc-qty"
                   className="input"
                   type="number"
                   inputMode="numeric"
                   value={form.qty}
                   onChange={(e) =>
-                    setForm((f) => ({ ...f, qty: e.target.value }))
+                    setForm((f) => ({ ...f, qty: clampInt(e.target.value, 1) }))
                   }
-                  required
                 />
-              </div>
-              <div className="field">
-                <label htmlFor="inc-eta">Fecha estimada *</label>
+              </label>
+              <label>
+                <span>Fecha estimada (YYYY-MM-DD)</span>
                 <input
-                  id="inc-eta"
                   className="input"
-                  type="date"
+                  placeholder="2025-12-15"
                   value={form.eta}
                   onChange={(e) =>
                     setForm((f) => ({ ...f, eta: e.target.value }))
                   }
-                  required
                 />
-              </div>
-              <div className="buttons">
-                <button className="btn primary" type="submit" disabled={saving}>
-                  {saving ? "Guardando…" : "Agregar ingreso"}
+              </label>
+              <div className="actions-row">
+                <button className="btn primary" onClick={create}>
+                  Agregar
                 </button>
               </div>
-            </fieldset>
-          </form>
+            </div>
+            {err && <div className="state error">{err}</div>}
+          </div>
 
-          {/* Listado de ingresos existentes */}
-          <div className="table" style={{ marginTop: 16 }}>
-            <div className="thead">
-              <div>ID</div>
-              <div>Cantidad</div>
-              <div>Fecha estimada</div>
-              <div>Acciones</div>
+          <div className="table like" style={{ marginTop: 12 }}>
+            <div className="t-head">
+              <div style={{ flex: 4 }}>ETA</div>
+              <div style={{ flex: 2, textAlign: "right" }}>Cantidad</div>
+              <div style={{ width: 120 }} />
             </div>
-            <div className="tbody">
-              {loading ? (
-                <div className="tr">
-                  <div style={{ gridColumn: "1 / -1" }}>Cargando…</div>
-                </div>
-              ) : rows.length === 0 ? (
-                <div className="tr">
-                  <div style={{ gridColumn: "1 / -1" }}>
-                    No hay ingresos programados para este producto.
+            {loading ? (
+              <div className="state">Cargando…</div>
+            ) : rows.length === 0 ? (
+              <div className="state">Sin ingresos</div>
+            ) : (
+              rows.map((r) => (
+                <div key={r.id} className="t-row">
+                  <div style={{ flex: 4 }}>{r.eta}</div>
+                  <div style={{ flex: 2, textAlign: "right" }}>{r.qty}</div>
+                  <div style={{ width: 120, textAlign: "right" }}>
+                    <button
+                      className="pill danger"
+                      onClick={() => onDelete(r)}
+                      aria-label={`Eliminar ingreso ${r.id}`}
+                    >
+                      Eliminar
+                    </button>
                   </div>
                 </div>
-              ) : (
-                rows.map((r) => (
-                  <div key={r.id} className="tr">
-                    <div>{r.id}</div>
-                    <div>{r.qty}</div>
-                    <div>{r.eta?.slice(0, 10) || r.eta}</div>
-                    <div className="actions">
-                      <button
-                        className="btn small primary"
-                        type="button"
-                        onClick={() => confirmRow(r.id)}
-                      >
-                        Confirmar
-                      </button>
-                      <button
-                        className="btn danger small"
-                        type="button"
-                        onClick={() => removeRow(r.id)}
-                      >
-                        Eliminar
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
+              ))
+            )}
           </div>
         </>
       )}
@@ -1333,7 +1273,10 @@ function IncomingStockSection() {
   );
 }
 
-/* =======================  ORDERS  ======================= */
+/* ===========================================================
+ * 6) Pedidos (admin)
+ *    (/admin/orders, /admin/orders/:id [DELETE], /admin/orders/:id/price [PUT])
+ * ========================================================= */
 function OrdersSection() {
   const [orders, setOrders] = useState([]);
   const [err, setErr] = useState("");
@@ -1346,7 +1289,9 @@ function OrdersSection() {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const onDeleteOrder = async (id) => {
     if (!confirm(`¿Eliminar pedido #${id}?`)) return;
@@ -1354,90 +1299,112 @@ function OrdersSection() {
       await api.delete(`/admin/orders/${id}`);
       await load();
     } catch (e) {
-      setErr(e?.response?.data?.error || e.message);
+      setErr(e?.response?.data?.error || "No se pudo eliminar");
     }
   };
 
-  const onUpdateOrderTotal = async (id) => {
-    const val = prompt("Nuevo total:", "");
+  const onUpdatePrice = async (id) => {
+    const val = prompt("Nuevo total para el pedido:", "");
     if (val == null) return;
+    const newPrice = Number(val);
+    if (!Number.isFinite(newPrice) || newPrice < 0) {
+      alert("Importe inválido");
+      return;
+    }
     try {
-      await api.put(`/admin/orders/${id}/price`, { newPrice: Number(val) });
+      await api.put(`/admin/orders/${id}/price`, { newPrice });
       await load();
     } catch (e) {
-      setErr(e?.response?.data?.error || e.message);
+      setErr(e?.response?.data?.error || "No se pudo actualizar");
     }
   };
 
   return (
-    <section className="card">
-      <h2>Pedidos</h2>
-      {err && <div className="alert error">{err}</div>}
-      <div className="table">
-        <div className="thead">
-          <div>ID</div>
-          <div>Empleado</div>
-          <div>Rol</div>
-          <div>Total</div>
-          <div>Fecha</div>
-          <div>Acciones</div>
+    <section className="srv-card" aria-labelledby="orders-heading">
+      <h3 id="orders-heading">Pedidos</h3>
+      {err && <div className="state error">{err}</div>}
+
+      <div className="table like">
+        <div className="t-head">
+          <div style={{ flex: 1 }}>#</div>
+          <div style={{ flex: 2 }}>Empleado</div>
+          <div style={{ flex: 2 }}>Rol</div>
+          <div style={{ flex: 2 }}>Fecha</div>
+          <div style={{ flex: 2, textAlign: "right" }}>Total</div>
+          <div style={{ width: 200 }} />
         </div>
-        <div className="tbody">
-          {orders.map((o) => (
-            <div key={o.id} className="tr">
-              <div>{o.id}</div>
-              <div>{o.empleadoId}</div>
-              <div>{o.rol}</div>
-              <div>${o.total}</div>
-              <div>{o.fecha?.slice(0, 19)?.replace("T", " ")}</div>
-              <div className="actions">
-                <button
-                  className="btn tonal"
-                  onClick={() => onUpdateOrderTotal(o.id)}
-                >
-                  Modificar total
-                </button>
-                <button
-                  className="btn danger"
-                  onClick={() => onDeleteOrder(o.id)}
-                >
-                  Eliminar
-                </button>
-              </div>
+        {orders.map((o) => (
+          <div key={o.id} className="t-row">
+            <div style={{ flex: 1 }}>{String(o.id).padStart(7, "0")}</div>
+            <div style={{ flex: 2 }}>{o.empleadoId}</div>
+            <div style={{ flex: 2 }}>{o.rol}</div>
+            <div style={{ flex: 2 }}>{o.fecha}</div>
+            <div style={{ flex: 2, textAlign: "right" }}>
+              {o.total == null ? "—" : money(o.total)}
             </div>
-          ))}
-          {orders.length === 0 && (
-            <div className="tr">
-              <div style={{ gridColumn: "1 / -1" }}>Sin pedidos</div>
+            <div style={{ width: 200, textAlign: "right", display: "flex", gap: 6, justifyContent: "flex-end" }}>
+              <button className="pill" onClick={() => onUpdatePrice(o.id)}>
+                Cambiar total
+              </button>
+              <button className="pill danger" onClick={() => onDeleteOrder(o.id)}>
+                Eliminar
+              </button>
             </div>
-          )}
-        </div>
+          </div>
+        ))}
       </div>
     </section>
   );
 }
 
-/* =======================  ADMIN PANEL (PARENT)  ======================= */
+/* ===========================================================
+ * Componente principal con tabs
+ *   - Protege por rol admin
+ *   - Sincroniza pestaña con ?tab= en la URL
+ * ========================================================= */
 export default function AdminPanel() {
   const nav = useNavigate();
   const { user, loading } = useAuth();
-  const [tab, setTab] = useState("products");
+  const [searchParams, setSearchParams] = useSearchParams();
 
+  const roles = useMemo(
+    () => (user?.roles || []).map((r) => String(r).toLowerCase()),
+    [user]
+  );
+  const isAdmin = roles.includes("admin");
+
+  const initialTab = (() => {
+    const t = searchParams.get("tab");
+    return t || "products";
+  })();
+  const [tab, setTab] = useState(initialTab);
+
+  // Guard: solo admins
   useEffect(() => {
-    if (!loading) {
-      const isAdmin = (user?.roles || [])
-        .map((r) => String(r).toLowerCase())
-        .includes("admin");
-      if (!user || !isAdmin) nav("/app");
-    }
-  }, [user, loading, nav]);
+    if (loading) return;
+    if (!user || !isAdmin) nav("/app");
+  }, [user, loading, isAdmin, nav]);
+
+  // Sincronizar ?tab= con estado
+  useEffect(() => {
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev);
+      p.set("tab", tab);
+      return p;
+    });
+  }, [tab, setSearchParams]);
 
   if (loading) return <div className="state">Cargando…</div>;
+  if (!isAdmin) return null;
 
   return (
-    <div className="admin-container">
+    <div className="admin-panel">
+      <header className="page-header">
+        <h2>Panel de administración</h2>
+      </header>
+
       <div
-        className="admin-topbar"
+        className="tabs"
         role="tablist"
         aria-label="Secciones de administración"
       >
@@ -1449,6 +1416,7 @@ export default function AdminPanel() {
         >
           Productos
         </button>
+
         <button
           className={`tab-btn ${tab === "services" ? "is-active" : ""}`}
           onClick={() => setTab("services")}
@@ -1457,38 +1425,45 @@ export default function AdminPanel() {
         >
           Asignar servicios
         </button>
+
         <button
-          className={`tab-btn ${
-            tab === "serviceProducts" ? "is-active" : ""
-          }`}
+          className={`tab-btn ${tab === "serviceProducts" ? "is-active" : ""}`}
           onClick={() => setTab("serviceProducts")}
           role="tab"
           aria-selected={tab === "serviceProducts"}
         >
           Servicio ↔ Productos
         </button>
-       
+
+        
+
         <button
-          className={`tab-btn ${
-            tab === "incomingStock" ? "is-active" : ""
-          }`}
+          className={`tab-btn ${tab === "incomingStock" ? "is-active" : ""}`}
           onClick={() => setTab("incomingStock")}
           role="tab"
           aria-selected={tab === "incomingStock"}
         >
           Ingresos programados
         </button>
+
         <button
-          className={`tab-btn ${
-            tab === "massReassign" ? "is-active" : ""
-          }`}
+          className={`tab-btn ${tab === "massReassign" ? "is-active" : ""}`}
           onClick={() => setTab("massReassign")}
           role="tab"
           aria-selected={tab === "massReassign"}
         >
           Reasignación masiva
         </button>
-        
+
+        <button
+          className={`tab-btn ${tab === "orders" ? "is-active" : ""}`}
+          onClick={() => setTab("orders")}
+          role="tab"
+          aria-selected={tab === "orders"}
+        >
+          Pedidos
+        </button>
+
         <div style={{ flex: 1 }} />
       </div>
 
