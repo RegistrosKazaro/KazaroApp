@@ -12,6 +12,10 @@ import MassReassignServicesSection from "./MassReassignServicesSection";
 /* -----------------------------------------------------------
  * Utilidades locales
  * --------------------------------------------------------- */
+const API_BASE_URL =
+  (import.meta?.env && import.meta.env.VITE_API_URL) ||
+  "http://localhost:4000";
+
 const money = (v) => {
   const n = Number(v || 0);
   try {
@@ -478,7 +482,6 @@ function ProductsSection() {
 
 /* ===========================================================
  * 2) Asignar servicios a supervisores
- *    (/admin/supervisors, /admin/services?q=, /admin/assignments)
  * ========================================================= */
 function AssignServicesSection() {
   const [supervisors, setSupervisors] = useState([]);
@@ -682,7 +685,6 @@ function AssignServicesSection() {
 
 /* ===========================================================
  * 3) Relación Servicio ↔ Productos
- *    (/admin/services?q=..., /admin/sp/assignments/:serviceId)
  * ========================================================= */
 function ServiceProductsSection() {
   const [step, setStep] = useState("pick"); // pick | manage
@@ -695,7 +697,7 @@ function ServiceProductsSection() {
   const [srvLoading, setSrvLoading] = useState(false);
   const [srvMsg, setSrvMsg] = useState("");
 
-  // Productos (cat opcional + búsqueda simple)
+  // Productos
   const [q, setQ] = useState("");
   const qDeb = useDebounced(q, 300);
   const [allRows, setAllRows] = useState([]); // todos los productos
@@ -735,9 +737,7 @@ function ServiceProductsSection() {
       });
       setAllRows(Array.isArray(products) ? products : []);
 
-      const current = await api.get(
-        `/admin/sp/assignments/${service.id}`
-      );
+      const current = await api.get(`/admin/sp/assignments/${service.id}`);
       const ids = new Set((current.data?.productIds || []).map(String));
       setSelected(ids);
     } catch (e) {
@@ -914,7 +914,6 @@ function ServiceProductsSection() {
 
 /* ===========================================================
  * 4) Presupuestos por servicio
- *    (/admin/service-budgets, PUT /admin/service-budgets/:id)
  * ========================================================= */
 function ServiceBudgetsSection() {
   const [rows, setRows] = useState([]); // [{id, name, budget}]
@@ -978,7 +977,12 @@ function ServiceBudgetsSection() {
     }
   };
 
-  if (loading) return <section className="srv-card"><div className="state">Cargando…</div></section>;
+  if (loading)
+    return (
+      <section className="srv-card">
+        <div className="state">Cargando…</div>
+      </section>
+    );
 
   return (
     <section className="srv-card" aria-labelledby="budgets-heading">
@@ -1056,7 +1060,6 @@ function ServiceBudgetsSection() {
 
 /* ===========================================================
  * 5) Ingresos de stock programados (preventa)
- *    (/admin/incoming-stock)
  * ========================================================= */
 function IncomingStockSection() {
   const [search, setSearch] = useState("");
@@ -1134,7 +1137,7 @@ function IncomingStockSection() {
       await api.post("/admin/incoming-stock", {
         productId: product.id,
         qty,
-        eta, // Acepta "YYYY-MM-DD" o "YYYY-MM-DD HH:mm:ss"
+        eta, // "YYYY-MM-DD" o "YYYY-MM-DD HH:mm:ss"
       });
       setForm({ qty: "", eta: "" });
       await load();
@@ -1146,7 +1149,7 @@ function IncomingStockSection() {
   const onDelete = async (row) => {
     if (!confirm("¿Eliminar ingreso programado?")) return;
     try {
-      await api.delete(`/admin/incoming-stock/${row.id}`);
+    await api.delete(`/admin/incoming-stock/${row.id}`);
       await load();
     } catch (e) {
       setErr(e?.response?.data?.error || "No se pudo eliminar");
@@ -1274,16 +1277,21 @@ function IncomingStockSection() {
 }
 
 /* ===========================================================
- * 6) Pedidos (admin)
- *    (/admin/orders, /admin/orders/:id [DELETE], /admin/orders/:id/price [PUT])
+ * 6) Pedidos (admin) + visor de remito (PDF) robusto
  * ========================================================= */
 function OrdersSection() {
   const [orders, setOrders] = useState([]);
   const [err, setErr] = useState("");
 
+  const [selectedOrder, setSelectedOrder] = useState(null); // pedido elegido
+  const [pdfUrl, setPdfUrl] = useState(null);               // URL blob para visor
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewErr, setPreviewErr] = useState("");
+
   const load = useCallback(async () => {
     try {
-      setOrders((await api.get("/admin/orders")).data || []);
+      const { data } = await api.get("/admin/orders");
+      setOrders(Array.isArray(data) ? data : []);
     } catch (e) {
       setErr(e?.response?.data?.error || e.message);
     }
@@ -1292,6 +1300,37 @@ function OrdersSection() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Si borro un pedido seleccionado, cierro el visor y limpio el blob
+  useEffect(() => {
+    if (selectedOrder && !orders.some((o) => o.id === selectedOrder.id)) {
+      setSelectedOrder(null);
+      if (pdfUrl) {
+        URL.revokeObjectURL(pdfUrl);
+        setPdfUrl(null);
+      }
+    }
+  }, [orders, selectedOrder, pdfUrl]);
+
+  // --- FECHA/HORA EN ARGENTINA ---
+  const formatFecha = (raw) => {
+    if (!raw) return "";
+    try {
+      // DB: "YYYY-MM-DD HH:mm:ss" → interpretamos como AR (-03:00)
+      const base = String(raw).replace(" ", "T");
+      const d = new Date(base + "-03:00");
+      return d.toLocaleString("es-AR", {
+        timeZone: "America/Argentina/Cordoba",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return raw;
+    }
+  };
 
   const onDeleteOrder = async (id) => {
     if (!confirm(`¿Eliminar pedido #${id}?`)) return;
@@ -1319,6 +1358,152 @@ function OrdersSection() {
     }
   };
 
+  // --------- Utils robustos para PDF ----------
+  const isPdfBlob = async (blob) => {
+    try {
+      const head = await blob.slice(0, 5).text(); // "%PDF-"
+      return head.startsWith("%PDF-");
+    } catch {
+      return false;
+    }
+  };
+
+  const toBlobUrl = (blob) => URL.createObjectURL(blob);
+
+  // Intenta con axios en blob y arraybuffer; si no, usa fetch con credenciales.
+  const tryLoadPdfFromPath = async (path) => {
+    // 1) axios -> blob
+    try {
+      const res = await api.get(path, {
+        responseType: "blob",
+        headers: { Accept: "application/pdf" },
+        withCredentials: true,
+      });
+      const ct = (res.headers?.["content-type"] || res.headers?.["Content-Type"] || "").toLowerCase();
+      let blob = res.data;
+      if (!ct.includes("application/pdf")) {
+        // Puede que el header esté mal; validamos por firma
+        if (!(blob instanceof Blob) || !(await isPdfBlob(blob))) {
+          const txt = await blob.text().catch(() => "");
+          throw new Error(`Content-Type="${ct}". ${txt ? "Detalle: " + txt : ""}`);
+        }
+      }
+      return { url: toBlobUrl(blob), via: "axios-blob" };
+    } catch (e1) {
+      // 2) axios -> arraybuffer
+      try {
+        const res = await api.get(path, {
+          responseType: "arraybuffer",
+          headers: { Accept: "application/pdf" },
+          withCredentials: true,
+        });
+        const ct = (res.headers?.["content-type"] || res.headers?.["Content-Type"] || "").toLowerCase();
+        const blob = new Blob([res.data], { type: ct || "application/pdf" });
+        if (!(await isPdfBlob(blob))) {
+          let textPreview = "";
+          try {
+            textPreview = new TextDecoder().decode(res.data.slice(0, 256));
+          } catch {
+            textPreview = ""; // no-op si no se puede decodificar
+          }
+          throw new Error(
+            `Respuesta no parece PDF (arraybuffer). ${textPreview ? "Preview: " + textPreview : ""}`
+          );
+        }
+        return { url: toBlobUrl(blob), via: "axios-arraybuffer" };
+      } catch (e2) {
+        // 3) fetch directo
+        try {
+          const abs = (API_BASE_URL?.replace(/\/$/, "") || "") + path;
+          const r = await fetch(abs, {
+            method: "GET",
+            credentials: "include",
+            headers: { Accept: "application/pdf" },
+          });
+          const ct = (r.headers.get("content-type") || "").toLowerCase();
+          const blob = await r.blob();
+          if (!ct.includes("application/pdf") && !(await isPdfBlob(blob))) {
+            const txt = await blob.text().catch(() => "");
+            throw new Error(`Fetch: Content-Type="${ct}". ${txt ? "Detalle: " + txt : ""}`);
+          }
+          return { url: toBlobUrl(blob), via: "fetch" };
+        } catch (e3) {
+          const err = new Error(e3?.message || e2?.message || e1?.message || "Fallo carga de PDF");
+          err.response = e3?.response || e2?.response || e1?.response;
+          throw err;
+        }
+      }
+    }
+  };
+
+  // Prueba varias rutas comunes hasta que una funcione
+  const fetchRemitoPdfSmart = async (orderId) => {
+    const candidates = [
+      `/orders/pdf/${orderId}`,
+      `/admin/orders/pdf/${orderId}`,
+      `/orders/${orderId}/pdf`,
+    ];
+    let lastErr = null;
+    for (const path of candidates) {
+      try {
+        const r = await tryLoadPdfFromPath(path);
+        console.debug("[Remito] cargado desde:", path, "via", r.via);
+        return { url: r.url, path };
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    if (lastErr) throw lastErr;
+    throw new Error("No se encontró ninguna ruta válida para el remito.");
+  };
+  // -------------------------------------------
+
+  // --- VER REMITO (PDF) ---
+  const onPreviewRemito = async (order) => {
+    setPreviewLoading(true);
+    setPreviewErr("");
+    setSelectedOrder(order);
+
+    // Limpiar blob anterior
+    if (pdfUrl) {
+      URL.revokeObjectURL(pdfUrl);
+      setPdfUrl(null);
+    }
+
+    try {
+      const { url } = await fetchRemitoPdfSmart(order.id);
+      setPdfUrl(url);
+    } catch (e) {
+      console.error(e);
+      let msg = "";
+      if (e?.response?.data instanceof Blob) {
+        try {
+          msg = await e.response.data.text();
+        } catch  {
+          msg = ""; // no-op si el cuerpo no es texto
+        }
+      }
+      const status = e?.response?.status ? ` (HTTP ${e.response.status})` : "";
+      setPreviewErr(
+        (e?.message || "No se pudo cargar el remito") +
+          status +
+          (msg ? ` — Detalle: ${msg}` : "")
+      );
+      setSelectedOrder(null);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const closePreview = () => {
+    setSelectedOrder(null);
+    setPreviewErr("");
+    if (pdfUrl) {
+      URL.revokeObjectURL(pdfUrl);
+      setPdfUrl(null);
+    }
+  };
+
   return (
     <section className="srv-card" aria-labelledby="orders-heading">
       <h3 id="orders-heading">Pedidos</h3>
@@ -1331,36 +1516,132 @@ function OrdersSection() {
           <div style={{ flex: 2 }}>Rol</div>
           <div style={{ flex: 2 }}>Fecha</div>
           <div style={{ flex: 2, textAlign: "right" }}>Total</div>
-          <div style={{ width: 200 }} />
+          <div style={{ width: 280 }} />
         </div>
         {orders.map((o) => (
           <div key={o.id} className="t-row">
             <div style={{ flex: 1 }}>{String(o.id).padStart(7, "0")}</div>
             <div style={{ flex: 2 }}>{o.empleadoId}</div>
             <div style={{ flex: 2 }}>{o.rol}</div>
-            <div style={{ flex: 2 }}>{o.fecha}</div>
+            <div style={{ flex: 2 }}>{formatFecha(o.fecha)}</div>
             <div style={{ flex: 2, textAlign: "right" }}>
               {o.total == null ? "—" : money(o.total)}
             </div>
-            <div style={{ width: 200, textAlign: "right", display: "flex", gap: 6, justifyContent: "flex-end" }}>
+            <div
+              style={{
+                width: 280,
+                display: "flex",
+                gap: 6,
+                justifyContent: "flex-end",
+              }}
+            >
+              <button
+                className="pill"
+                onClick={() => onPreviewRemito(o)}
+                disabled={previewLoading && selectedOrder?.id === o.id}
+              >
+                {previewLoading && selectedOrder?.id === o.id
+                  ? "Cargando…"
+                  : "Ver remito"}
+              </button>
               <button className="pill" onClick={() => onUpdatePrice(o.id)}>
                 Cambiar total
               </button>
-              <button className="pill danger" onClick={() => onDeleteOrder(o.id)}>
+              <button
+                className="pill danger"
+                onClick={() => onDeleteOrder(o.id)}
+              >
                 Eliminar
               </button>
             </div>
           </div>
         ))}
+        {orders.length === 0 && (
+          <div className="t-row">
+            <div style={{ flex: 1 }}>—</div>
+            <div style={{ flex: 2 }}>Sin pedidos</div>
+            <div style={{ flex: 2 }} />
+            <div style={{ flex: 2 }} />
+            <div style={{ flex: 2 }} />
+            <div style={{ width: 280 }} />
+          </div>
+        )}
       </div>
+
+      {/* Visor del remito PDF */}
+      {(selectedOrder || previewErr) && (
+        <div className="card" style={{ marginTop: 12 }}>
+          <div className="section-header">
+            {selectedOrder ? (
+              <div className="muted">
+                Remito del pedido{" "}
+                <strong>
+                  #{selectedOrder && String(selectedOrder.id).padStart(7, "0")}
+                </strong>{" "}
+                — Empleado{" "}
+                <strong>{selectedOrder && selectedOrder.empleadoId}</strong> — Rol{" "}
+                <strong>{selectedOrder && selectedOrder.rol}</strong>
+              </div>
+            ) : (
+              <div className="muted">Detalle de remito</div>
+            )}
+
+            <div className="actions-row">
+              {pdfUrl && (
+                <a
+                  href={pdfUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn ghost"
+                >
+                  Abrir en otra pestaña
+                </a>
+              )}
+              <button className="btn ghost" onClick={closePreview}>
+                Cerrar detalle
+              </button>
+            </div>
+          </div>
+
+          {previewErr && (
+            <div className="state error" style={{ marginBottom: 8 }}>
+              {previewErr}
+            </div>
+          )}
+
+          {pdfUrl && !previewErr && (
+            <div
+              style={{
+                borderRadius: 8,
+                overflow: "hidden",
+                border: "1px solid #d1d5db",
+                height: 540,
+                background: "#0f172a",
+              }}
+            >
+              <iframe
+                title={
+                  selectedOrder
+                    ? `Remito del pedido #${selectedOrder.id}`
+                    : "Remito"
+                }
+                src={pdfUrl}
+                style={{ width: "100%", height: "100%", border: "none" }}
+              />
+            </div>
+          )}
+
+          {!pdfUrl && !previewErr && previewLoading && (
+            <div className="state">Cargando remito…</div>
+          )}
+        </div>
+      )}
     </section>
   );
 }
 
 /* ===========================================================
  * Componente principal con tabs
- *   - Protege por rol admin
- *   - Sincroniza pestaña con ?tab= en la URL
  * ========================================================= */
 export default function AdminPanel() {
   const nav = useNavigate();
@@ -1434,8 +1715,6 @@ export default function AdminPanel() {
         >
           Servicio ↔ Productos
         </button>
-
-        
 
         <button
           className={`tab-btn ${tab === "incomingStock" ? "is-active" : ""}`}

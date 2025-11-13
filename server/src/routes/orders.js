@@ -28,13 +28,24 @@ const money = (v) => {
 function fmtLocal(sqlTs) {
   if (!sqlTs) return "";
   try {
-    const d = new Date(String(sqlTs).replace(" ", "T") + "Z"); // DB→UTC, muestro local
+    // DB guarda hora local, la interpretamos como Argentina (-03:00)
+    const base = String(sqlTs).replace(" ", "T");
+    const d = new Date(base + "-03:00");
     return d.toLocaleString("es-AR", {
-      year: "numeric", month: "2-digit", day: "2-digit",
-      hour: "2-digit", minute: "2-digit", second: "2-digit",
+      timeZone: "America/Argentina/Cordoba",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
     });
-  } catch { return String(sqlTs); }
+  } catch {
+    return String(sqlTs);
+  }
 }
+
+
 function primaryRole(userId) {
   const roles = (getUserRoles(userId) || []).map(r => String(r).toLowerCase());
   if (roles.includes("supervisor")) return "supervisor";
