@@ -41,11 +41,6 @@ const useDebounced = (value, delay = 300) => {
 
 /* ===========================================================
  * 1) Productos
- *    - Lista + búsqueda
- *    - Alta/edición básica (nombre, precio, stock, código)
- *    - Edición rápida de stock
- *    - Borrado con confirmación
- *    (Usa /admin/products, /admin/products/:id)
  * ========================================================= */
 function ProductsSection() {
   const [rows, setRows] = useState([]);
@@ -161,12 +156,8 @@ function ProductsSection() {
             ? String(data.categoryName)
             : prev.catId ?? "",
       }));
-    } catch (e) {
-      setErr(
-        e?.response?.data?.error ||
-          e.message ||
-          "No se pudo cargar el producto completo"
-      );
+    } catch {
+      setErr("No se pudo cargar el producto completo");
     } finally {
       setEditingLoading(false);
       setTimeout(() => nameRef.current?.focus(), 0);
@@ -204,9 +195,7 @@ function ProductsSection() {
       return;
     }
 
-    // Categoría:
-    // - Producto nuevo: siempre mandamos catId
-    // - Editando: sólo si el usuario tocó el select
+    // Categoría
     if (editingId === "__new__") {
       payload.catId = draft.catId || null;
     } else if (catTouched) {
@@ -497,8 +486,8 @@ function AssignServicesSection() {
   const loadSupervisors = useCallback(async () => {
     try {
       setSupervisors((await api.get("/admin/supervisors")).data || []);
-    } catch (e) {
-      setMsg(e?.response?.data?.error || "Error al listar supervisores");
+    } catch {
+      setMsg("Error al listar supervisores");
     }
   }, []);
 
@@ -512,8 +501,8 @@ function AssignServicesSection() {
         params: { EmpleadoID: selectedSupervisor },
       });
       setAssignments(Array.isArray(data) ? data : []);
-    } catch (e) {
-      setMsg(e?.response?.data?.error || "Error al listar asignaciones");
+    } catch {
+      setMsg("Error al listar asignaciones");
     }
   }, [selectedSupervisor]);
 
@@ -529,8 +518,8 @@ function AssignServicesSection() {
         params: { q: String(qDeb).trim(), limit: 50 },
       });
       setServices(Array.isArray(data) ? data : []);
-    } catch (e) {
-      setMsg(e?.response?.data?.error || "Error al buscar servicios");
+    } catch {
+      setMsg("Error al buscar servicios");
     } finally {
       setLoading(false);
     }
@@ -561,8 +550,8 @@ function AssignServicesSection() {
       setMsg("Servicio asignado");
       await loadAssignments();
       await searchServices();
-    } catch (e) {
-      setMsg(e?.response?.data?.error || "No se pudo asignar");
+    } catch {
+      setMsg("No se pudo asignar");
     }
   };
 
@@ -573,8 +562,8 @@ function AssignServicesSection() {
       setMsg("Asignación eliminada");
       await loadAssignments();
       await searchServices();
-    } catch (e) {
-      setMsg(e?.response?.data?.error || "No se pudo eliminar");
+    } catch {
+      setMsg("No se pudo eliminar");
     }
   };
 
@@ -720,8 +709,8 @@ function ServiceProductsSection() {
         params: { q: term, limit: 50 },
       });
       setSrvResults(Array.isArray(data) ? data : []);
-    } catch (e) {
-      setSrvMsg(e?.response?.data?.error || "Error al buscar servicios");
+    } catch {
+      setSrvMsg("Error al buscar servicios");
     } finally {
       setSrvLoading(false);
     }
@@ -740,8 +729,8 @@ function ServiceProductsSection() {
       const current = await api.get(`/admin/sp/assignments/${service.id}`);
       const ids = new Set((current.data?.productIds || []).map(String));
       setSelected(ids);
-    } catch (e) {
-      setAssignMsg(e?.response?.data?.error || "Error al cargar datos");
+    } catch {
+      setAssignMsg("Error al cargar datos");
     }
   }, [service]);
 
@@ -795,8 +784,8 @@ function ServiceProductsSection() {
       const added = res?.data?.added?.length || 0;
       const removed = res?.data?.removed?.length || 0;
       setAssignMsg(`Guardado. +${added} / -${removed}`);
-    } catch (e) {
-      setAssignMsg(e?.response?.data?.error || "No se pudo guardar");
+    } catch {
+      setAssignMsg("No se pudo guardar");
     } finally {
       setSaving(false);
     }
@@ -920,7 +909,7 @@ function ServiceBudgetsSection() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [page, setPage] = useState(1);
-  const [drafts, setDrafts] = useState({}); // id -> texto
+  const [drafts, setDrafts] = useState({});
   const [savingIds, setSavingIds] = useState(new Set());
 
   const PER_PAGE = 15;
@@ -936,10 +925,8 @@ function ServiceBudgetsSection() {
         .get("/admin/service-budgets")
         .then((r) => r.data || []);
       setRows(data);
-    } catch (e) {
-      setErr(
-        e?.response?.data?.error || e.message || "Error al cargar presupuestos"
-      );
+    } catch {
+      setErr("Error al cargar presupuestos");
     } finally {
       setLoading(false);
     }
@@ -966,8 +953,8 @@ function ServiceBudgetsSection() {
           it.id === row.id ? { ...it, budget: presupuesto } : it
         )
       );
-    } catch (e) {
-      setErr(e?.response?.data?.error || e.message || "No se pudo guardar");
+    } catch {
+      setErr("No se pudo guardar");
     } finally {
       setSavingIds((s) => {
         const n = new Set(s);
@@ -1088,8 +1075,8 @@ function IncomingStockSection() {
         params: { q: term, limit: 50 },
       });
       setSearchResults(Array.isArray(data) ? data : []);
-    } catch (e) {
-      setSearchMsg(e?.response?.data?.error || "Error al buscar");
+    } catch {
+      setSearchMsg("Error al buscar");
     } finally {
       setSearchLoading(false);
     }
@@ -1106,8 +1093,8 @@ function IncomingStockSection() {
     try {
       const { data } = await api.get(`/admin/incoming-stock/${product.id}`);
       setRows(Array.isArray(data) ? data : []);
-    } catch (e) {
-      setErr(e?.response?.data?.error || "Error al cargar ingresos");
+    } catch {
+      setErr("Error al cargar ingresos");
     } finally {
       setLoading(false);
     }
@@ -1141,18 +1128,18 @@ function IncomingStockSection() {
       });
       setForm({ qty: "", eta: "" });
       await load();
-    } catch (e) {
-      setErr(e?.response?.data?.error || "No se pudo crear");
+    } catch {
+      setErr("No se pudo crear");
     }
   };
 
   const onDelete = async (row) => {
     if (!confirm("¿Eliminar ingreso programado?")) return;
     try {
-    await api.delete(`/admin/incoming-stock/${row.id}`);
+      await api.delete(`/admin/incoming-stock/${row.id}`);
       await load();
-    } catch (e) {
-      setErr(e?.response?.data?.error || "No se pudo eliminar");
+    } catch {
+      setErr("No se pudo eliminar");
     }
   };
 
@@ -1277,23 +1264,41 @@ function IncomingStockSection() {
 }
 
 /* ===========================================================
- * 6) Pedidos (admin) + visor de remito (PDF) robusto
+ * 6) Pedidos (admin) — SOLO cerrados + visor de remito
  * ========================================================= */
 function OrdersSection() {
   const [orders, setOrders] = useState([]);
   const [err, setErr] = useState("");
 
-  const [selectedOrder, setSelectedOrder] = useState(null); // pedido elegido
-  const [pdfUrl, setPdfUrl] = useState(null);               // URL blob para visor
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [pdfUrl, setPdfUrl] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewErr, setPreviewErr] = useState("");
 
+  // Detecta "cerrado" con distintas convenciones de backend
+  const isClosed = (o) =>
+    o?.status === "closed" ||
+    String(o?.Estado || "").toLowerCase() === "cerrado" ||
+    o?.ClosedAt != null ||
+    o?.closedAt != null;
+
   const load = useCallback(async () => {
+    setErr("");
     try {
-      const { data } = await api.get("/admin/orders");
-      setOrders(Array.isArray(data) ? data : []);
-    } catch (e) {
-      setErr(e?.response?.data?.error || e.message);
+      const { data } = await api.get("/admin/orders", {
+        params: { status: "closed" },
+      });
+      const arr = Array.isArray(data) ? data : data?.rows || [];
+      setOrders(arr.filter(isClosed));
+    } catch {
+      try {
+        const { data } = await api.get("/admin/orders");
+        const arr = Array.isArray(data) ? data : data?.rows || [];
+        setOrders(arr.filter(isClosed));
+      } catch {
+        setErr("No se pudieron cargar los pedidos cerrados");
+        setOrders([]);
+      }
     }
   }, []);
 
@@ -1301,7 +1306,7 @@ function OrdersSection() {
     load();
   }, [load]);
 
-  // Si borro un pedido seleccionado, cierro el visor y limpio el blob
+  // Si borro un pedido seleccionado, cierro visor y limpio blob
   useEffect(() => {
     if (selectedOrder && !orders.some((o) => o.id === selectedOrder.id)) {
       setSelectedOrder(null);
@@ -1312,13 +1317,11 @@ function OrdersSection() {
     }
   }, [orders, selectedOrder, pdfUrl]);
 
-  // --- FECHA/HORA EN ARGENTINA ---
   const formatFecha = (raw) => {
     if (!raw) return "";
     try {
-      // DB: "YYYY-MM-DD HH:mm:ss" → interpretamos como AR (-03:00)
       const base = String(raw).replace(" ", "T");
-      const d = new Date(base + "-03:00");
+      const d = new Date(base + "-03:00"); // AR -03
       return d.toLocaleString("es-AR", {
         timeZone: "America/Argentina/Cordoba",
         year: "numeric",
@@ -1332,32 +1335,6 @@ function OrdersSection() {
     }
   };
 
-  const onDeleteOrder = async (id) => {
-    if (!confirm(`¿Eliminar pedido #${id}?`)) return;
-    try {
-      await api.delete(`/admin/orders/${id}`);
-      await load();
-    } catch (e) {
-      setErr(e?.response?.data?.error || "No se pudo eliminar");
-    }
-  };
-
-  const onUpdatePrice = async (id) => {
-    const val = prompt("Nuevo total para el pedido:", "");
-    if (val == null) return;
-    const newPrice = Number(val);
-    if (!Number.isFinite(newPrice) || newPrice < 0) {
-      alert("Importe inválido");
-      return;
-    }
-    try {
-      await api.put(`/admin/orders/${id}/price`, { newPrice });
-      await load();
-    } catch (e) {
-      setErr(e?.response?.data?.error || "No se pudo actualizar");
-    }
-  };
-
   // --------- Utils robustos para PDF ----------
   const isPdfBlob = async (blob) => {
     try {
@@ -1367,12 +1344,9 @@ function OrdersSection() {
       return false;
     }
   };
-
   const toBlobUrl = (blob) => URL.createObjectURL(blob);
 
-  // Intenta con axios en blob y arraybuffer; si no, usa fetch con credenciales.
   const tryLoadPdfFromPath = async (path) => {
-    // 1) axios -> blob
     try {
       const res = await api.get(path, {
         responseType: "blob",
@@ -1382,15 +1356,13 @@ function OrdersSection() {
       const ct = (res.headers?.["content-type"] || res.headers?.["Content-Type"] || "").toLowerCase();
       let blob = res.data;
       if (!ct.includes("application/pdf")) {
-        // Puede que el header esté mal; validamos por firma
         if (!(blob instanceof Blob) || !(await isPdfBlob(blob))) {
           const txt = await blob.text().catch(() => "");
           throw new Error(`Content-Type="${ct}". ${txt ? "Detalle: " + txt : ""}`);
         }
       }
       return { url: toBlobUrl(blob), via: "axios-blob" };
-    } catch (e1) {
-      // 2) axios -> arraybuffer
+    } catch {
       try {
         const res = await api.get(path, {
           responseType: "arraybuffer",
@@ -1404,43 +1376,35 @@ function OrdersSection() {
           try {
             textPreview = new TextDecoder().decode(res.data.slice(0, 256));
           } catch {
-            textPreview = ""; // no-op si no se puede decodificar
+            textPreview = "";
           }
           throw new Error(
             `Respuesta no parece PDF (arraybuffer). ${textPreview ? "Preview: " + textPreview : ""}`
           );
         }
         return { url: toBlobUrl(blob), via: "axios-arraybuffer" };
-      } catch (e2) {
-        // 3) fetch directo
-        try {
-          const abs = (API_BASE_URL?.replace(/\/$/, "") || "") + path;
-          const r = await fetch(abs, {
-            method: "GET",
-            credentials: "include",
-            headers: { Accept: "application/pdf" },
-          });
-          const ct = (r.headers.get("content-type") || "").toLowerCase();
-          const blob = await r.blob();
-          if (!ct.includes("application/pdf") && !(await isPdfBlob(blob))) {
-            const txt = await blob.text().catch(() => "");
-            throw new Error(`Fetch: Content-Type="${ct}". ${txt ? "Detalle: " + txt : ""}`);
-          }
-          return { url: toBlobUrl(blob), via: "fetch" };
-        } catch (e3) {
-          const err = new Error(e3?.message || e2?.message || e1?.message || "Fallo carga de PDF");
-          err.response = e3?.response || e2?.response || e1?.response;
-          throw err;
+      } catch {
+        const abs = (API_BASE_URL?.replace(/\/$/, "") || "") + path;
+        const r = await fetch(abs, {
+          method: "GET",
+          credentials: "include",
+          headers: { Accept: "application/pdf" },
+        });
+        const ct = (r.headers.get("content-type") || "").toLowerCase();
+        const blob = await r.blob();
+        if (!ct.includes("application/pdf") && !(await isPdfBlob(blob))) {
+          const txt = await blob.text().catch(() => "");
+          throw new Error(`Fetch: Content-Type="${ct}". ${txt ? "Detalle: " + txt : ""}`);
         }
+        return { url: toBlobUrl(blob), via: "fetch" };
       }
     }
   };
 
-  // Prueba varias rutas comunes hasta que una funcione
   const fetchRemitoPdfSmart = async (orderId) => {
     const candidates = [
-      `/orders/pdf/${orderId}`,
       `/admin/orders/pdf/${orderId}`,
+      `/orders/pdf/${orderId}`,
       `/orders/${orderId}/pdf`,
     ];
     let lastErr = null;
@@ -1458,13 +1422,11 @@ function OrdersSection() {
   };
   // -------------------------------------------
 
-  // --- VER REMITO (PDF) ---
   const onPreviewRemito = async (order) => {
     setPreviewLoading(true);
     setPreviewErr("");
     setSelectedOrder(order);
 
-    // Limpiar blob anterior
     if (pdfUrl) {
       URL.revokeObjectURL(pdfUrl);
       setPdfUrl(null);
@@ -1474,13 +1436,12 @@ function OrdersSection() {
       const { url } = await fetchRemitoPdfSmart(order.id);
       setPdfUrl(url);
     } catch (e) {
-      console.error(e);
       let msg = "";
       if (e?.response?.data instanceof Blob) {
         try {
           msg = await e.response.data.text();
-        } catch  {
-          msg = ""; // no-op si el cuerpo no es texto
+        } catch {
+          msg = "";
         }
       }
       const status = e?.response?.status ? ` (HTTP ${e.response.status})` : "";
@@ -1506,7 +1467,7 @@ function OrdersSection() {
 
   return (
     <section className="srv-card" aria-labelledby="orders-heading">
-      <h3 id="orders-heading">Pedidos</h3>
+      <h3 id="orders-heading">Pedidos (cerrados)</h3>
       {err && <div className="state error">{err}</div>}
 
       <div className="table like">
@@ -1516,7 +1477,7 @@ function OrdersSection() {
           <div style={{ flex: 2 }}>Rol</div>
           <div style={{ flex: 2 }}>Fecha</div>
           <div style={{ flex: 2, textAlign: "right" }}>Total</div>
-          <div style={{ width: 280 }} />
+          <div style={{ width: 220 }} />
         </div>
         {orders.map((o) => (
           <div key={o.id} className="t-row">
@@ -1529,7 +1490,7 @@ function OrdersSection() {
             </div>
             <div
               style={{
-                width: 280,
+                width: 220,
                 display: "flex",
                 gap: 6,
                 justifyContent: "flex-end",
@@ -1544,31 +1505,21 @@ function OrdersSection() {
                   ? "Cargando…"
                   : "Ver remito"}
               </button>
-              <button className="pill" onClick={() => onUpdatePrice(o.id)}>
-                Cambiar total
-              </button>
-              <button
-                className="pill danger"
-                onClick={() => onDeleteOrder(o.id)}
-              >
-                Eliminar
-              </button>
             </div>
           </div>
         ))}
         {orders.length === 0 && (
           <div className="t-row">
             <div style={{ flex: 1 }}>—</div>
-            <div style={{ flex: 2 }}>Sin pedidos</div>
+            <div style={{ flex: 2 }}>Sin pedidos cerrados</div>
             <div style={{ flex: 2 }} />
             <div style={{ flex: 2 }} />
             <div style={{ flex: 2 }} />
-            <div style={{ width: 280 }} />
+            <div style={{ width: 220 }} />
           </div>
         )}
       </div>
 
-      {/* Visor del remito PDF */}
       {(selectedOrder || previewErr) && (
         <div className="card" style={{ marginTop: 12 }}>
           <div className="section-header">
@@ -1716,6 +1667,7 @@ export default function AdminPanel() {
           Servicio ↔ Productos
         </button>
 
+      
         <button
           className={`tab-btn ${tab === "incomingStock" ? "is-active" : ""}`}
           onClick={() => setTab("incomingStock")}
