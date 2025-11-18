@@ -95,7 +95,7 @@ function DepositoOrdersPanel() {
   const [pdfUrl, setPdfUrl] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewErr, setPreviewErr] = useState("");
-
+  
   const money = (v) => {
     const n = Number(v || 0);
     try {
