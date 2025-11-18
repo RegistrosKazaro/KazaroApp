@@ -8,13 +8,20 @@ const router = Router();
 /* ------------------------ Auth: Depósito sólo ------------------------ */
 function requireDepositoSolo(req, res, next) {
   try {
-    if (!req.user?.id) return res.status(401).json({ ok: false, error: "No autenticado" });
+    if (!req.user?.id) {
+      return res.status(401).json({ ok: false, error: "No autenticado" });
+    }
 
-    const roles = (req.user.roles?.length ? req.user.roles : getUserRoles(req.user.id) || [])
-      .map((r) => String(r).toLowerCase());
+    const roles = (
+      req.user.roles?.length ? req.user.roles : getUserRoles(req.user.id) || []
+    ).map((r) => String(r).toLowerCase());
 
     const isDepositoSolo = roles.includes("deposito") && roles.length === 1;
-    if (!isDepositoSolo) return res.status(403).json({ ok: false, error: "Sin permiso para Depósito" });
+    if (!isDepositoSolo) {
+      return res
+        .status(403)
+        .json({ ok: false, error: "Sin permiso para Depósito" });
+    }
 
     return next();
   } catch (e) {
@@ -38,13 +45,22 @@ function firstDayOfMonthISO(dt = new Date()) {
   const d = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), 1));
   return d.toISOString().slice(0, 10);
 }
+function hasTable(name) {
+  return !!db
+    .prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name=? LIMIT 1`
+    )
+    .get(name);
+}
 
 function getTableColumnsLower(tableName) {
   const cols = db.prepare(`PRAGMA table_info(${tableName})`).all();
   return new Set(cols.map((c) => String(c.name || "").toLowerCase()));
 }
 function pickCol(colsLower, candidates) {
-  for (const name of candidates) if (colsLower.has(name.toLowerCase())) return name;
+  for (const name of candidates) {
+    if (colsLower.has(name.toLowerCase())) return name;
+  }
   return null;
 }
 function normalizeOrder(row, map) {
@@ -93,9 +109,10 @@ function normalizeOrder(row, map) {
 function detectIdColumn() {
   const cols = getTableColumnsLower("Pedidos");
   return (
-    pickCol(cols, ["pedidoid"]) ||
-    pickCol(cols, ["pedido_id"]) ||
-    pickCol(cols, ["id"])
+    pickCol(cols, ["pedidoid"]) || // PedidoID
+    pickCol(cols, ["pedido_id"]) || // pedido_id
+    pickCol(cols, ["idpedido"]) || // idPedido
+    pickCol(cols, ["id"]) // id
   );
 }
 
@@ -105,34 +122,63 @@ router.get("/orders", mustWarehouse, (req, res) => {
   try {
     const statusParam = String(req.query.status || "open").toLowerCase();
 
-    const hasPedidos = !!db
-      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='Pedidos'`)
-      .get();
-    if (!hasPedidos) return res.status(500).json({ error: "Tabla 'Pedidos' inexistente" });
+    if (!hasTable("Pedidos")) {
+      console.warn("[deposito] GET /orders: tabla Pedidos inexistente");
+      // Para no llenar la consola de 500 devolvemos lista vacía
+      return res.json([]);
+    }
 
     const cols = getTableColumnsLower("Pedidos");
     const map = {
-      id:        pickCol(cols, ["pedidoid", "pedido_id", "id"]),
-      empleadoId:pickCol(cols, ["empleadoid", "empleado_id", "user_id", "empleado"]),
-      rol:       pickCol(cols, ["rol", "role", "cargo", "puesto"]),
-      fecha:     pickCol(cols, ["fecha", "created_at", "fecha_creacion", "fecha_alta"]),
-      total:     pickCol(cols, ["total", "importe", "monto", "amount", "total_amount"]),
-      status:    pickCol(cols, ["status"]),
-      estado:    pickCol(cols, ["estado"]),
-      isClosed:  pickCol(cols, ["isclosed", "is_closed", "cerrado"]),
-      closedAt:  pickCol(cols, ["closedat", "closed_at", "fecha_cierre"]),
-      remito:    pickCol(cols, ["remitonumber", "remito", "remito_numero", "numero_remito", "nro_remito"]),
-      remito2:   pickCol(cols, ["remito_numero", "numero_remito"]),
-      remito3:   pickCol(cols, ["nro_remito"]),
-      remito4:   pickCol(cols, ["remito"]),
-      remito5:   pickCol(cols, ["remitonumber"]),
+      id: pickCol(cols, ["pedidoid", "pedido_id", "idpedido", "id"]),
+      empleadoId: pickCol(cols, [
+        "empleadoid",
+        "empleado_id",
+        "empleado",
+        "user_id",
+      ]),
+      rol: pickCol(cols, ["rol", "role", "cargo", "puesto"]),
+      fecha: pickCol(cols, [
+        "fecha",
+        "created_at",
+        "fecha_creacion",
+        "fecha_alta",
+      ]),
+      total: pickCol(cols, [
+        "total",
+        "importe",
+        "monto",
+        "amount",
+        "total_amount",
+      ]),
+      status: pickCol(cols, ["status"]),
+      estado: pickCol(cols, ["estado"]),
+      isClosed: pickCol(cols, ["isclosed", "is_closed", "cerrado"]),
+      closedAt: pickCol(cols, ["closedat", "closed_at", "fecha_cierre"]),
+      remito: pickCol(cols, [
+        "remitonumber",
+        "remito",
+        "remito_numero",
+        "numero_remito",
+        "nro_remito",
+      ]),
+      remito2: pickCol(cols, ["remito_numero", "numero_remito"]),
+      remito3: pickCol(cols, ["nro_remito"]),
+      remito4: pickCol(cols, ["remito"]),
+      remito5: pickCol(cols, ["remitonumber"]),
     };
-    if (!map.id) return res.status(500).json({ error: "No se encontró columna ID en 'Pedidos'" });
+
+    if (!map.id) {
+      console.error("[deposito] GET /orders: no se encontró columna ID");
+      return res.json([]);
+    }
 
     const orderBy = map.fecha || map.id;
     const selectParts = [
       `${map.id} AS ${map.id}`,
-      `${map.empleadoId || "NULL"} AS ${map.empleadoId || "empleadoid"}`,
+      `${map.empleadoId || "NULL"} AS ${
+        map.empleadoId || "empleadoid"
+      }`,
       `${map.rol || "NULL"} AS ${map.rol || "rol"}`,
       `${map.fecha || "NULL"} AS ${map.fecha || "fecha"}`,
       `${map.total || "NULL"} AS ${map.total || "total"}`,
@@ -146,90 +192,187 @@ router.get("/orders", mustWarehouse, (req, res) => {
       `${map.remito4 || "NULL"} AS ${map.remito4 || "remito4"}`,
       `${map.remito5 || "NULL"} AS ${map.remito5 || "remito5"}`,
     ];
-    const rawRows = db.prepare(`SELECT ${selectParts.join(", ")} FROM Pedidos ORDER BY ${orderBy} DESC`).all();
+    const rawRows = db
+      .prepare(
+        `SELECT ${selectParts.join(", ")} FROM Pedidos ORDER BY ${orderBy} DESC`
+      )
+      .all();
     const norm = rawRows.map((r) => normalizeOrder(r, map));
-    const filtered = statusParam === "closed" ? norm.filter((o) => o.isClosed) : norm.filter((o) => !o.isClosed);
+    const filtered =
+      statusParam === "closed"
+        ? norm.filter((o) => o.isClosed)
+        : norm.filter((o) => !o.isClosed);
     return res.json(filtered);
   } catch (e) {
     console.error("[deposito] GET /orders error:", e);
-    return res.status(500).json({ error: "No se pudieron listar los pedidos" });
+    return res
+      .status(500)
+      .json({ error: "No se pudieron listar los pedidos" });
   }
 });
 
+/* ================== ACTUALIZAR ESTADO DE PEDIDOS ================== */
 function applyOrderStatus(id, makeClosed) {
-  const cols = getTableColumnsLower("Pedidos");
+  if (!hasTable("Pedidos")) {
+    throw new Error("Tabla 'Pedidos' inexistente");
+  }
+
+  const colsLower = getTableColumnsLower("Pedidos");
   const idCol = detectIdColumn();
   if (!idCol) throw new Error("No se encontró columna ID en 'Pedidos'");
+
+  // ¿Tenemos alguna columna de estado?
+  let hasStatusCol =
+    colsLower.has("status") ||
+    colsLower.has("estado") ||
+    colsLower.has("isclosed") ||
+    colsLower.has("is_closed") ||
+    colsLower.has("cerrado") ||
+    colsLower.has("closedat") ||
+    colsLower.has("closed_at");
+
+  // Si NO hay ninguna, agregamos una columna 'cerrado' automáticamente
+  if (!hasStatusCol) {
+    try {
+      db.exec(`ALTER TABLE Pedidos ADD COLUMN cerrado INTEGER DEFAULT 0`);
+      colsLower.add("cerrado");
+      hasStatusCol = true;
+      console.log(
+        "[deposito] applyOrderStatus: columna 'cerrado' agregada automáticamente"
+      );
+    } catch (e) {
+      console.warn(
+        "[deposito] applyOrderStatus: no se pudo agregar columna 'cerrado':",
+        e.message
+      );
+    }
+  }
+
   let changes = 0;
 
   const exec = (sql, params = []) => {
     try {
       const info = db.prepare(sql).run(...params);
       changes += info.changes || 0;
-    } catch {/* la columna puede no existir en este esquema */}
+    } catch (e) {
+      // la columna puede no existir en este esquema
+      console.warn("[deposito] applyOrderStatus columna opcional:", e.message);
+    }
   };
 
-  if (cols.has("status"))
-    exec(`UPDATE Pedidos SET status = ? WHERE ${idCol} = ?`, [makeClosed ? "closed" : "open", id]);
-  if (cols.has("estado"))
-    exec(`UPDATE Pedidos SET estado = ? WHERE ${idCol} = ?`, [makeClosed ? "cerrado" : "abierto", id]);
-  if (cols.has("isclosed")) exec(`UPDATE Pedidos SET isClosed = ? WHERE ${idCol} = ?`, [makeClosed ? 1 : 0, id]);
-  if (cols.has("is_closed")) exec(`UPDATE Pedidos SET is_closed = ? WHERE ${idCol} = ?`, [makeClosed ? 1 : 0, id]);
-  if (cols.has("cerrado"))   exec(`UPDATE Pedidos SET cerrado = ? WHERE ${idCol} = ?`, [makeClosed ? 1 : 0, id]);
-  if (cols.has("closedat"))  exec(`UPDATE Pedidos SET ClosedAt = ${makeClosed ? "datetime('now')" : "NULL"} WHERE ${idCol} = ?`, [id]);
-  if (cols.has("closed_at")) exec(`UPDATE Pedidos SET closed_at = ${makeClosed ? "datetime('now')" : "NULL"} WHERE ${idCol} = ?`, [id]);
+  if (colsLower.has("status"))
+    exec(`UPDATE Pedidos SET status = ? WHERE ${idCol} = ?`, [
+      makeClosed ? "closed" : "open",
+      id,
+    ]);
+  if (colsLower.has("estado"))
+    exec(`UPDATE Pedidos SET estado = ? WHERE ${idCol} = ?`, [
+      makeClosed ? "cerrado" : "abierto",
+      id,
+    ]);
+  if (colsLower.has("isclosed"))
+    exec(`UPDATE Pedidos SET isClosed = ? WHERE ${idCol} = ?`, [
+      makeClosed ? 1 : 0,
+      id,
+    ]);
+  if (colsLower.has("is_closed"))
+    exec(`UPDATE Pedidos SET is_closed = ? WHERE ${idCol} = ?`, [
+      makeClosed ? 1 : 0,
+      id,
+    ]);
+  if (colsLower.has("cerrado"))
+    exec(`UPDATE Pedidos SET cerrado = ? WHERE ${idCol} = ?`, [
+      makeClosed ? 1 : 0,
+      id,
+    ]);
+  if (colsLower.has("closedat"))
+    exec(
+      `UPDATE Pedidos SET ClosedAt = ${
+        makeClosed ? "datetime('now')" : "NULL"
+      } WHERE ${idCol} = ?`,
+      [id]
+    );
+  if (colsLower.has("closed_at"))
+    exec(
+      `UPDATE Pedidos SET closed_at = ${
+        makeClosed ? "datetime('now')" : "NULL"
+      } WHERE ${idCol} = ?`,
+      [id]
+    );
 
-  if (changes === 0)
-    throw new Error("No se pudo actualizar estado (ninguna columna de estado encontrada)");
+  // Ya no tiramos error duro si no hubo cambios; logueamos sólo para debug
+  if (changes === 0) {
+    console.warn(
+      "[deposito] applyOrderStatus: no se modificó ninguna fila para el pedido",
+      id
+    );
+  }
 }
 
 /* ---- CLOSE (acepta PUT/POST/PATCH y dos variantes de path) ---- */
 const closeHandler = (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!Number.isFinite(id)) return res.status(400).json({ error: "id inválido" });
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ error: "id inválido" });
+    }
     applyOrderStatus(id, true);
     return res.json({ ok: true, id });
   } catch (e) {
     console.error("[deposito] close order:", e);
-    return res.status(500).json({ error: e?.message || "No se pudo cerrar el pedido" });
+    return res
+      .status(500)
+      .json({ error: e?.message || "No se pudo cerrar el pedido" });
   }
 };
-router.put(  "/orders/:id/close",   mustWarehouse, closeHandler);
-router.post( "/orders/:id/close",   mustWarehouse, closeHandler);
-router.patch("/orders/:id/close",   mustWarehouse, closeHandler);
-router.put(  "/orders/close/:id",   mustWarehouse, closeHandler);
-router.post( "/orders/close/:id",   mustWarehouse, closeHandler);
-router.patch("/orders/close/:id",   mustWarehouse, closeHandler);
+router.put("/orders/:id/close", mustWarehouse, closeHandler);
+router.post("/orders/:id/close", mustWarehouse, closeHandler);
+router.patch("/orders/:id/close", mustWarehouse, closeHandler);
+router.put("/orders/close/:id", mustWarehouse, closeHandler);
+router.post("/orders/close/:id", mustWarehouse, closeHandler);
+router.patch("/orders/close/:id", mustWarehouse, closeHandler);
 
 /* ---- REOPEN (acepta PUT/POST/PATCH y dos variantes de path) ---- */
 const reopenHandler = (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!Number.isFinite(id)) return res.status(400).json({ error: "id inválido" });
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ error: "id inválido" });
+    }
     applyOrderStatus(id, false);
     return res.json({ ok: true, id });
   } catch (e) {
     console.error("[deposito] reopen order:", e);
-    return res.status(500).json({ error: e?.message || "No se pudo reabrir el pedido" });
+    return res
+      .status(500)
+      .json({ error: e?.message || "No se pudo reabrir el pedido" });
   }
 };
-router.put(  "/orders/:id/reopen",  mustWarehouse, reopenHandler);
-router.post( "/orders/:id/reopen",  mustWarehouse, reopenHandler);
-router.patch("/orders/:id/reopen",  mustWarehouse, reopenHandler);
-router.put(  "/orders/reopen/:id",  mustWarehouse, reopenHandler);
-router.post( "/orders/reopen/:id",  mustWarehouse, reopenHandler);
-router.patch("/orders/reopen/:id",  mustWarehouse, reopenHandler);
+router.put("/orders/:id/reopen", mustWarehouse, reopenHandler);
+router.post("/orders/:id/reopen", mustWarehouse, reopenHandler);
+router.patch("/orders/:id/reopen", mustWarehouse, reopenHandler);
+router.put("/orders/reopen/:id", mustWarehouse, reopenHandler);
+router.post("/orders/reopen/:id", mustWarehouse, reopenHandler);
+router.patch("/orders/reopen/:id", mustWarehouse, reopenHandler);
 
 /* ==================== 2) Rutas de analytics existentes ==================== */
 router.get("/top-consumidos", mustWarehouse, (req, res) => {
   try {
     const start = parseISO(req.query.start) || firstDayOfMonthISO();
     const end = parseISO(req.query.end) || todayISO();
-    const limit = Math.min(parseInt(req.query.limit ?? "20", 10) || 20, 200);
+    const limit = Math.min(
+      parseInt(req.query.limit ?? "20", 10) || 20,
+      200
+    );
+
+    if (!hasTable("Pedidos") || !hasTable("PedidoItems") || !hasTable("Productos")) {
+      console.warn("[deposito] /top-consumidos: tablas faltantes");
+      return res.json({ start, end, rows: [] });
+    }
 
     const rows = db
-      .prepare(`
+      .prepare(
+        `
         SELECT
           pi.ProductoID        AS productId,
           p.ProductName        AS name,
@@ -243,24 +386,37 @@ router.get("/top-consumidos", mustWarehouse, (req, res) => {
         GROUP BY pi.ProductoID
         ORDER BY total DESC
         LIMIT ?
-      `)
+      `
+      )
       .all(start, end, limit)
       .map((r) => ({ ...r, total: Number(r.total || 0) }));
 
     return res.json({ start, end, rows });
   } catch (e) {
     console.error("[deposito] /top-consumidos error:", e);
-    return res.status(500).json({ error: "No se pudo calcular los productos más consumidos" });
+    return res.status(500).json({
+      error: "No se pudo calcular los productos más consumidos",
+    });
   }
 });
 
 router.get("/low-stock", mustWarehouse, (req, res) => {
   try {
-    const threshold = Math.max(0, parseInt(req.query.threshold ?? "10", 10)) || 10;
-    const limit = Math.min(parseInt(req.query.limit ?? "200", 10) || 200, 500);
+    const threshold =
+      Math.max(parseInt(req.query.threshold ?? "10", 10) || 0, 0) || 10;
+    const limit = Math.min(
+      parseInt(req.query.limit ?? "200", 10) || 200,
+      500
+    );
+
+    if (!hasTable("Productos") || !hasTable("Stock")) {
+      console.warn("[deposito] /low-stock: tablas faltantes");
+      return res.json({ threshold, rows: [] });
+    }
 
     const rows = db
-      .prepare(`
+      .prepare(
+        `
         SELECT
           p.ProductID                           AS productId,
           p.ProductName                         AS name,
@@ -272,33 +428,83 @@ router.get("/low-stock", mustWarehouse, (req, res) => {
         WHERE COALESCE(s.CantidadActual, p.Stock, 0) <= ?
         ORDER BY stock ASC, name COLLATE NOCASE
         LIMIT ?
-      `)
+      `
+      )
       .all(threshold, limit)
       .map((r) => ({ ...r, stock: Number(r.stock || 0) }));
 
     return res.json({ threshold, rows });
   } catch (e) {
     console.error("[deposito] /low-stock error:", e);
-    return res.status(500).json({ error: "No se pudo listar los productos con stock bajo" });
+    return res.status(500).json({
+      error: "No se pudo listar los productos con stock bajo",
+    });
   }
 });
 
-router.get("/consumo-desde-ultimo-ingreso/:productId", mustWarehouse, (req, res) => {
-  try {
-    const productId = Number(req.params.productId);
-    if (!Number.isFinite(productId)) return res.status(400).json({ error: "productId inválido" });
+router.get(
+  "/consumo-desde-ultimo-ingreso/:productId",
+  mustWarehouse,
+  (req, res) => {
+    try {
+      const productId = Number(req.params.productId);
+      if (!Number.isFinite(productId)) {
+        return res.status(400).json({ error: "productId inválido" });
+      }
 
-    const fallbackStart = parseISO(req.query.fallbackStart) || firstDayOfMonthISO();
+      const fallbackStart =
+        parseISO(req.query.fallbackStart) || firstDayOfMonthISO();
 
-    const lastInRow = db
-      .prepare(`SELECT MAX(timestamp) AS ts FROM stock_movements WHERE product_id = ? AND qty > 0`)
-      .get(productId);
+      // stock_movements es opcional: si no está, ignoramos y seguimos
+      let lastIn = null;
+      if (hasTable("stock_movements")) {
+        try {
+          const lastInRow = db
+            .prepare(
+              `SELECT MAX(timestamp) AS ts FROM stock_movements WHERE product_id = ? AND qty > 0`
+            )
+            .get(productId);
+          lastIn = lastInRow?.ts || null;
+        } catch (e) {
+          console.warn(
+            "[deposito] consumo-desde-ultimo-ingreso: error en stock_movements:",
+            e.message
+          );
+        }
+      }
 
-    const lastIn = lastInRow?.ts || null;
-    const startDate = (lastIn || fallbackStart).slice(0, 10);
+      const startDate = (lastIn || fallbackStart).slice(0, 10);
 
-    const consumoRow = db
-      .prepare(`
+      if (!hasTable("Pedidos") || !hasTable("PedidoItems")) {
+        console.warn(
+          "[deposito] consumo-desde-ultimo-ingreso: faltan tablas Pedidos/PedidoItems"
+        );
+        const incomingSafe = (() => {
+          try {
+            return getFutureIncomingForProduct(productId) || {
+              incoming: 0,
+              nextEta: null,
+            };
+          } catch {
+            return { incoming: 0, nextEta: null };
+          }
+        })();
+
+        return res.json({
+          productId,
+          last_ingreso: lastIn,
+          start: startDate,
+          consumido: 0,
+          first_date: null,
+          last_date: null,
+          incoming_total: Number(incomingSafe.incoming || 0),
+          next_eta: incomingSafe.nextEta || null,
+        });
+      }
+
+      const consumoRow = db
+        .prepare(
+          `
         SELECT
           COALESCE(SUM(pi.Cantidad),0) AS consumido,
           MIN(date(pe.Fecha))          AS first_date,
@@ -307,35 +513,62 @@ router.get("/consumo-desde-ultimo-ingreso/:productId", mustWarehouse, (req, res)
         JOIN Pedidos pe ON pe.PedidoID = pi.PedidoID
         WHERE pi.ProductoID = ?
           AND date(pe.Fecha) >= date(?)
-      `)
-      .get(productId, startDate);
+      `
+        )
+        .get(productId, startDate);
 
-    const incoming = getFutureIncomingForProduct(productId) || { incoming: 0, nextEta: null };
+      let incoming;
+      try {
+        incoming =
+          getFutureIncomingForProduct(productId) || {
+            incoming: 0,
+            nextEta: null,
+          };
+      } catch (e) {
+        console.warn(
+          "[deposito] consumo-desde-ultimo-ingreso: error en IncomingStock:",
+          e.message
+        );
+        incoming = { incoming: 0, nextEta: null };
+      }
 
-    return res.json({
-      productId,
-      last_ingreso: lastIn,
-      start: startDate,
-      consumido: Number(consumoRow?.consumido || 0),
-      first_date: consumoRow?.first_date || null,
-      last_date: consumoRow?.last_date || null,
-      incoming_total: Number(incoming.incoming || 0),
-      next_eta: incoming.nextEta || null,
-    });
-  } catch (e) {
-    console.error("[deposito] /consumo-desde-ultimo-ingreso error:", e);
-    return res.status(500).json({ error: "No se pudo calcular el consumo desde el último ingreso" });
+      return res.json({
+        productId,
+        last_ingreso: lastIn,
+        start: startDate,
+        consumido: Number(consumoRow?.consumido || 0),
+        first_date: consumoRow?.first_date || null,
+        last_date: consumoRow?.last_date || null,
+        incoming_total: Number(incoming.incoming || 0),
+        next_eta: incoming.nextEta || null,
+      });
+    } catch (e) {
+      console.error(
+        "[deposito] /consumo-desde-ultimo-ingreso error:",
+        e
+      );
+      return res.status(500).json({
+        error: "No se pudo calcular el consumo desde el último ingreso",
+      });
+    }
   }
-});
+);
 
 router.get("/overview", mustWarehouse, (req, res) => {
   try {
     const start = parseISO(req.query.start) || firstDayOfMonthISO();
     const end = parseISO(req.query.end) || todayISO();
-    const threshold = Math.max(0, parseInt(req.query.threshold ?? "10", 10)) || 10;
+    const threshold =
+      Math.max(parseInt(req.query.threshold ?? "10", 10) || 0, 0) || 10;
+
+    if (!hasTable("Pedidos") || !hasTable("PedidoItems") || !hasTable("Productos")) {
+      console.warn("[deposito] /overview: tablas faltantes");
+      return res.json({ start, end, threshold, top: [], low: [] });
+    }
 
     const top = db
-      .prepare(`
+      .prepare(
+        `
         SELECT
           pi.ProductoID        AS productId,
           p.ProductName        AS name,
@@ -349,12 +582,16 @@ router.get("/overview", mustWarehouse, (req, res) => {
         GROUP BY pi.ProductoID
         ORDER BY total DESC
         LIMIT 20
-      `)
+      `
+      )
       .all(start, end)
       .map((r) => ({ ...r, total: Number(r.total || 0) }));
 
-    const low = db
-      .prepare(`
+    let low = [];
+    if (hasTable("Stock")) {
+      low = db
+        .prepare(
+          `
         SELECT
           p.ProductID                           AS productId,
           p.ProductName                         AS name,
@@ -366,14 +603,18 @@ router.get("/overview", mustWarehouse, (req, res) => {
         WHERE COALESCE(s.CantidadActual, p.Stock, 0) <= ?
         ORDER BY stock ASC, name COLLATE NOCASE
         LIMIT 200
-      `)
-      .all(threshold)
-      .map((r) => ({ ...r, stock: Number(r.stock || 0) }));
+      `
+        )
+        .all(threshold)
+        .map((r) => ({ ...r, stock: Number(r.stock || 0) }));
+    }
 
     return res.json({ start, end, threshold, top, low });
   } catch (e) {
     console.error("[deposito] /overview error:", e);
-    return res.status(500).json({ error: "No se pudo construir el resumen de Depósito" });
+    return res.status(500).json({
+      error: "No se pudo construir el resumen de Depósito",
+    });
   }
 });
 
@@ -381,7 +622,11 @@ router.get("/overview", mustWarehouse, (req, res) => {
 router.get("/_selfcheck", requireAuth, (_req, res) => {
   try {
     const has = (name) =>
-      !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(name);
+      !!db
+        .prepare(
+          `SELECT name FROM sqlite_master WHERE type='table' AND name=?`
+        )
+        .get(name);
     return res.json({
       ok: has("Pedidos") && has("PedidoItems") && has("Productos"),
       tables: {

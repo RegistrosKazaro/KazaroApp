@@ -20,6 +20,7 @@ function isoFirstOfYear() {
   const d = new Date();
   return new Date(d.getFullYear(), 0, 1).toISOString().slice(0, 10);
 }
+
 // Helper para ordenar
 function sortByField(rows, field, dir, getExtraValue) {
   const mul = dir === "desc" ? -1 : 1;
@@ -42,6 +43,7 @@ function sortByField(rows, field, dir, getExtraValue) {
     return 0;
   });
 }
+
 // Estima cuántos días alcanza el stock actual, según consumo desde el último ingreso
 function calcCoverageDays(stockActual, consumosRow) {
   const stock = Number(stockActual || 0);
@@ -116,6 +118,7 @@ function DepositoOrdersPanel() {
       return NaN;
     }
   };
+
   const formatFechaAr = (raw) => {
     const t = parseDbDateToMs(raw);
     if (Number.isNaN(t)) return raw || "";
@@ -135,6 +138,11 @@ function DepositoOrdersPanel() {
       status === "closed" ||
       status === "cerrado" ||
       o?.isClosed === true ||
+      o?.isClosed === 1 ||
+      o?.is_closed === 1 ||
+      o?.is_closed === true ||
+      o?.cerrado === 1 ||
+      o?.cerrado === true ||
       !!o?.closedAt ||
       !!o?.closed_at ||
       !!o?.ClosedAt
@@ -152,7 +160,9 @@ function DepositoOrdersPanel() {
     } catch (e) {
       // Fallback a ruta de admin si no existe la de depósito
       try {
-        const { data } = await api.get("/admin/orders", { withCredentials: true });
+        const { data } = await api.get("/admin/orders", {
+          withCredentials: true,
+        });
         setOrders(Array.isArray(data) ? data : []);
       } catch (e2) {
         console.error("No se pudieron cargar pedidos", e2);
@@ -174,20 +184,21 @@ function DepositoOrdersPanel() {
     let arr = orders
       .slice()
       .filter((o) => (tab === "open" ? !isClosed(o) : isClosed(o)));
+
     const t = String(qDeb || "").trim().toLowerCase();
     if (t) {
       const tId = t.startsWith("#") ? t.slice(1) : t;
       arr = arr.filter((o) => {
-        const idStr = String(o.id || "");
-        const empleado = String(o.empleadoId || "").toLowerCase();
-        const rol = String(o.rol || "").toLowerCase();
-        const remito = String(
+        const idStr = String(o.id ?? "").toLowerCase();
+        const empleado = String(o.empleadoId ?? "").toLowerCase();
+        const rol = String(o.rol ?? "").toLowerCase();
+        const remito = (
           o.remito ??
-            o.remitoNumber ??
-            o.remito_numero ??
-            o.numero_remito ??
-            o.nro_remito ??
-            ""
+          o.remitoNumber ??
+          o.remito_numero ??
+          o.numero_remito ??
+          o.nro_remito ??
+          ""
         ).toLowerCase();
         const total = o.total != null ? String(o.total) : "";
         const fecha = String(o.fecha || "").toLowerCase();
@@ -219,6 +230,7 @@ function DepositoOrdersPanel() {
           return parseDbDateToMs(b.fecha) - parseDbDateToMs(a.fecha);
       }
     });
+
     return arr;
   }, [orders, tab, qDeb, sort]);
 
@@ -230,53 +242,91 @@ function DepositoOrdersPanel() {
     o.nro_remito ??
     "—";
 
+  // Cerrar → marcar como cerrado en UI + cambiar a pestaña "closed"
   const closeOrder = async (id) => {
-    const tryPaths = [
-      `/deposito/orders/${id}/close`,
-      `/admin/orders/${id}/close`,
-      `/orders/${id}/close`,
-    ];
-    for (const p of tryPaths) {
-      try {
-        await api.put(p, {}, { withCredentials: true });
-        return list();
-      } catch (e) {
-        console.debug("closeOrder path falló", p, e?.message);
-      }
-    }
+    setErr("");
+
     try {
-      await api.patch(`/orders/${id}`, { status: "closed" }, { withCredentials: true });
-      await list();
+      await api.put(
+        `/deposito/orders/${id}/close`,
+        {},
+        { withCredentials: true }
+      );
     } catch (e) {
-      setErr(e?.response?.data?.error || e.message || "No se pudo cerrar el pedido");
+      setErr(
+        e?.response?.data?.error || e.message || "No se pudo cerrar el pedido"
+      );
+      return;
     }
+
+    const nowIso = new Date().toISOString();
+
+    // Actualizamos el pedido localmente como cerrado
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.id === id
+          ? {
+              ...o,
+              status: "closed",
+              estado: "cerrado",
+              isClosed: true,
+              is_closed: 1,
+              cerrado: 1,
+              closedAt: nowIso,
+              closed_at: nowIso,
+              ClosedAt: nowIso,
+            }
+          : o
+      )
+    );
+
+    // Cambiamos a pestaña de cerrados (sin refrescar toda la página)
+    setTab("closed");
   };
 
+  // Reabrir → marcar como abierto en UI + cambiar a pestaña "open"
   const reopenOrder = async (id) => {
-    const tryPaths = [
-      `/deposito/orders/${id}/reopen`,
-      `/admin/orders/${id}/reopen`,
-      `/orders/${id}/reopen`,
-    ];
-    for (const p of tryPaths) {
-      try {
-        await api.put(p, {}, { withCredentials: true });
-        return list();
-      } catch (e) {
-        console.debug("reopen path falló", p, e?.message);
-      }
-    }
+    setErr("");
+
     try {
-      await api.patch(`/orders/${id}`, { status: "open" }, { withCredentials: true });
-      await list();
+      await api.put(
+        `/deposito/orders/${id}/reopen`,
+        {},
+        { withCredentials: true }
+      );
     } catch (e) {
-      setErr(e?.response?.data?.error || e.message || "No se pudo reabrir el pedido");
+      setErr(
+        e?.response?.data?.error ||
+          e.message ||
+          "No se pudo reabrir el pedido"
+      );
+      return;
     }
+
+    // Actualizamos el pedido localmente como abierto
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.id === id
+          ? {
+              ...o,
+              status: "open",
+              estado: "abierto",
+              isClosed: false,
+              is_closed: 0,
+              cerrado: 0,
+              closedAt: null,
+              closed_at: null,
+              ClosedAt: null,
+            }
+          : o
+      )
+    );
+
+    setTab("open");
   };
 
   const fetchPdfSmart = async (id) => {
     const paths = [
-      `/deposito/orders/${id}/pdf`,
       `/orders/pdf/${id}`,
       `/admin/orders/pdf/${id}`,
       `/orders/${id}/pdf`,
@@ -289,7 +339,9 @@ function DepositoOrdersPanel() {
           withCredentials: true,
         });
         const ct = (
-          res.headers?.["content-type"] || res.headers?.["Content-Type"] || ""
+          res.headers?.["content-type"] ||
+          res.headers?.["Content-Type"] ||
+          ""
         ).toLowerCase();
         const blob = res.data;
         if (!ct.includes("application/pdf")) {
@@ -344,17 +396,24 @@ function DepositoOrdersPanel() {
   return (
     <div className="deposito-orders">
       {/* Tabs simples con pills */}
-      <div className="deposito-header-actions" style={{ gap: 8, marginBottom: 8 }}>
+      <div
+        className="deposito-header-actions"
+        style={{ gap: 8, marginBottom: 8 }}
+      >
         <button
           type="button"
-          className={`pill pill--ghost ${tab === "open" ? "is-active" : ""}`}
+          className={`pill pill--ghost ${
+            tab === "open" ? "is-active" : ""
+          }`}
           onClick={() => setTab("open")}
         >
           Pedidos
         </button>
         <button
           type="button"
-          className={`pill pill--ghost ${tab === "closed" ? "is-active" : ""}`}
+          className={`pill pill--ghost ${
+            tab === "closed" ? "is-active" : ""
+          }`}
           onClick={() => setTab("closed")}
         >
           Pedidos cerrados
@@ -424,11 +483,16 @@ function DepositoOrdersPanel() {
                   {o.total == null ? "—" : money(o.total)}
                 </td>
                 <td style={{ textAlign: "right" }}>
-                  <button className="pill" onClick={() => onPreviewRemito(o)}>
+                  <button
+                    type="button"
+                    className="pill"
+                    onClick={() => onPreviewRemito(o)}
+                  >
                     Ver remito
                   </button>
                   {tab === "open" ? (
                     <button
+                      type="button"
                       className="pill"
                       onClick={() => closeOrder(o.id)}
                       style={{ marginLeft: 6 }}
@@ -437,6 +501,7 @@ function DepositoOrdersPanel() {
                     </button>
                   ) : (
                     <button
+                      type="button"
                       className="pill"
                       onClick={() => reopenOrder(o.id)}
                       style={{ marginLeft: 6 }}
@@ -451,27 +516,27 @@ function DepositoOrdersPanel() {
         </table>
       </div>
 
-      {/* Visor de remito */}
       {(selected || previewErr) && (
-        <div className="card deposito-card" style={{ marginTop: 12 }}>
-          <div className="card-header deposito-card-header">
+        <div style={{ marginTop: 16 }}>
+          <div className="section-header">
             {selected ? (
-              <div>
-                <h3 style={{ margin: 0 }}>
-                  Remito del pedido #{String(selected.id).padStart(7, "0")}
-                </h3>
-                <small>Remito: {remitoNum(selected)}</small>
+              <div className="muted">
+                Remito del pedido{" "}
+                <strong>#{String(selected.id).padStart(7, "0")}</strong> — Empleado{" "}
+                <strong>{selected.empleadoId}</strong> — Rol{" "}
+                <strong>{selected.rol}</strong>
               </div>
             ) : (
-              <div>Detalle de remito</div>
+              <div className="muted">Detalle de remito</div>
             )}
-            <div className="deposito-header-actions">
+
+            <div className="actions-row">
               {pdfUrl && (
                 <a
-                  className="pill pill--ghost"
                   href={pdfUrl}
                   target="_blank"
                   rel="noreferrer"
+                  className="pill pill--ghost"
                 >
                   Abrir en otra pestaña
                 </a>
@@ -792,7 +857,8 @@ export default function Deposito() {
         row
           .map((v) =>
             String(v).includes(";") || String(v).includes('"')
-              ? `"${String(v).replace(/"/g, '""')}"` : String(v)
+              ? `"${String(v).replace(/"/g, '""')}"`
+              : String(v)
           )
           .join(";")
       ),
@@ -859,7 +925,9 @@ export default function Deposito() {
             value={riskPercent}
             onChange={(e) => {
               const v = parseInt(e.target.value, 10);
-              setRiskPercent(Number.isNaN(v) ? 30 : Math.min(100, Math.max(1, v)));
+              setRiskPercent(
+                Number.isNaN(v) ? 30 : Math.min(100, Math.max(1, v))
+              );
             }}
           />
         </label>
@@ -867,16 +935,32 @@ export default function Deposito() {
         <div className="deposito-quickranges">
           <span className="deposito-quickranges-label">Rangos rápidos</span>
           <div className="deposito-quickranges-buttons">
-            <button type="button" className="pill pill--ghost" onClick={() => setQuickRange("7d")}>
+            <button
+              type="button"
+              className="pill pill--ghost"
+              onClick={() => setQuickRange("7d")}
+            >
               Últimos 7 días
             </button>
-            <button type="button" className="pill pill--ghost" onClick={() => setQuickRange("30d")}>
+            <button
+              type="button"
+              className="pill pill--ghost"
+              onClick={() => setQuickRange("30d")}
+            >
               Últimos 30 días
             </button>
-            <button type="button" className="pill pill--ghost" onClick={() => setQuickRange("month")}>
+            <button
+              type="button"
+              className="pill pill--ghost"
+              onClick={() => setQuickRange("month")}
+            >
               Este mes
             </button>
-            <button type="button" className="pill pill--ghost" onClick={() => setQuickRange("year")}>
+            <button
+              type="button"
+              className="pill pill--ghost"
+              onClick={() => setQuickRange("year")}
+            >
               Año actual
             </button>
           </div>
@@ -898,55 +982,85 @@ export default function Deposito() {
       {!loading && !error && !fechaInvalida && (
         <div className="deposito-summary">
           <div className="deposito-summary-card deposito-summary-card--main">
-            <div className="deposito-summary-label">Consumo total (unidades)</div>
-            <div className="deposito-summary-value">{new Intl.NumberFormat("es-AR").format(resumen.totalConsumido)}</div>
+            <div className="deposito-summary-label">
+              Consumo total (unidades)
+            </div>
+            <div className="deposito-summary-value">
+              {new Intl.NumberFormat("es-AR").format(resumen.totalConsumido)}
+            </div>
             <div className="deposito-summary-sub">
               {start} → {end}
             </div>
           </div>
 
           <div className="deposito-summary-card">
-            <div className="deposito-summary-label">Productos con consumo</div>
-            <div className="deposito-summary-value">{resumen.productosTop}</div>
+            <div className="deposito-summary-label">
+              Productos con consumo
+            </div>
+            <div className="deposito-summary-value">
+              {resumen.productosTop}
+            </div>
             <div className="deposito-summary-sub">cantidad de productos</div>
           </div>
 
           <div className="deposito-summary-card deposito-summary-card--alert">
-            <div className="deposito-summary-label">Stock bajo (productos)</div>
-            <div className="deposito-summary-value">{resumen.productosBajo}</div>
+            <div className="deposito-summary-label">
+              Stock bajo (productos)
+            </div>
+            <div className="deposito-summary-value">
+              {resumen.productosBajo}
+            </div>
             <div className="deposito-summary-sub">
-              Se considera <b>stock bajo</b> cuando <code>stock ≤ {threshold}</code>.
+              Se considera <b>stock bajo</b> cuando{" "}
+              <code>stock ≤ {threshold}</code>.
             </div>
 
             <div className="deposito-legend">
               <span className="legend-dot legend-danger"></span>
-              <span>Sin stock (0): <b>{resumen.productosSinStock}</b></span>
+              <span>
+                Sin stock (0): <b>{resumen.productosSinStock}</b>
+              </span>
 
               {resumen.riesgoLimite > 0 && (
                 <>
                   <span className="legend-dot legend-warning"></span>
                   <span>
-                    En riesgo (1..{resumen.riesgoLimite}): <b>{resumen.productosEnRiesgo}</b>
+                    En riesgo (1..{resumen.riesgoLimite}):{" "}
+                    <b>{resumen.productosEnRiesgo}</b>
                   </span>
                 </>
               )}
 
               <span className="legend-dot legend-neutral"></span>
-              <span>Bajo (resto): <b>{resumen.bajoResto}</b></span>
+              <span>
+                Bajo (resto): <b>{resumen.bajoResto}</b>
+              </span>
             </div>
 
             {resumen.riesgoLimite === 0 && (
-              <div className="deposito-summary-sub">Franja de riesgo desactivada (umbral = 0).</div>
+              <div className="deposito-summary-sub">
+                Franja de riesgo desactivada (umbral = 0).
+              </div>
             )}
           </div>
 
           <div className="deposito-summary-card deposito-summary-card--alert">
             <div className="deposito-summary-label">Críticos</div>
             <div className="deposito-critical">
-              <div><b>{resumen.productosSinStock}</b><small>Sin stock (0)</small></div>
-              <div><b>{resumen.productosEnRiesgo}</b><small>En riesgo (≤ {resumen.riesgoLimite})</small></div>
+              <div>
+                <b>{resumen.productosSinStock}</b>
+                <small>Sin stock (0)</small>
+              </div>
+              <div>
+                <b>{resumen.productosEnRiesgo}</b>
+                <small>
+                  En riesgo (≤ {resumen.riesgoLimite})
+                </small>
+              </div>
             </div>
-            <div className="deposito-summary-sub">Riesgo = {riskPercent}% del umbral</div>
+            <div className="deposito-summary-sub">
+              Riesgo = {riskPercent}% del umbral
+            </div>
           </div>
         </div>
       )}
@@ -973,16 +1087,31 @@ export default function Deposito() {
               </div>
             </div>
             <div className="deposito-table-wrapper">
-              <table className="deposito-table" aria-label="Productos más consumidos">
+              <table
+                className="deposito-table"
+                aria-label="Productos más consumidos"
+              >
                 <thead>
                   <tr>
-                    <th onClick={() => handleSortTop("name")} className="deposito-th--sortable" scope="col">
+                    <th
+                      onClick={() => handleSortTop("name")}
+                      className="deposito-th--sortable"
+                      scope="col"
+                    >
                       Producto{sortIndicator(sortTop, "name")}
                     </th>
-                    <th onClick={() => handleSortTop("unit")} className="deposito-th--sortable" scope="col">
+                    <th
+                      onClick={() => handleSortTop("unit")}
+                      className="deposito-th--sortable"
+                      scope="col"
+                    >
                       Unidad{sortIndicator(sortTop, "unit")}
                     </th>
-                    <th onClick={() => handleSortTop("total")} className="deposito-th--sortable deposito-th--numeric" scope="col">
+                    <th
+                      onClick={() => handleSortTop("total")}
+                      className="deposito-th--sortable deposito-th--numeric"
+                      scope="col"
+                    >
                       Total{sortIndicator(sortTop, "total")}
                     </th>
                   </tr>
@@ -990,14 +1119,18 @@ export default function Deposito() {
                 <tbody>
                   {topFiltrados.length === 0 && (
                     <tr>
-                      <td colSpan={3} className="deposito-empty">Sin consumos en el período</td>
+                      <td colSpan={3} className="deposito-empty">
+                        Sin consumos en el período
+                      </td>
                     </tr>
                   )}
                   {topFiltrados.map((r) => (
                     <tr key={r.productId} className="deposito-row">
                       <td>{r.name}</td>
                       <td>{r.unit || "-"}</td>
-                      <td className="deposito-td--numeric">{new Intl.NumberFormat("es-AR").format(r.total)}</td>
+                      <td className="deposito-td--numeric">
+                        {new Intl.NumberFormat("es-AR").format(r.total)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1008,19 +1141,45 @@ export default function Deposito() {
           {/* Stock bajo */}
           <div className="card deposito-card deposito-card--alert">
             <div className="card-header deposito-card-header">
-              <div><h2>Stock bajo</h2></div>
+              <div>
+                <h2>Stock bajo</h2>
+              </div>
               <div className="deposito-header-actions">
                 <div className="deposito-lowfilter">
-                  <button type="button" className={`pill pill--ghost deposito-lowfilter-btn ${lowFilter === "all" ? "is-active" : ""}`} onClick={() => setLowFilter("all")}>
+                  <button
+                    type="button"
+                    className={`pill pill--ghost deposito-lowfilter-btn ${
+                      lowFilter === "all" ? "is-active" : ""
+                    }`}
+                    onClick={() => setLowFilter("all")}
+                  >
                     Todos ({resumen.productosBajo})
                   </button>
-                  <button type="button" className={`pill pill--ghost deposito-lowfilter-btn ${lowFilter === "sin-stock" ? "is-active" : ""}`} onClick={() => setLowFilter("sin-stock")}>
+                  <button
+                    type="button"
+                    className={`pill pill--ghost deposito-lowfilter-btn ${
+                      lowFilter === "sin-stock" ? "is-active" : ""
+                    }`}
+                    onClick={() => setLowFilter("sin-stock")}
+                  >
                     Sin stock ({resumen.productosSinStock})
                   </button>
-                  <button type="button" className={`pill pill--ghost deposito-lowfilter-btn ${lowFilter === "riesgo" ? "is-active" : ""}`} onClick={() => setLowFilter("riesgo")}>
+                  <button
+                    type="button"
+                    className={`pill pill--ghost deposito-lowfilter-btn ${
+                      lowFilter === "riesgo" ? "is-active" : ""
+                    }`}
+                    onClick={() => setLowFilter("riesgo")}
+                  >
                     En riesgo ({resumen.productosEnRiesgo})
                   </button>
-                  <button type="button" className={`pill pill--ghost deposito-lowfilter-btn ${lowFilter === "bajo" ? "is-active" : ""}`} onClick={() => setLowFilter("bajo")}>
+                  <button
+                    type="button"
+                    className={`pill pill--ghost deposito-lowfilter-btn ${
+                      lowFilter === "bajo" ? "is-active" : ""
+                    }`}
+                    onClick={() => setLowFilter("bajo")}
+                  >
                     Bajo (resto) ({resumen.bajoResto})
                   </button>
                 </div>
@@ -1032,28 +1191,57 @@ export default function Deposito() {
                   value={searchLow}
                   onChange={(e) => setSearchLow(e.target.value)}
                 />
-                <button type="button" className="pill deposito-export-btn" onClick={handleExportLowCsv} disabled={!lowFiltrados.length}>
+                <button
+                  type="button"
+                  className="pill deposito-export-btn"
+                  onClick={handleExportLowCsv}
+                  disabled={!lowFiltrados.length}
+                >
                   Exportar CSV
                 </button>
               </div>
             </div>
             <div className="deposito-table-wrapper">
-              <table className="deposito-table" aria-label="Productos con stock bajo">
+              <table
+                className="deposito-table"
+                aria-label="Productos con stock bajo"
+              >
                 <thead>
                   <tr>
-                    <th onClick={() => handleSortLow("name")} className="deposito-th--sortable" scope="col">
+                    <th
+                      onClick={() => handleSortLow("name")}
+                      className="deposito-th--sortable"
+                      scope="col"
+                    >
                       Producto{sortIndicator(sortLow, "name")}
                     </th>
-                    <th onClick={() => handleSortLow("stock")} className="deposito-th--sortable deposito-th--numeric" scope="col">
+                    <th
+                      onClick={() => handleSortLow("stock")}
+                      className="deposito-th--sortable deposito-th--numeric"
+                      scope="col"
+                    >
                       Stock{sortIndicator(sortLow, "stock")}
                     </th>
-                    <th onClick={() => handleSortLow("consumido")} className="deposito-th--sortable deposito-th--numeric" scope="col">
-                      Consumo desde último ingreso{sortIndicator(sortLow, "consumido")}
+                    <th
+                      onClick={() => handleSortLow("consumido")}
+                      className="deposito-th--sortable deposito-th--numeric"
+                      scope="col"
+                    >
+                      Consumo desde último ingreso
+                      {sortIndicator(sortLow, "consumido")}
                     </th>
-                    <th onClick={() => handleSortLow("incoming")} className="deposito-th--sortable deposito-th--numeric" scope="col">
+                    <th
+                      onClick={() => handleSortLow("incoming")}
+                      className="deposito-th--sortable deposito-th--numeric"
+                      scope="col"
+                    >
                       Ingreso futuro{sortIndicator(sortLow, "incoming")}
                     </th>
-                    <th onClick={() => handleSortLow("coverage")} className="deposito-th--sortable deposito-th--numeric" scope="col">
+                    <th
+                      onClick={() => handleSortLow("coverage")}
+                      className="deposito-th--sortable deposito-th--numeric"
+                      scope="col"
+                    >
                       Cobertura (días){sortIndicator(sortLow, "coverage")}
                     </th>
                   </tr>
@@ -1061,7 +1249,9 @@ export default function Deposito() {
                 <tbody>
                   {lowFiltrados.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="deposito-empty">No hay alertas de stock bajo</td>
+                      <td colSpan={5} className="deposito-empty">
+                        No hay alertas de stock bajo
+                      </td>
                     </tr>
                   )}
                   {lowFiltrados.map((r) => {
@@ -1071,9 +1261,13 @@ export default function Deposito() {
 
                     const sinStock = stockActual <= 0;
                     const riesgoLimite =
-                      threshold > 0 ? Math.floor(threshold * (riskPercent / 100)) : 0;
+                      threshold > 0
+                        ? Math.floor(threshold * (riskPercent / 100))
+                        : 0;
                     const enRiesgo =
-                      stockActual > 0 && riesgoLimite > 0 && stockActual <= riesgoLimite;
+                      stockActual > 0 &&
+                      riesgoLimite > 0 &&
+                      stockActual <= riesgoLimite;
 
                     const ratio =
                       threshold > 0
@@ -1082,31 +1276,64 @@ export default function Deposito() {
 
                     const rowClasses = [
                       "deposito-row",
-                      sinStock ? "deposito-row--sin-stock" : enRiesgo ? "deposito-row--riesgo" : "",
-                    ].filter(Boolean).join(" ");
+                      sinStock
+                        ? "deposito-row--sin-stock"
+                        : enRiesgo
+                        ? "deposito-row--riesgo"
+                        : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ");
 
                     return (
                       <tr key={r.productId} className={rowClasses}>
                         <td>
                           {r.name}
-                          {sinStock && <span className="deposito-badge deposito-badge--danger">SIN STOCK</span>}
-                          {!sinStock && enRiesgo && <span className="deposito-badge deposito-badge--warning">en riesgo</span>}
+                          {sinStock && (
+                            <span className="deposito-badge deposito-badge--danger">
+                              SIN STOCK
+                            </span>
+                          )}
+                          {!sinStock && enRiesgo && (
+                            <span className="deposito-badge deposito-badge--warning">
+                              en riesgo
+                            </span>
+                          )}
                         </td>
                         <td className="deposito-td--numeric">
                           {new Intl.NumberFormat("es-AR").format(stockActual)}
-                          <div className="deposito-stockbar" style={{ "--ratio": ratio }} aria-hidden="true">
+                          <div
+                            className="deposito-stockbar"
+                            style={{ "--ratio": ratio }}
+                            aria-hidden="true"
+                          >
                             <div className="deposito-stockbar-fill" />
                           </div>
                         </td>
                         <td className="deposito-td--numeric">
-                          {d.consumido == null ? "-" : new Intl.NumberFormat("es-AR").format(d.consumido)}
+                          {d.consumido == null
+                            ? "-"
+                            : new Intl.NumberFormat("es-AR").format(
+                                d.consumido
+                              )}
                           <div className="deposito-subtext">
-                            desde {d.last_ingreso ? String(d.last_ingreso).slice(0, 10) : start}
+                            desde{" "}
+                            {d.last_ingreso
+                              ? String(d.last_ingreso).slice(0, 10)
+                              : start}
                           </div>
                         </td>
                         <td className="deposito-td--numeric">
-                          {d.incoming_total ? new Intl.NumberFormat("es-AR").format(d.incoming_total) : "-"}
-                          {d.next_eta && <div className="deposito-subtext">ETA {String(d.next_eta).slice(0, 10)}</div>}
+                          {d.incoming_total
+                            ? new Intl.NumberFormat("es-AR").format(
+                                d.incoming_total
+                              )
+                            : "-"}
+                          {d.next_eta && (
+                            <div className="deposito-subtext">
+                              ETA {String(d.next_eta).slice(0, 10)}
+                            </div>
+                          )}
                         </td>
                         <td className="deposito-td--numeric">
                           {coverage == null ? "-" : `${coverage.toFixed(1)} d`}
@@ -1118,7 +1345,8 @@ export default function Deposito() {
               </table>
             </div>
             <p className="deposito-footnote">
-              Tip: para cargar ingresos futuros, usá la sección <strong>Futuro Ingreso</strong> en el panel Administrativo.
+              Tip: para cargar ingresos futuros, usá la sección{" "}
+              <strong>Futuro Ingreso</strong> en el panel Administrativo.
             </p>
           </div>
         </div>

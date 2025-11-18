@@ -6,11 +6,10 @@ import { useAuth } from "../hooks/useAuth";
 import "../styles/admin-panel.css";
 import "../styles/a11y.css";
 
-// (Opcional) ya existe en tu repo:
 import MassReassignServicesSection from "./MassReassignServicesSection";
 
 /* -----------------------------------------------------------
- * Utilidades locales
+ * Utilidades
  * --------------------------------------------------------- */
 const API_BASE_URL =
   (import.meta?.env && import.meta.env.VITE_API_URL) ||
@@ -28,8 +27,10 @@ const money = (v) => {
     return `$ ${n.toFixed(2)}`;
   }
 };
+
 const clampInt = (v, min = 0, max = Number.MAX_SAFE_INTEGER) =>
   Math.min(max, Math.max(min, parseInt(v ?? 0, 10) || 0));
+
 const useDebounced = (value, delay = 300) => {
   const [v, setV] = useState(value);
   useEffect(() => {
@@ -130,7 +131,6 @@ function ProductsSection() {
     setErr("");
     setCatTouched(false);
 
-    // Mostrar algo inmediato
     setEditingId(row.id);
     setDraft({
       name: row.name ?? "",
@@ -195,7 +195,6 @@ function ProductsSection() {
       return;
     }
 
-    // Categoría
     if (editingId === "__new__") {
       payload.catId = draft.catId || null;
     } else if (catTouched) {
@@ -288,7 +287,6 @@ function ProductsSection() {
         )}
       </div>
 
-      {/* Form alta/edición */}
       {editingId !== null && (
         <div className="card" style={{ marginBottom: 12 }}>
           <div className="grid-4">
@@ -380,7 +378,6 @@ function ProductsSection() {
         </div>
       )}
 
-      {/* Tabla */}
       {loading ? (
         <div className="state">Cargando…</div>
       ) : rows.length === 0 ? (
@@ -468,7 +465,6 @@ function ProductsSection() {
     </section>
   );
 }
-
 /* ===========================================================
  * 2) Asignar servicios a supervisores
  * ========================================================= */
@@ -1276,12 +1272,41 @@ function OrdersSection() {
   const [previewErr, setPreviewErr] = useState("");
 
   // Detecta "cerrado" con distintas convenciones de backend
-  const isClosed = (o) =>
-    o?.status === "closed" ||
-    String(o?.Estado || "").toLowerCase() === "cerrado" ||
-    o?.ClosedAt != null ||
-    o?.closedAt != null;
+  const isClosed = (o) => {
+    if (!o) return false;
 
+    const status = String(o.status ?? o.Status ?? "").toLowerCase();
+    const estado = String(o.estado ?? o.Estado ?? "").toLowerCase();
+    const closedAt =
+      o.closedAt ?? o.ClosedAt ?? o.closed_at ?? null;
+
+    const flagFields = [
+      o.isClosed,
+      o.is_closed,
+      o.cerrado,
+      o.Cerrado,
+    ];
+
+    const flagTrue = flagFields.some((v) => {
+      if (v === 1 || v === true) return true;
+      if (v === "1") return true;
+      if (typeof v === "string" && v.toLowerCase() === "true") return true;
+      return false;
+    });
+
+    return (
+      status === "closed" ||
+      estado === "cerrado" ||
+      estado === "completado" ||
+      estado === "completo" ||
+      flagTrue ||
+      closedAt != null
+    );
+  };
+
+  // ⚠️ AQUÍ ESTÁ LA PARTE CLAVE:
+  // 1) Intenta /admin/orders?status=closed
+  // 2) Si falla, usa /deposito/orders?status=closed (misma fuente que Depósito)
   const load = useCallback(async () => {
     setErr("");
     try {
@@ -1290,12 +1315,15 @@ function OrdersSection() {
       });
       const arr = Array.isArray(data) ? data : data?.rows || [];
       setOrders(arr.filter(isClosed));
-    } catch {
+    } catch (e1) {
       try {
-        const { data } = await api.get("/admin/orders");
+        const { data } = await api.get("/deposito/orders", {
+          params: { status: "closed" },
+        });
         const arr = Array.isArray(data) ? data : data?.rows || [];
         setOrders(arr.filter(isClosed));
-      } catch {
+      } catch (e2) {
+        console.error("No se pudieron cargar los pedidos cerrados", e1, e2);
         setErr("No se pudieron cargar los pedidos cerrados");
         setOrders([]);
       }
@@ -1338,67 +1366,86 @@ function OrdersSection() {
   // --------- Utils robustos para PDF ----------
   const isPdfBlob = async (blob) => {
     try {
-      const head = await blob.slice(0, 5).text(); // "%PDF-"
+      const head = await blob.slice(0, 5).text();
       return head.startsWith("%PDF-");
     } catch {
       return false;
     }
   };
+
   const toBlobUrl = (blob) => URL.createObjectURL(blob);
 
   const tryLoadPdfFromPath = async (path) => {
+    // 1) axios con responseType: "blob"
     try {
       const res = await api.get(path, {
         responseType: "blob",
-        headers: { Accept: "application/pdf" },
         withCredentials: true,
+        headers: { Accept: "application/pdf" },
       });
-      const ct = (res.headers?.["content-type"] || res.headers?.["Content-Type"] || "").toLowerCase();
-      let blob = res.data;
-      if (!ct.includes("application/pdf")) {
-        if (!(blob instanceof Blob) || !(await isPdfBlob(blob))) {
-          const txt = await blob.text().catch(() => "");
-          throw new Error(`Content-Type="${ct}". ${txt ? "Detalle: " + txt : ""}`);
-        }
+      const ct =
+        (res.headers?.["content-type"] ||
+          res.headers?.["Content-Type"] ||
+          ""
+        ).toLowerCase();
+      const blob = res.data;
+
+      if (!ct.includes("application/pdf") && !(await isPdfBlob(blob))) {
+        const textPreview = await blob.text().catch(() => "");
+        throw new Error(
+          `Content-Type="${ct}". ${
+            textPreview ? "Preview: " + textPreview : ""
+          }`
+        );
       }
       return { url: toBlobUrl(blob), via: "axios-blob" };
-    } catch {
-      try {
-        const res = await api.get(path, {
-          responseType: "arraybuffer",
-          headers: { Accept: "application/pdf" },
-          withCredentials: true,
-        });
-        const ct = (res.headers?.["content-type"] || res.headers?.["Content-Type"] || "").toLowerCase();
-        const blob = new Blob([res.data], { type: ct || "application/pdf" });
-        if (!(await isPdfBlob(blob))) {
-          let textPreview = "";
-          try {
-            textPreview = new TextDecoder().decode(res.data.slice(0, 256));
-          } catch {
-            textPreview = "";
-          }
-          throw new Error(
-            `Respuesta no parece PDF (arraybuffer). ${textPreview ? "Preview: " + textPreview : ""}`
-          );
-        }
-        return { url: toBlobUrl(blob), via: "axios-arraybuffer" };
-      } catch {
-        const abs = (API_BASE_URL?.replace(/\/$/, "") || "") + path;
-        const r = await fetch(abs, {
-          method: "GET",
-          credentials: "include",
-          headers: { Accept: "application/pdf" },
-        });
-        const ct = (r.headers.get("content-type") || "").toLowerCase();
-        const blob = await r.blob();
-        if (!ct.includes("application/pdf") && !(await isPdfBlob(blob))) {
-          const txt = await blob.text().catch(() => "");
-          throw new Error(`Fetch: Content-Type="${ct}". ${txt ? "Detalle: " + txt : ""}`);
-        }
-        return { url: toBlobUrl(blob), via: "fetch" };
-      }
+    } catch (e) {
+      console.debug("tryLoadPdfFromPath (axios-blob) falló", path, e?.message);
     }
+
+    // 2) axios sin responseType, asumiendo Blob igual
+    try {
+      const res = await api.get(path, {
+        withCredentials: true,
+        headers: { Accept: "application/pdf" },
+      });
+      const ct =
+        (res.headers?.["content-type"] ||
+          res.headers?.["Content-Type"] ||
+          ""
+        ).toLowerCase();
+      const blob = res.data;
+      if (!ct.includes("application/pdf") && !(await isPdfBlob(blob))) {
+        const textPreview = await blob.text().catch(() => "");
+        throw new Error(
+          `Content-Type="${ct}". ${
+            textPreview ? "Preview: " + textPreview : ""
+          }`
+        );
+      }
+      return { url: toBlobUrl(blob), via: "axios-arraybuffer" };
+    } catch (e) {
+      console.debug(
+        "tryLoadPdfFromPath (axios-arraybuffer) falló",
+        path,
+        e?.message
+      );
+    }
+
+    // 3) fetch "crudo" como fallback absoluto
+    const abs = (API_BASE_URL?.replace(/\/$/, "") || "") + path;
+    const r = await fetch(abs, {
+      method: "GET",
+      credentials: "include",
+      headers: { Accept: "application/pdf" },
+    });
+    const ct = (r.headers.get("content-type") || "").toLowerCase();
+    const blob = await r.blob();
+    if (!ct.includes("application/pdf") && !(await isPdfBlob(blob))) {
+      const txt = await blob.text().catch(() => "");
+      throw new Error(`Fetch: Content-Type="${ct}". ${txt ? "Detalle: " + txt : ""}`);
+    }
+    return { url: toBlobUrl(blob), via: "fetch" };
   };
 
   const fetchRemitoPdfSmart = async (orderId) => {
@@ -1667,7 +1714,6 @@ export default function AdminPanel() {
           Servicio ↔ Productos
         </button>
 
-      
         <button
           className={`tab-btn ${tab === "incomingStock" ? "is-active" : ""}`}
           onClick={() => setTab("incomingStock")}
