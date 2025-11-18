@@ -1277,15 +1277,9 @@ function OrdersSection() {
 
     const status = String(o.status ?? o.Status ?? "").toLowerCase();
     const estado = String(o.estado ?? o.Estado ?? "").toLowerCase();
-    const closedAt =
-      o.closedAt ?? o.ClosedAt ?? o.closed_at ?? null;
+    const closedAt = o.closedAt ?? o.ClosedAt ?? o.closed_at ?? null;
 
-    const flagFields = [
-      o.isClosed,
-      o.is_closed,
-      o.cerrado,
-      o.Cerrado,
-    ];
+    const flagFields = [o.isClosed, o.is_closed, o.cerrado, o.Cerrado];
 
     const flagTrue = flagFields.some((v) => {
       if (v === 1 || v === true) return true;
@@ -1304,26 +1298,28 @@ function OrdersSection() {
     );
   };
 
-  // ⚠️ AQUÍ ESTÁ LA PARTE CLAVE:
-  // 1) Intenta /admin/orders?status=closed
-  // 2) Si falla, usa /deposito/orders?status=closed (misma fuente que Depósito)
+  // 1) Usa /deposito/orders?status=closed (misma fuente que Depósito)
+  // 2) Si falla, intenta /admin/orders?status=closed como respaldo
   const load = useCallback(async () => {
     setErr("");
     try {
-      const { data } = await api.get("/admin/orders", {
+      const { data } = await api.get("/deposito/orders", {
         params: { status: "closed" },
+        withCredentials: true,
       });
       const arr = Array.isArray(data) ? data : data?.rows || [];
       setOrders(arr.filter(isClosed));
     } catch (e1) {
+      console.warn("Fallo /deposito/orders, intento /admin/orders", e1?.message);
       try {
-        const { data } = await api.get("/deposito/orders", {
+        const { data } = await api.get("/admin/orders", {
           params: { status: "closed" },
+          withCredentials: true,
         });
         const arr = Array.isArray(data) ? data : data?.rows || [];
         setOrders(arr.filter(isClosed));
       } catch (e2) {
-        console.error("No se pudieron cargar los pedidos cerrados", e1, e2);
+        console.error("No se pudieron cargar los pedidos cerrados", e2);
         setErr("No se pudieron cargar los pedidos cerrados");
         setOrders([]);
       }
@@ -1383,11 +1379,11 @@ function OrdersSection() {
         withCredentials: true,
         headers: { Accept: "application/pdf" },
       });
-      const ct =
-        (res.headers?.["content-type"] ||
-          res.headers?.["Content-Type"] ||
-          ""
-        ).toLowerCase();
+      const ct = (
+        res.headers?.["content-type"] ||
+        res.headers?.["Content-Type"] ||
+        ""
+      ).toLowerCase();
       const blob = res.data;
 
       if (!ct.includes("application/pdf") && !(await isPdfBlob(blob))) {
@@ -1409,11 +1405,11 @@ function OrdersSection() {
         withCredentials: true,
         headers: { Accept: "application/pdf" },
       });
-      const ct =
-        (res.headers?.["content-type"] ||
-          res.headers?.["Content-Type"] ||
-          ""
-        ).toLowerCase();
+      const ct = (
+        res.headers?.["content-type"] ||
+        res.headers?.["Content-Type"] ||
+        ""
+      ).toLowerCase();
       const blob = res.data;
       if (!ct.includes("application/pdf") && !(await isPdfBlob(blob))) {
         const textPreview = await blob.text().catch(() => "");
@@ -1443,7 +1439,9 @@ function OrdersSection() {
     const blob = await r.blob();
     if (!ct.includes("application/pdf") && !(await isPdfBlob(blob))) {
       const txt = await blob.text().catch(() => "");
-      throw new Error(`Fetch: Content-Type="${ct}". ${txt ? "Detalle: " + txt : ""}`);
+      throw new Error(
+        `Fetch: Content-Type="${ct}". ${txt ? "Detalle: " + txt : ""}`
+      );
     }
     return { url: toBlobUrl(blob), via: "fetch" };
   };
@@ -1577,8 +1575,8 @@ function OrdersSection() {
                   #{selectedOrder && String(selectedOrder.id).padStart(7, "0")}
                 </strong>{" "}
                 — Empleado{" "}
-                <strong>{selectedOrder && selectedOrder.empleadoId}</strong> — Rol{" "}
-                <strong>{selectedOrder && selectedOrder.rol}</strong>
+                <strong>{selectedOrder && selectedOrder.empleadoId}</strong> —
+                Rol <strong>{selectedOrder && selectedOrder.rol}</strong>
               </div>
             ) : (
               <div className="muted">Detalle de remito</div>

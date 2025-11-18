@@ -29,7 +29,36 @@ function requireDepositoSolo(req, res, next) {
     return res.status(403).json({ ok: false, error: "Sin permiso" });
   }
 }
-const mustWarehouse = [requireAuth, requireDepositoSolo];
+
+/** NUEVO: permite deposito o admin */
+function requireDepositoOrAdmin(req, res, next) {
+  try {
+    if (!req.user?.id) {
+      return res.status(401).json({ ok: false, error: "No autenticado" });
+    }
+
+    const roles = (
+      req.user.roles?.length ? req.user.roles : getUserRoles(req.user.id) || []
+    ).map((r) => String(r).toLowerCase());
+
+    const isDeposito = roles.includes("deposito");
+    const isAdmin = roles.includes("admin");
+
+    if (!isDeposito && !isAdmin) {
+      return res
+        .status(403)
+        .json({ ok: false, error: "Sin permiso para Depósito/Admin" });
+    }
+
+    return next();
+  } catch (e) {
+    console.error("[deposito] requireDepositoOrAdmin:", e?.message || e);
+    return res.status(403).json({ ok: false, error: "Sin permiso" });
+  }
+}
+
+/** USAR ESTE para TODAS las rutas de /deposito */
+const mustWarehouse = [requireAuth, requireDepositoOrAdmin];
 
 /* ----------------------------- Helpers ----------------------------- */
 function parseISO(d) {
