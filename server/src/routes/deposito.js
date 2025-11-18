@@ -486,17 +486,33 @@ router.get(
 
       // stock_movements es opcional: si no está, ignoramos y seguimos
       let lastIn = null;
-      if (hasTable("stock_movements")) {
-        try {
-          const lastInRow = db
-            .prepare(
-              `SELECT MAX(timestamp) AS ts FROM stock_movements WHERE product_id = ? AND qty > 0`
-            )
-            .get(productId);
-          lastIn = lastInRow?.ts || null;
-        } catch (e) {
+      if (hasTable("stock_movements")){
+        try{
+          const cols = getTableColumnsLower("stock_movements");
+          const datecol =
+          cols.includes("timestamp")
+          ? "timestamp"
+          : cols.includes("created_at")
+          ? "created_at"
+          : cols.includes("fecha")
+          ? "fecha"
+          : cols.includes("date")
+          ? "date"
+          : null;
+
+          if (dateCol){
+            const lastInRow = db
+              .prepare(
+                `SELECT MAX(${dateCol}) AS ts FROM stock_movements WHERE product_id = ? AND qty > 0`
+              )
+              .get(productId);
+              lastIn = lastInRow?.ts || null;     
+           } else {
+            console.warn("[deposito] consumo-desde-ultimo-ingreso: tabla stock_movements sin columna de fecha conocida; se omite para ultimo ingreso");
+           }
+        } catch(e){
           console.warn(
-            "[deposito] consumo-desde-ultimo-ingreso: error en stock_movements:",
+            "[deposito] consumo-desde-ultimo-ingreso: error en stock_movements (opcional):",
             e.message
           );
         }
