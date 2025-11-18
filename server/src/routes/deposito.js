@@ -5,7 +5,7 @@ import { db, getFutureIncomingForProduct, getUserRoles } from "../db.js";
 
 const router = Router();
 
-/* ------------------------ Auth: Depósito sólo ------------------------ */
+/* ------------------------ Auth: Depósito / Admin ------------------------ */
 function requireDepositoSolo(req, res, next) {
   try {
     if (!req.user?.id) {
@@ -205,9 +205,7 @@ router.get("/orders", mustWarehouse, (req, res) => {
     const orderBy = map.fecha || map.id;
     const selectParts = [
       `${map.id} AS ${map.id}`,
-      `${map.empleadoId || "NULL"} AS ${
-        map.empleadoId || "empleadoid"
-      }`,
+      `${map.empleadoId || "NULL"} AS ${map.empleadoId || "empleadoid"}`,
       `${map.rol || "NULL"} AS ${map.rol || "rol"}`,
       `${map.fecha || "NULL"} AS ${map.fecha || "fecha"}`,
       `${map.total || "NULL"} AS ${map.total || "total"}`,
@@ -329,7 +327,6 @@ function applyOrderStatus(id, makeClosed) {
       [id]
     );
 
-  // Ya no tiramos error duro si no hubo cambios; logueamos sólo para debug
   if (changes === 0) {
     console.warn(
       "[deposito] applyOrderStatus: no se modificó ninguna fila para el pedido",
@@ -394,7 +391,11 @@ router.get("/top-consumidos", mustWarehouse, (req, res) => {
       200
     );
 
-    if (!hasTable("Pedidos") || !hasTable("PedidoItems") || !hasTable("Productos")) {
+    if (
+      !hasTable("Pedidos") ||
+      !hasTable("PedidoItems") ||
+      !hasTable("Productos")
+    ) {
       console.warn("[deposito] /top-consumidos: tablas faltantes");
       return res.json({ start, end, rows: [] });
     }
@@ -486,31 +487,33 @@ router.get(
 
       // stock_movements es opcional: si no está, ignoramos y seguimos
       let lastIn = null;
-      if (hasTable("stock_movements")){
-        try{
-          const cols = getTableColumnsLower("stock_movements");
-          const datecol =
-          cols.includes("timestamp")
-          ? "timestamp"
-          : cols.includes("created_at")
-          ? "created_at"
-          : cols.includes("fecha")
-          ? "fecha"
-          : cols.includes("date")
-          ? "date"
-          : null;
+      if (hasTable("stock_movements")) {
+        try {
+          const colsLower = getTableColumnsLower("stock_movements");
 
-          if (dateCol){
+          const dateCol = colsLower.has("timestamp")
+            ? "timestamp"
+            : colsLower.has("created_at")
+            ? "created_at"
+            : colsLower.has("fecha")
+            ? "fecha"
+            : colsLower.has("date")
+            ? "date"
+            : null;
+
+          if (dateCol) {
             const lastInRow = db
               .prepare(
                 `SELECT MAX(${dateCol}) AS ts FROM stock_movements WHERE product_id = ? AND qty > 0`
               )
               .get(productId);
-              lastIn = lastInRow?.ts || null;     
-           } else {
-            console.warn("[deposito] consumo-desde-ultimo-ingreso: tabla stock_movements sin columna de fecha conocida; se omite para ultimo ingreso");
-           }
-        } catch(e){
+            lastIn = lastInRow?.ts || null;
+          } else {
+            console.warn(
+              "[deposito] consumo-desde-ultimo-ingreso: tabla stock_movements sin columna de fecha conocida; se omite para último ingreso"
+            );
+          }
+        } catch (e) {
           console.warn(
             "[deposito] consumo-desde-ultimo-ingreso: error en stock_movements (opcional):",
             e.message
@@ -606,7 +609,11 @@ router.get("/overview", mustWarehouse, (req, res) => {
     const threshold =
       Math.max(parseInt(req.query.threshold ?? "10", 10) || 0, 0) || 10;
 
-    if (!hasTable("Pedidos") || !hasTable("PedidoItems") || !hasTable("Productos")) {
+    if (
+      !hasTable("Pedidos") ||
+      !hasTable("PedidoItems") ||
+      !hasTable("Productos")
+    ) {
       console.warn("[deposito] /overview: tablas faltantes");
       return res.json({ start, end, threshold, top: [], low: [] });
     }
