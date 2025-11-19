@@ -6,31 +6,6 @@ import { db, getFutureIncomingForProduct, getUserRoles } from "../db.js";
 const router = Router();
 
 /* ------------------------ Auth: Depósito / Admin ------------------------ */
-function requireDepositoSolo(req, res, next) {
-  try {
-    if (!req.user?.id) {
-      return res.status(401).json({ ok: false, error: "No autenticado" });
-    }
-
-    const roles = (
-      req.user.roles?.length ? req.user.roles : getUserRoles(req.user.id) || []
-    ).map((r) => String(r).toLowerCase());
-
-    const isDepositoSolo = roles.includes("deposito") && roles.length === 1;
-    if (!isDepositoSolo) {
-      return res
-        .status(403)
-        .json({ ok: false, error: "Sin permiso para Depósito" });
-    }
-
-    return next();
-  } catch (e) {
-    console.error("[deposito] requireDepositoSolo:", e?.message || e);
-    return res.status(403).json({ ok: false, error: "Sin permiso" });
-  }
-}
-
-/** NUEVO: permite deposito o admin */
 function requireDepositoOrAdmin(req, res, next) {
   try {
     if (!req.user?.id) {
@@ -41,10 +16,7 @@ function requireDepositoOrAdmin(req, res, next) {
       req.user.roles?.length ? req.user.roles : getUserRoles(req.user.id) || []
     ).map((r) => String(r).toLowerCase());
 
-    const isDeposito = roles.includes("deposito");
-    const isAdmin = roles.includes("admin");
-
-    if (!isDeposito && !isAdmin) {
+    if (!roles.includes("deposito") && !roles.includes("admin")) {
       return res
         .status(403)
         .json({ ok: false, error: "Sin permiso para Depósito/Admin" });
@@ -57,42 +29,47 @@ function requireDepositoOrAdmin(req, res, next) {
   }
 }
 
-/** USAR ESTE para TODAS las rutas de /deposito */
 const mustWarehouse = [requireAuth, requireDepositoOrAdmin];
 
 /* ----------------------------- Helpers ----------------------------- */
-function parseISO(d) {
+const parseISO = (d) => {
   if (!d) return null;
   const x = new Date(d);
-  if (Number.isNaN(x.getTime())) return null;
-  return x.toISOString().slice(0, 10);
-}
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
-}
-function firstDayOfMonthISO(dt = new Date()) {
-  const d = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), 1));
-  return d.toISOString().slice(0, 10);
-}
-function hasTable(name) {
-  return !!db
+  return Number.isNaN(x.getTime()) ? null : x.toISOString().slice(0, 10);
+};
+const todayISO = () => new Date().toISOString().slice(0, 10);
+const firstDayOfMonthISO = (dt = new Date()) =>
+  new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), 1))
+    .toISOString()
+    .slice(0, 10);
+
+const hasTable = (name) =>
+  !!db
     .prepare(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name=? LIMIT 1`
+      "SELECT name FROM sqlite_master WHERE type='table' AND name=? LIMIT 1"
     )
     .get(name);
-}
 
-function getTableColumnsLower(tableName) {
-  const cols = db.prepare(`PRAGMA table_info(${tableName})`).all();
-  return new Set(cols.map((c) => String(c.name || "").toLowerCase()));
-}
-function pickCol(colsLower, candidates) {
-  for (const name of candidates) {
-    if (colsLower.has(name.toLowerCase())) return name;
-  }
-  return null;
-}
-function normalizeOrder(row, map) {
+const getTableColumnsLower = (tableName) =>
+  new Set(
+    db
+      .prepare(`PRAGMA table_info(${tableName})`)
+      .all()
+      .map((c) => String(c.name || "").toLowerCase())
+  );
+
+const pickCol = (colsLower, candidates) =>
+  candidates.find((name) => colsLower.has(name.toLowerCase())) || null;
+
+const detectIdColumn = () => {
+  const cols = getTableColumnsLower("Pedidos");
+  return (
+    pickCol(cols, ["pedidoid", "pedido_id", "idpedido"]) ||
+    pickCol(cols, ["id"])
+  );
+};
+
+const normalizeOrder = (row, map) => {
   const get = (k) => (k ? row[k] : null);
 
   const id = get(map.id);
@@ -114,9 +91,7 @@ function normalizeOrder(row, map) {
 
   const closed =
     statusVal === "closed" ||
-    estadoVal === "cerrado" ||
-    estadoVal === "completado" ||
-    estadoVal === "completo" ||
+    ["cerrado", "completado", "completo"].includes(estadoVal) ||
     isClosedVal === 1 ||
     isClosedVal === true ||
     isClosedVal === "1" ||
@@ -134,16 +109,10 @@ function normalizeOrder(row, map) {
     isClosed: closed,
     closedAt: closedAtVal ?? null,
   };
-}
-function detectIdColumn() {
-  const cols = getTableColumnsLower("Pedidos");
-  return (
-    pickCol(cols, ["pedidoid"]) || // PedidoID
-    pickCol(cols, ["pedido_id"]) || // pedido_id
-    pickCol(cols, ["idpedido"]) || // idPedido
-    pickCol(cols, ["id"]) // id
-  );
-}
+};
+
+const canUsePedidosProductos = () =>
+  hasTable("Pedidos") && hasTable("PedidoItems") && hasTable("Productos");
 
 /* ========================= 1) Pedidos (Depósito) ========================= */
 // GET /deposito/orders?status=open|closed
@@ -153,7 +122,6 @@ router.get("/orders", mustWarehouse, (req, res) => {
 
     if (!hasTable("Pedidos")) {
       console.warn("[deposito] GET /orders: tabla Pedidos inexistente");
-      // Para no llenar la consola de 500 devolvemos lista vacía
       return res.json([]);
     }
 
@@ -203,32 +171,37 @@ router.get("/orders", mustWarehouse, (req, res) => {
     }
 
     const orderBy = map.fecha || map.id;
-    const selectParts = [
-      `${map.id} AS ${map.id}`,
-      `${map.empleadoId || "NULL"} AS ${map.empleadoId || "empleadoid"}`,
-      `${map.rol || "NULL"} AS ${map.rol || "rol"}`,
-      `${map.fecha || "NULL"} AS ${map.fecha || "fecha"}`,
-      `${map.total || "NULL"} AS ${map.total || "total"}`,
-      `${map.status || "NULL"} AS ${map.status || "status"}`,
-      `${map.estado || "NULL"} AS ${map.estado || "estado"}`,
-      `${map.isClosed || "NULL"} AS ${map.isClosed || "isclosed"}`,
-      `${map.closedAt || "NULL"} AS ${map.closedAt || "closedat"}`,
-      `${map.remito || "NULL"} AS ${map.remito || "remito"}`,
-      `${map.remito2 || "NULL"} AS ${map.remito2 || "remito2"}`,
-      `${map.remito3 || "NULL"} AS ${map.remito3 || "remito3"}`,
-      `${map.remito4 || "NULL"} AS ${map.remito4 || "remito4"}`,
-      `${map.remito5 || "NULL"} AS ${map.remito5 || "remito5"}`,
-    ];
+    const sel = (col, alias) => `${col || "NULL"} AS ${col || alias}`;
     const rawRows = db
       .prepare(
-        `SELECT ${selectParts.join(", ")} FROM Pedidos ORDER BY ${orderBy} DESC`
+        `SELECT
+          ${[
+            sel(map.id, "id"),
+            sel(map.empleadoId, "empleadoid"),
+            sel(map.rol, "rol"),
+            sel(map.fecha, "fecha"),
+            sel(map.total, "total"),
+            sel(map.status, "status"),
+            sel(map.estado, "estado"),
+            sel(map.isClosed, "isclosed"),
+            sel(map.closedAt, "closedat"),
+            sel(map.remito, "remito"),
+            sel(map.remito2, "remito2"),
+            sel(map.remito3, "remito3"),
+            sel(map.remito4, "remito4"),
+            sel(map.remito5, "remito5"),
+          ].join(", ")}
+        FROM Pedidos
+        ORDER BY ${orderBy} DESC`
       )
       .all();
+
     const norm = rawRows.map((r) => normalizeOrder(r, map));
     const filtered =
       statusParam === "closed"
         ? norm.filter((o) => o.isClosed)
         : norm.filter((o) => !o.isClosed);
+
     return res.json(filtered);
   } catch (e) {
     console.error("[deposito] GET /orders error:", e);
@@ -240,28 +213,26 @@ router.get("/orders", mustWarehouse, (req, res) => {
 
 /* ================== ACTUALIZAR ESTADO DE PEDIDOS ================== */
 function applyOrderStatus(id, makeClosed) {
-  if (!hasTable("Pedidos")) {
-    throw new Error("Tabla 'Pedidos' inexistente");
-  }
+  if (!hasTable("Pedidos")) throw new Error("Tabla 'Pedidos' inexistente");
 
   const colsLower = getTableColumnsLower("Pedidos");
   const idCol = detectIdColumn();
   if (!idCol) throw new Error("No se encontró columna ID en 'Pedidos'");
 
-  // ¿Tenemos alguna columna de estado?
   let hasStatusCol =
-    colsLower.has("status") ||
-    colsLower.has("estado") ||
-    colsLower.has("isclosed") ||
-    colsLower.has("is_closed") ||
-    colsLower.has("cerrado") ||
-    colsLower.has("closedat") ||
-    colsLower.has("closed_at");
+    [
+      "status",
+      "estado",
+      "isclosed",
+      "is_closed",
+      "cerrado",
+      "closedat",
+      "closed_at",
+    ].some((c) => colsLower.has(c));
 
-  // Si NO hay ninguna, agregamos una columna 'cerrado' automáticamente
   if (!hasStatusCol) {
     try {
-      db.exec(`ALTER TABLE Pedidos ADD COLUMN cerrado INTEGER DEFAULT 0`);
+      db.exec("ALTER TABLE Pedidos ADD COLUMN cerrado INTEGER DEFAULT 0");
       colsLower.add("cerrado");
       hasStatusCol = true;
       console.log(
@@ -276,13 +247,11 @@ function applyOrderStatus(id, makeClosed) {
   }
 
   let changes = 0;
-
   const exec = (sql, params = []) => {
     try {
       const info = db.prepare(sql).run(...params);
       changes += info.changes || 0;
     } catch (e) {
-      // la columna puede no existir en este esquema
       console.warn("[deposito] applyOrderStatus columna opcional:", e.message);
     }
   };
@@ -335,53 +304,74 @@ function applyOrderStatus(id, makeClosed) {
   }
 }
 
-/* ---- CLOSE (acepta PUT/POST/PATCH y dos variantes de path) ---- */
-const closeHandler = (req, res) => {
+const makeStatusHandler = (makeClosed) => (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) {
       return res.status(400).json({ error: "id inválido" });
     }
-    applyOrderStatus(id, true);
+    applyOrderStatus(id, makeClosed);
     return res.json({ ok: true, id });
   } catch (e) {
-    console.error("[deposito] close order:", e);
-    return res
-      .status(500)
-      .json({ error: e?.message || "No se pudo cerrar el pedido" });
+    console.error(
+      `[deposito] ${makeClosed ? "close" : "reopen"} order:`,
+      e
+    );
+    return res.status(500).json({
+      error:
+        e?.message ||
+        `No se pudo ${makeClosed ? "cerrar" : "reabrir"} el pedido`,
+    });
   }
 };
-router.put("/orders/:id/close", mustWarehouse, closeHandler);
-router.post("/orders/:id/close", mustWarehouse, closeHandler);
-router.patch("/orders/:id/close", mustWarehouse, closeHandler);
-router.put("/orders/close/:id", mustWarehouse, closeHandler);
-router.post("/orders/close/:id", mustWarehouse, closeHandler);
-router.patch("/orders/close/:id", mustWarehouse, closeHandler);
 
-/* ---- REOPEN (acepta PUT/POST/PATCH y dos variantes de path) ---- */
-const reopenHandler = (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isFinite(id)) {
-      return res.status(400).json({ error: "id inválido" });
-    }
-    applyOrderStatus(id, false);
-    return res.json({ ok: true, id });
-  } catch (e) {
-    console.error("[deposito] reopen order:", e);
-    return res
-      .status(500)
-      .json({ error: e?.message || "No se pudo reabrir el pedido" });
-  }
-};
-router.put("/orders/:id/reopen", mustWarehouse, reopenHandler);
-router.post("/orders/:id/reopen", mustWarehouse, reopenHandler);
-router.patch("/orders/:id/reopen", mustWarehouse, reopenHandler);
-router.put("/orders/reopen/:id", mustWarehouse, reopenHandler);
-router.post("/orders/reopen/:id", mustWarehouse, reopenHandler);
-router.patch("/orders/reopen/:id", mustWarehouse, reopenHandler);
+const closeHandler = makeStatusHandler(true);
+const reopenHandler = makeStatusHandler(false);
 
-/* ==================== 2) Rutas de analytics existentes ==================== */
+["put", "post", "patch"].forEach((m) => {
+  router[m]("/orders/:id/close", mustWarehouse, closeHandler);
+  router[m]("/orders/close/:id", mustWarehouse, closeHandler);
+  router[m]("/orders/:id/reopen", mustWarehouse, reopenHandler);
+  router[m]("/orders/reopen/:id", mustWarehouse, reopenHandler);
+});
+
+/* ==================== 2) Analytics ==================== */
+const TOP_SQL = `
+  SELECT
+    pi.ProductoID        AS productId,
+    p.ProductName        AS name,
+    COALESCE(p.Unit,'')  AS unit,
+    COALESCE(p.Code,'')  AS code,
+    SUM(pi.Cantidad)     AS total
+  FROM PedidoItems pi
+  JOIN Pedidos pe ON pe.PedidoID = pi.PedidoID
+  JOIN Productos p ON p.ProductID = pi.ProductoID
+  WHERE date(pe.Fecha) BETWEEN date(?) AND date(?)
+  GROUP BY pi.ProductoID
+  ORDER BY total DESC
+  LIMIT ?
+`;
+
+const LOW_SQL = `
+  SELECT
+    p.ProductID                           AS productId,
+    p.ProductName                         AS name,
+    COALESCE(p.Unit,'')                   AS unit,
+    COALESCE(p.Code,'')                   AS code,
+    COALESCE(s.CantidadActual, p.Stock,0) AS stock
+  FROM Productos p
+  LEFT JOIN Stock s ON s.ProductoID = p.ProductID
+  WHERE COALESCE(s.CantidadActual, p.Stock, 0) <= ?
+  ORDER BY stock ASC, name COLLATE NOCASE
+  LIMIT ?
+`;
+
+const mapTopRows = (rows) =>
+  rows.map((r) => ({ ...r, total: Number(r.total || 0) }));
+
+const mapLowRows = (rows) =>
+  rows.map((r) => ({ ...r, stock: Number(r.stock || 0) }));
+
 router.get("/top-consumidos", mustWarehouse, (req, res) => {
   try {
     const start = parseISO(req.query.start) || firstDayOfMonthISO();
@@ -391,35 +381,14 @@ router.get("/top-consumidos", mustWarehouse, (req, res) => {
       200
     );
 
-    if (
-      !hasTable("Pedidos") ||
-      !hasTable("PedidoItems") ||
-      !hasTable("Productos")
-    ) {
+    if (!canUsePedidosProductos()) {
       console.warn("[deposito] /top-consumidos: tablas faltantes");
       return res.json({ start, end, rows: [] });
     }
 
-    const rows = db
-      .prepare(
-        `
-        SELECT
-          pi.ProductoID        AS productId,
-          p.ProductName        AS name,
-          COALESCE(p.Unit,'')  AS unit,
-          COALESCE(p.Code,'')  AS code,
-          SUM(pi.Cantidad)     AS total
-        FROM PedidoItems pi
-        JOIN Pedidos pe ON pe.PedidoID = pi.PedidoID
-        JOIN Productos p ON p.ProductID = pi.ProductoID
-        WHERE date(pe.Fecha) BETWEEN date(?) AND date(?)
-        GROUP BY pi.ProductoID
-        ORDER BY total DESC
-        LIMIT ?
-      `
-      )
-      .all(start, end, limit)
-      .map((r) => ({ ...r, total: Number(r.total || 0) }));
+    const rows = mapTopRows(
+      db.prepare(TOP_SQL).all(start, end, limit)
+    );
 
     return res.json({ start, end, rows });
   } catch (e) {
@@ -444,24 +413,9 @@ router.get("/low-stock", mustWarehouse, (req, res) => {
       return res.json({ threshold, rows: [] });
     }
 
-    const rows = db
-      .prepare(
-        `
-        SELECT
-          p.ProductID                           AS productId,
-          p.ProductName                         AS name,
-          COALESCE(p.Unit,'')                   AS unit,
-          COALESCE(p.Code,'')                   AS code,
-          COALESCE(s.CantidadActual, p.Stock,0) AS stock
-        FROM Productos p
-        LEFT JOIN Stock s ON s.ProductoID = p.ProductID
-        WHERE COALESCE(s.CantidadActual, p.Stock, 0) <= ?
-        ORDER BY stock ASC, name COLLATE NOCASE
-        LIMIT ?
-      `
-      )
-      .all(threshold, limit)
-      .map((r) => ({ ...r, stock: Number(r.stock || 0) }));
+    const rows = mapLowRows(
+      db.prepare(LOW_SQL).all(threshold, limit)
+    );
 
     return res.json({ threshold, rows });
   } catch (e) {
@@ -485,21 +439,14 @@ router.get(
       const fallbackStart =
         parseISO(req.query.fallbackStart) || firstDayOfMonthISO();
 
-      // stock_movements es opcional: si no está, ignoramos y seguimos
       let lastIn = null;
       if (hasTable("stock_movements")) {
         try {
           const colsLower = getTableColumnsLower("stock_movements");
 
-          const dateCol = colsLower.has("timestamp")
-            ? "timestamp"
-            : colsLower.has("created_at")
-            ? "created_at"
-            : colsLower.has("fecha")
-            ? "fecha"
-            : colsLower.has("date")
-            ? "date"
-            : null;
+          const dateCol = ["timestamp", "created_at", "fecha", "date"].find(
+            (c) => colsLower.has(c)
+          );
 
           if (dateCol) {
             const lastInRow = db
@@ -609,56 +556,18 @@ router.get("/overview", mustWarehouse, (req, res) => {
     const threshold =
       Math.max(parseInt(req.query.threshold ?? "10", 10) || 0, 0) || 10;
 
-    if (
-      !hasTable("Pedidos") ||
-      !hasTable("PedidoItems") ||
-      !hasTable("Productos")
-    ) {
+    if (!canUsePedidosProductos()) {
       console.warn("[deposito] /overview: tablas faltantes");
       return res.json({ start, end, threshold, top: [], low: [] });
     }
 
-    const top = db
-      .prepare(
-        `
-        SELECT
-          pi.ProductoID        AS productId,
-          p.ProductName        AS name,
-          COALESCE(p.Unit,'')  AS unit,
-          COALESCE(p.Code,'')  AS code,
-          SUM(pi.Cantidad)     AS total
-        FROM PedidoItems pi
-        JOIN Pedidos pe ON pe.PedidoID = pi.PedidoID
-        JOIN Productos p ON p.ProductID = pi.ProductoID
-        WHERE date(pe.Fecha) BETWEEN date(?) AND date(?)
-        GROUP BY pi.ProductoID
-        ORDER BY total DESC
-        LIMIT 20
-      `
-      )
-      .all(start, end)
-      .map((r) => ({ ...r, total: Number(r.total || 0) }));
+    const top = mapTopRows(db.prepare(TOP_SQL).all(start, end, 20));
 
     let low = [];
     if (hasTable("Stock")) {
-      low = db
-        .prepare(
-          `
-        SELECT
-          p.ProductID                           AS productId,
-          p.ProductName                         AS name,
-          COALESCE(p.Unit,'')                   AS unit,
-          COALESCE(p.Code,'')                   AS code,
-          COALESCE(s.CantidadActual, p.Stock,0) AS stock
-        FROM Productos p
-        LEFT JOIN Stock s ON s.ProductoID = p.ProductID
-        WHERE COALESCE(s.CantidadActual, p.Stock, 0) <= ?
-        ORDER BY stock ASC, name COLLATE NOCASE
-        LIMIT 200
-      `
-        )
-        .all(threshold)
-        .map((r) => ({ ...r, stock: Number(r.stock || 0) }));
+      low = mapLowRows(
+        db.prepare(LOW_SQL).all(threshold, 200)
+      );
     }
 
     return res.json({ start, end, threshold, top, low });
@@ -676,7 +585,7 @@ router.get("/_selfcheck", requireAuth, (_req, res) => {
     const has = (name) =>
       !!db
         .prepare(
-          `SELECT name FROM sqlite_master WHERE type='table' AND name=?`
+          "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
         )
         .get(name);
     return res.json({

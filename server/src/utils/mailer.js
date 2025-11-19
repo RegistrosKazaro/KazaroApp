@@ -9,7 +9,7 @@ let transporter;
 function parseAddress(input) {
   const s = String(input || "").trim();
   if (!s) return { name: "", email: "" };
-  // "Nombre" <mail@dom.com>  |  mail@dom.com
+
   const m = s.match(/^(.*)<([^>]+)>$/);
   if (m) {
     const name = m[1].trim().replace(/^"|"$/g, "");
@@ -25,14 +25,14 @@ const fmt = (name, email) => {
   return n ? `"${n}" <${e}>` : e;
 };
 
-// si SMTP_USER viniera "a@b.com, c@d.com" toma el primero
+
 function pickFirstEmail(val) {
   const s = String(val || "").trim();
   if (!s) return "";
   return s.split(/[;,]+/).map(t => t.trim()).filter(Boolean)[0] || "";
 }
 
-// "a@b, c@d ; e@f" -> ["a@b","c@d","e@f"]
+
 function parseList(list) {
   if (!list) return [];
   return String(list)
@@ -94,30 +94,20 @@ function getTransporter() {
 }
 
 /* ================= Core ================= */
-/**
- * Envío con múltiples destinatarios:
- * - ALWAYS incluye todo `MAIL_TO` (puede ser 1 o varios separados por coma/;).
- * - Acepta `to`, `cc`, `bcc` por parámetro y también `MAIL_CC`, `MAIL_BCC` por .env.
- * - Deduplica y aplica `MAIL_BLOCKLIST` si está configurado.
- * - Inyecta “— Solicitante: {userName}” en el asunto si viene userName (una sola vez).
- * - Usa Reply-To del usuario si viene userEmail.
- * - Si MAIL_ALLOW_USER_FROM=1 y displayAsUser=true, intenta From del usuario y si falla, reintenta con From del sistema.
- * - **Nuevo:** cuando MAIL_ALLOW_USER_FROM=0, el *display name* del From será el `userName`
- *   (pero el email sigue siendo el del sistema), así en Gmail se ve el nombre del solicitante.
- */
+
 export async function sendMail({
-  to,                 // string: "a@b,c@d"
-  cc,                 // opcional
-  bcc,                // opcional
+  to,                 
+  cc,                 
+  bcc,            
   subject,
   text,
   html,
   attachments,
-  entityType,         // 'order' | 'remito' (para log)
-  entityId,           // id entidad (para log)
+  entityType,         
+  entityId,          
   displayAsUser = false,
-  userName = null,    // solicitante (para asunto, reply-to y display name)
-  userEmail = null,   // email solicitante (reply-to y opc. From)
+  userName = null,   
+  userEmail = null,   
   systemTag = "Kazaro Pedidos",
 }) {
   const t = getTransporter();
@@ -132,7 +122,7 @@ export async function sendMail({
   const systemName  = (parsed.name  || systemTag || "Kazaro").trim();
 
   // ===== Construcción de destinatarios =====
-  const alwaysInclude = unionEmails(env.MAIL_TO);          // obligatorio(s) del .env
+  const alwaysInclude = unionEmails(env.MAIL_TO);          
   const toList  = unionEmails(to, alwaysInclude);
   const ccList  = unionEmails(cc, env.MAIL_CC);
   const bccList = unionEmails(bcc, env.MAIL_BCC);
@@ -178,8 +168,8 @@ export async function sendMail({
 
   const safeOpts = {
     ...base,
-    from: fmt(fromDisplayName, systemEmail),   // <— aquí cambiamos el nombre visible
-    sender: fmt(systemName, systemEmail),      // mantiene el sender del sistema
+    from: fmt(fromDisplayName, systemEmail),   
+    sender: fmt(systemName, systemEmail),      
     ...(userEmail ? { replyTo: fmt(requester || userEmail, userEmail) } : {}),
   };
 
@@ -191,7 +181,7 @@ export async function sendMail({
 
   try {
     if (riskyUserFrom) {
-      // En este modo (opt-in), el From usa el correo del usuario
+      
       const risky = {
         ...base,
         from: fmt(requester || userEmail, userEmail),
@@ -208,7 +198,7 @@ export async function sendMail({
         });
         return info;
       } catch (_e) {
-        // fallback seguro
+      
         const info2 = await t.sendMail(safeOpts);
         safeLog({
           entityType, entityId,
@@ -241,15 +231,32 @@ export async function sendMail({
 }
 
 /* Verificación SMTP opcional al iniciar (útil para debug) */
-export async function verifyTransport() {
+export async function verifyTransport (){
   const t = getTransporter();
-  if (!t) { console.log("[mailer] disabled"); return false; }
-  try {
+  if (!t){
+    console.log("[mailer] disabled (MAIL_DISABLE=1 o sin config SMTP)");
+    return false;
+  }
+
+  const envName = env.NODE_ENV || process.env.NODE_ENV || "development";
+  if (envName === "development"){
+    console.log("[mailer] verify skipped en modo desarrollo");
+    return false;
+  }
+  try{
     await t.verify();
-    console.log("[mailer] SMTP ok:", t.options.host, t.options.port, t.options.secure ? "secure" : "starttls");
+    console.log(
+      "[mailer] SMTP ok:",
+      t.options.host,
+      t.options.port,
+      t.options.secure ? "secure" : "strattls"
+    );
     return true;
-  } catch (e) {
-    console.error("[mailer] verify failed:", e?.message || e);
+  } catch(e){
+    console.warn("[mailer] verify failed (se continua igual):",     
+      e?.message || e
+
+    );
     return false;
   }
 }
