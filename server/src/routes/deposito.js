@@ -2,8 +2,8 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.js";
 import { db, getFutureIncomingForProduct, getUserRoles } from "../db.js";
-
 const router = Router();
+console.log("[deposito] router de deposito CARGADO");
 
 /* ------------------------ Auth: Depósito / Admin ------------------------ */
 function requireDepositoOrAdmin(req, res, next) {
@@ -111,11 +111,22 @@ const normalizeOrder = (row, map) => {
   };
 };
 
+const isPreparingStatus = (status) => {
+  const s = String(status || "").toLowerCase();
+  return (
+    s === "preparing" ||
+    s === "preparacion" ||
+    s === "preparación" ||
+    s === "en preparacion" ||
+    s === "en preparación"
+  );
+};
+
 const canUsePedidosProductos = () =>
   hasTable("Pedidos") && hasTable("PedidoItems") && hasTable("Productos");
 
 /* ========================= 1) Pedidos (Depósito) ========================= */
-// GET /deposito/orders?status=open|closed
+
 router.get("/orders", mustWarehouse, (req, res) => {
   try {
     const statusParam = String(req.query.status || "open").toLowerCase();
@@ -175,32 +186,47 @@ router.get("/orders", mustWarehouse, (req, res) => {
     const rawRows = db
       .prepare(
         `SELECT
-          ${[
-            sel(map.id, "id"),
-            sel(map.empleadoId, "empleadoid"),
-            sel(map.rol, "rol"),
-            sel(map.fecha, "fecha"),
-            sel(map.total, "total"),
-            sel(map.status, "status"),
-            sel(map.estado, "estado"),
-            sel(map.isClosed, "isclosed"),
-            sel(map.closedAt, "closedat"),
-            sel(map.remito, "remito"),
-            sel(map.remito2, "remito2"),
-            sel(map.remito3, "remito3"),
-            sel(map.remito4, "remito4"),
-            sel(map.remito5, "remito5"),
-          ].join(", ")}
+          ${
+            [
+              sel(map.id, "id"),
+              sel(map.empleadoId, "empleadoid"),
+              sel(map.rol, "rol"),
+              sel(map.fecha, "fecha"),
+              sel(map.total, "total"),
+              sel(map.status, "status"),
+              sel(map.estado, "estado"),
+              sel(map.isClosed, "isclosed"),
+              sel(map.closedAt, "closedat"),
+              sel(map.remito, "remito"),
+              sel(map.remito2, "remito2"),
+              sel(map.remito3, "remito3"),
+              sel(map.remito4, "remito4"),
+              sel(map.remito5, "remito5"),
+            ].join(", ")
+          }
         FROM Pedidos
         ORDER BY ${orderBy} DESC`
       )
       .all();
 
     const norm = rawRows.map((r) => normalizeOrder(r, map));
-    const filtered =
-      statusParam === "closed"
-        ? norm.filter((o) => o.isClosed)
-        : norm.filter((o) => !o.isClosed);
+    const wantPreparing =
+      statusParam === "preparing" ||
+      statusParam === "preparacion" ||
+      statusParam === "preparación";
+
+    let filtered;
+    if (statusParam === "closed") {
+      filtered = norm.filter((o) => o.isClosed);
+    } else if (wantPreparing) {
+      filtered = norm.filter(
+        (o) => !o.isClosed && isPreparingStatus(o.status)
+      );
+    } else {
+      filtered = norm.filter(
+        (o) => !o.isClosed && !isPreparingStatus(o.status)
+      );
+    }
 
     return res.json(filtered);
   } catch (e) {
@@ -304,6 +330,55 @@ function applyOrderStatus(id, makeClosed) {
   }
 }
 
+function applyOrderPrepare(id) {
+  if (!hasTable("Pedidos")) throw new Error("Tabla 'Pedidos' inexistente");
+
+  const colsLower = getTableColumnsLower("Pedidos");
+  const idCol = detectIdColumn();
+  if (!idCol) throw new Error("No se encontró columna ID en 'Pedidos'");
+
+  let changes = 0;
+  const exec = (sql, params = []) => {
+    try {
+      const info = db.prepare(sql).run(...params);
+      changes += info.changes || 0;
+    } catch (e) {
+      console.warn(
+        "[deposito] applyOrderPrepare columna opcional:",
+        e.message
+      );
+    }
+  };
+
+  if (colsLower.has("status"))
+    exec(`UPDATE Pedidos SET status = ? WHERE ${idCol} = ?`, [
+      "preparing",
+      id,
+    ]);
+  if (colsLower.has("estado"))
+    exec(`UPDATE Pedidos SET estado = ? WHERE ${idCol} = ?`, [
+      "preparacion",
+      id,
+    ]);
+
+  if (colsLower.has("isclosed"))
+    exec(`UPDATE Pedidos SET isClosed = ? WHERE ${idCol} = ?`, [0, id]);
+  if (colsLower.has("is_closed"))
+    exec(`UPDATE Pedidos SET is_closed = ? WHERE ${idCol} = ?`, [0, id]);
+  if (colsLower.has("cerrado"))
+    exec(`UPDATE Pedidos SET cerrado = ? WHERE ${idCol} = ?`, [0, id]);
+  if (colsLower.has("closedat"))
+    exec(`UPDATE Pedidos SET ClosedAt = NULL WHERE ${idCol} = ?`, [id]);
+  if (colsLower.has("closed_at"))
+    exec(`UPDATE Pedidos SET closed_at = NULL WHERE ${idCol} = ?`, [id]);
+  if (changes === 0) {
+    console.warn(
+      "[deposito] applyOrderPrepare: no se modificó ninguna fila para el pedido",
+      id
+    );
+  }
+}
+
 const makeStatusHandler = (makeClosed) => (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -327,13 +402,31 @@ const makeStatusHandler = (makeClosed) => (req, res) => {
 
 const closeHandler = makeStatusHandler(true);
 const reopenHandler = makeStatusHandler(false);
+const prepareHandler = (req, res) => {
+  console.log("[deposito] prepareHandler llamado", req.method, req.params.id);
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ error: "id inválido" });
+    }
+    applyOrderPrepare(id);
+    return res.json({ ok: true, id });
+  } catch (e) {
+    console.error("[deposito] prepare order:", e);
+    return res.status(500).json({
+      error: e?.message || "No se pudo pasar el pedido a preparación",
+    });
+  }
+};
 
-["put", "post", "patch"].forEach((m) => {
-  router[m]("/orders/:id/close", mustWarehouse, closeHandler);
-  router[m]("/orders/close/:id", mustWarehouse, closeHandler);
-  router[m]("/orders/:id/reopen", mustWarehouse, reopenHandler);
-  router[m]("/orders/reopen/:id", mustWarehouse, reopenHandler);
-});
+router.put("/orders/:id/close", mustWarehouse, closeHandler);
+router.put("/orders/close/:id", mustWarehouse, closeHandler);
+
+router.put("/orders/:id/reopen", mustWarehouse, reopenHandler);
+router.put("/orders/reopen/:id", mustWarehouse, reopenHandler);
+
+router.put("/orders/:id/prepare", mustWarehouse, prepareHandler);
+router.put("/orders/prepare/:id", mustWarehouse, prepareHandler);
 
 /* ==================== 2) Analytics ==================== */
 const TOP_SQL = `
@@ -603,5 +696,7 @@ router.get("/_selfcheck", requireAuth, (_req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+
+export { applyOrderPrepare };
 
 export default router;

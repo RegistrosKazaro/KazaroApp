@@ -83,14 +83,12 @@ const useDebounced = (value, delay = 300) => {
 };
 
 function DepositoOrdersPanel() {
-  const [tab, setTab] = useState("open"); // open | closed
+  const [tab, setTab] = useState("open");
   const [orders, setOrders] = useState([]);
   const [err, setErr] = useState("");
-
   const [q, setQ] = useState("");
-  const qDeb = useDebounced(q, 250);
+  const qDeb = useDebounced(q,250);
   const [sort, setSort] = useState("fecha_desc");
-
   const [selected, setSelected] = useState(null);
   const [pdfUrl, setPdfUrl] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -132,22 +130,6 @@ function DepositoOrdersPanel() {
     });
   };
 
-  const isClosed = (o) => {
-    const status = String(o?.status || o?.estado || "").toLowerCase();
-    return (
-      status === "closed" ||
-      status === "cerrado" ||
-      o?.isClosed === true ||
-      o?.isClosed === 1 ||
-      o?.is_closed === 1 ||
-      o?.is_closed === true ||
-      o?.cerrado === 1 ||
-      o?.cerrado === true ||
-      !!o?.closedAt ||
-      !!o?.closed_at ||
-      !!o?.ClosedAt
-    );
-  };
 
   const list = useCallback(async () => {
     setErr("");
@@ -180,10 +162,9 @@ function DepositoOrdersPanel() {
     list();
   }, [list]);
 
-  const filtered = useMemo(() => {
-    let arr = orders
-      .slice()
-      .filter((o) => (tab === "open" ? !isClosed(o) : isClosed(o)));
+   const filtered = useMemo(() => {
+    // El backend ya nos trae solo los pedidos según "status" (open / preparing / closed)
+    let arr = orders.slice();
 
     const t = String(qDeb || "").trim().toLowerCase();
     if (t) {
@@ -232,7 +213,7 @@ function DepositoOrdersPanel() {
     });
 
     return arr;
-  }, [orders, tab, qDeb, sort]);
+  }, [orders, qDeb, sort]);
 
   const remitoNum = (o) =>
     o.remito ??
@@ -243,6 +224,44 @@ function DepositoOrdersPanel() {
     "—";
 
   // Cerrar → marcar como cerrado en UI + cambiar a pestaña "closed"
+  const moveToPreparing = async (id) => {
+    setErr("");
+
+    try {
+      await api.put(
+        `/deposito/orders/${id}/prepare`,
+        {},
+        { withCredentials: true }
+      );
+    } catch (e) {
+      setErr(
+        e?.response?.data?.error ||
+          e.message ||
+          "No se pudo pasar el pedido a preparación"
+      );
+      return;
+    }
+
+    // Actualizamos el pedido localmente como "en preparación"
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.id === id
+          ? {
+              ...o,
+              status: "preparing",
+              estado: "preparacion",
+              isClosed: false,
+              is_closed: 0,
+              cerrado: 0,
+            }
+          : o
+      )
+    );
+
+    // Cambiamos a la pestaña de "Pedidos en preparación"
+    setTab("preparing");
+  };
+  
   const closeOrder = async (id) => {
     setErr("");
 
@@ -252,6 +271,7 @@ function DepositoOrdersPanel() {
         {},
         { withCredentials: true }
       );
+
     } catch (e) {
       setErr(
         e?.response?.data?.error || e.message || "No se pudo cerrar el pedido"
@@ -409,6 +429,17 @@ function DepositoOrdersPanel() {
         >
           Pedidos
         </button>
+
+        <button
+          type="button"
+          className={`pill pill--ghost ${
+            tab === "preparing" ? "is-active" : ""
+          }`}
+          onClick={() => setTab("preparing")}
+        >
+          Pedidos en preparación
+        </button>
+
         <button
           type="button"
           className={`pill pill--ghost ${
@@ -490,25 +521,38 @@ function DepositoOrdersPanel() {
                   >
                     Ver remito
                   </button>
-                  {tab === "open" ? (
-                    <button
-                      type="button"
-                      className="pill"
-                      onClick={() => closeOrder(o.id)}
-                      style={{ marginLeft: 6 }}
-                    >
-                      Marcar como completado
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="pill"
-                      onClick={() => reopenOrder(o.id)}
-                      style={{ marginLeft: 6 }}
-                    >
-                      Reabrir
-                    </button>
-                  )}
+                  {tab === "open" && (
+  <button
+    type="button"
+    className="pill"
+    onClick={() => moveToPreparing(o.id)}
+    style={{ marginLeft: 6 }}
+  >
+    Pasar a preparación
+  </button>
+)}
+
+{tab === "preparing" && (
+  <button
+    type="button"
+    className="pill"
+    onClick={() => closeOrder(o.id)}
+    style={{ marginLeft: 6 }}
+  >
+    Cerrar pedido
+  </button>
+)}
+
+{tab === "closed" && (
+  <button
+    type="button"
+    className="pill"
+    onClick={() => reopenOrder(o.id)}
+    style={{ marginLeft: 6 }}
+  >
+    Reabrir
+  </button>
+)}
                 </td>
               </tr>
             ))}
