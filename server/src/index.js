@@ -5,14 +5,8 @@ import crypto from "crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 import { env } from "./utils/env.js";
-import {
-  db,
-  ensureStockColumn,
-  ensureStockSyncTriggers,
-  DB_RESOLVED_PATH,
-} from "./db.js";
+import { db, ensureStockColumn, ensureStockSyncTriggers, DB_RESOLVED_PATH } from "./db.js";
 
-// Rutas
 import authRoutes from "./routes/auth.js";
 import ordersRoutes from "./routes/orders.js";
 import adminRoutes from "./routes/admin.js";
@@ -21,9 +15,7 @@ import servicesRoutes from "./routes/services.js";
 import supervisorRoutes from "./routes/supervisor.js";
 import serviceProductsRoutes from "./routes/serviceProducts.js";
 import reportsRoutes from "./routes/reports.js";
-import depositoRoutes from "./routes/deposito.js";
-
-// SMTP check
+import depositoRoutes from "./routes/deposito.js"; 
 import { verifyTransport } from "./utils/mailer.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -33,39 +25,18 @@ app.disable("x-powered-by");
 
 app.use(
   cors({
-    // En dev permitimos cualquier origen; si necesitás, acá se puede restringir
     origin: (origin, cb) => cb(null, true),
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   })
 );
 
 app.use(express.json());
 app.use(cookieParser());
 
-console.log("[db] Usando base:", DB_RESOLVED_PATH);
-try {
-  const c = db.prepare("SELECT COUNT(*) AS c FROM Empleados").get()?.c ?? 0;
-  console.log("[db] Empleados en la base:", c);
-} catch {
-  console.log("[db] Empleados: tabla no encontrada");
-}
+console.log("[db] PATH:", DB_RESOLVED_PATH);
 
-/* ========= CSRF para métodos inseguros ========= */
-app.get("/csrf-token", (req, res) => {
-  let token = req.cookies?.csrf_token;
-  if (!token) token = crypto.randomBytes(16).toString("hex");
-  res.cookie("csrf_token", token, {
-    httpOnly: false,                  // el front lo debe poder leer
-    sameSite: "lax",
-    secure: env.NODE_ENV === "production",
-    maxAge: 12 * 60 * 60 * 1000,      // 12h
-    path: "/",
-  });
-  return res.json({ csrfToken: token });
-});
-
-/* ========= Rutas de la app ========= */
-app.use("/auth", authRoutes);             // aquí está GET /auth/me
+app.use("/auth", authRoutes);
 app.use("/orders", ordersRoutes);
 app.use("/admin", adminRoutes);
 app.use("/catalog", catalogRoutes);
@@ -75,26 +46,29 @@ app.use("/service-products", serviceProductsRoutes);
 app.use("/reports", reportsRoutes);
 app.use("/deposito", depositoRoutes);
 
-// Healthcheck
+app.get("/csrf-token", (req, res) => {
+  let token = req.cookies?.csrf_token;
+  if (!token) token = crypto.randomBytes(16).toString("hex");
+  res.cookie("csrf_token", token, {
+    httpOnly: false,
+    sameSite: "lax",
+    secure: env.NODE_ENV === "production",
+    maxAge: 12 * 60 * 60 * 1000,
+    path: "/",
+  });
+  return res.json({ csrfToken: token });
+});
+
 app.get("/_health", (_req, res) => res.json({ ok: true }));
 
-// 🔧 Inicializaciones de DB
 ensureStockColumn();
 ensureStockSyncTriggers();
-console.log(`[db] usando DB en: ${DB_RESOLVED_PATH}`);
 
 app.listen(env.PORT, async () => {
-  console.log(`[server] ${env.APP_BASE_URL} (${env.NODE_ENV})`);
+  console.log(`[server] Running on ${env.APP_BASE_URL}`);
   try {
     await verifyTransport();
   } catch (e) {
-    console.warn("[mailer] verificación fallida:", e?.message || e);
+    console.warn(e.message);
   }
-});
-
-process.on("unhandledRejection", (e) => {
-  console.error("[unhandledRejection]", e?.message || e);
-});
-process.on("uncaughtException", (e) => {
-  console.error("[uncaughtException]", e?.message || e);
 });

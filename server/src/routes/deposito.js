@@ -2,6 +2,7 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.js";
 import { db, getFutureIncomingForProduct, getUserRoles } from "../db.js";
+
 const router = Router();
 console.log("[deposito] router de deposito CARGADO");
 
@@ -350,6 +351,7 @@ function applyOrderPrepare(id) {
     }
   };
 
+  // Estado textual (preparación)
   if (colsLower.has("status"))
     exec(`UPDATE Pedidos SET status = ? WHERE ${idCol} = ?`, [
       "preparing",
@@ -361,6 +363,7 @@ function applyOrderPrepare(id) {
       id,
     ]);
 
+  // Aseguramos que NO figure como cerrado
   if (colsLower.has("isclosed"))
     exec(`UPDATE Pedidos SET isClosed = ? WHERE ${idCol} = ?`, [0, id]);
   if (colsLower.has("is_closed"))
@@ -371,6 +374,7 @@ function applyOrderPrepare(id) {
     exec(`UPDATE Pedidos SET ClosedAt = NULL WHERE ${idCol} = ?`, [id]);
   if (colsLower.has("closed_at"))
     exec(`UPDATE Pedidos SET closed_at = NULL WHERE ${idCol} = ?`, [id]);
+
   if (changes === 0) {
     console.warn(
       "[deposito] applyOrderPrepare: no se modificó ninguna fila para el pedido",
@@ -402,6 +406,7 @@ const makeStatusHandler = (makeClosed) => (req, res) => {
 
 const closeHandler = makeStatusHandler(true);
 const reopenHandler = makeStatusHandler(false);
+
 const prepareHandler = (req, res) => {
   console.log("[deposito] prepareHandler llamado", req.method, req.params.id);
   try {
@@ -419,6 +424,7 @@ const prepareHandler = (req, res) => {
   }
 };
 
+// Rutas de cambio de estado
 router.put("/orders/:id/close", mustWarehouse, closeHandler);
 router.put("/orders/close/:id", mustWarehouse, closeHandler);
 
@@ -697,6 +703,7 @@ router.get("/_selfcheck", requireAuth, (_req, res) => {
   }
 });
 
+// exportamos esta función para usarla en index.js si hace falta ruta directa
 export { applyOrderPrepare };
 
 export default router;
