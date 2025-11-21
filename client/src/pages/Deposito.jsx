@@ -44,7 +44,7 @@ function sortByField(rows, field, dir, getExtraValue) {
   });
 }
 
-// Estima cuántos días alcanza el stock actual, según consumo desde el último ingreso
+// Estima cuántos días alcanza el stock actual
 function calcCoverageDays(stockActual, consumosRow) {
   const stock = Number(stockActual || 0);
   const consumido = Number(consumosRow?.consumido || 0);
@@ -87,13 +87,13 @@ function DepositoOrdersPanel() {
   const [orders, setOrders] = useState([]);
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
-  const qDeb = useDebounced(q,250);
+  const qDeb = useDebounced(q, 250);
   const [sort, setSort] = useState("fecha_desc");
   const [selected, setSelected] = useState(null);
   const [pdfUrl, setPdfUrl] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewErr, setPreviewErr] = useState("");
-  
+
   const money = (v) => {
     const n = Number(v || 0);
     try {
@@ -130,7 +130,6 @@ function DepositoOrdersPanel() {
     });
   };
 
-
   const list = useCallback(async () => {
     setErr("");
     try {
@@ -140,7 +139,6 @@ function DepositoOrdersPanel() {
       });
       setOrders(Array.isArray(data) ? data : []);
     } catch (e) {
-      // Fallback a ruta de admin si no existe la de depósito
       try {
         const { data } = await api.get("/admin/orders", {
           withCredentials: true,
@@ -162,8 +160,7 @@ function DepositoOrdersPanel() {
     list();
   }, [list]);
 
-   const filtered = useMemo(() => {
-    // El backend ya nos trae solo los pedidos según "status" (open / preparing / closed)
+  const filtered = useMemo(() => {
     let arr = orders.slice();
 
     const t = String(qDeb || "").trim().toLowerCase();
@@ -171,7 +168,8 @@ function DepositoOrdersPanel() {
       const tId = t.startsWith("#") ? t.slice(1) : t;
       arr = arr.filter((o) => {
         const idStr = String(o.id ?? "").toLowerCase();
-        const empleado = String(o.empleadoId ?? "").toLowerCase();
+        // CAMBIO: Buscar por nombre del empleado si está disponible
+        const empleado = String(o.empleadoNombre || o.empleadoId || "").toLowerCase();
         const rol = String(o.rol ?? "").toLowerCase();
         const remito = (
           o.remito ??
@@ -223,7 +221,6 @@ function DepositoOrdersPanel() {
     o.nro_remito ??
     "—";
 
-  // Cerrar → marcar como cerrado en UI + cambiar a pestaña "closed"
   const moveToPreparing = async (id) => {
     setErr("");
 
@@ -242,26 +239,9 @@ function DepositoOrdersPanel() {
       return;
     }
 
-    // Actualizamos el pedido localmente como "en preparación"
-    setOrders((prev) =>
-      prev.map((o) =>
-        o.id === id
-          ? {
-              ...o,
-              status: "preparing",
-              estado: "preparacion",
-              isClosed: false,
-              is_closed: 0,
-              cerrado: 0,
-            }
-          : o
-      )
-    );
-
-    // Cambiamos a la pestaña de "Pedidos en preparación"
-    setTab("preparing");
+    setOrders((prev) => prev.filter((o) => o.id !== id));
   };
-  
+
   const closeOrder = async (id) => {
     setErr("");
 
@@ -271,7 +251,6 @@ function DepositoOrdersPanel() {
         {},
         { withCredentials: true }
       );
-
     } catch (e) {
       setErr(
         e?.response?.data?.error || e.message || "No se pudo cerrar el pedido"
@@ -281,7 +260,6 @@ function DepositoOrdersPanel() {
 
     const nowIso = new Date().toISOString();
 
-    // Actualizamos el pedido localmente como cerrado
     setOrders((prev) =>
       prev.map((o) =>
         o.id === id
@@ -300,11 +278,9 @@ function DepositoOrdersPanel() {
       )
     );
 
-    // Cambiamos a pestaña de cerrados (sin refrescar toda la página)
     setTab("closed");
   };
 
-  // Reabrir → marcar como abierto en UI + cambiar a pestaña "open"
   const reopenOrder = async (id) => {
     setErr("");
 
@@ -323,7 +299,6 @@ function DepositoOrdersPanel() {
       return;
     }
 
-    // Actualizamos el pedido localmente como abierto
     setOrders((prev) =>
       prev.map((o) =>
         o.id === id
@@ -373,7 +348,6 @@ function DepositoOrdersPanel() {
         console.debug("fetchPdfSmart intent falló", path, e?.message);
       }
     }
-    // Fallback absoluto por fetch si todo falla
     const abs =
       (API_BASE_URL?.replace(/\/$/, "") || "") + `/orders/pdf/${id}`;
     const r = await fetch(abs, {
@@ -415,16 +389,13 @@ function DepositoOrdersPanel() {
 
   return (
     <div className="deposito-orders">
-      {/* Tabs simples con pills */}
       <div
         className="deposito-header-actions"
         style={{ gap: 8, marginBottom: 8 }}
       >
         <button
           type="button"
-          className={`pill pill--ghost ${
-            tab === "open" ? "is-active" : ""
-          }`}
+          className={`pill pill--ghost ${tab === "open" ? "is-active" : ""}`}
           onClick={() => setTab("open")}
         >
           Pedidos
@@ -442,9 +413,7 @@ function DepositoOrdersPanel() {
 
         <button
           type="button"
-          className={`pill pill--ghost ${
-            tab === "closed" ? "is-active" : ""
-          }`}
+          className={`pill pill--ghost ${tab === "closed" ? "is-active" : ""}`}
           onClick={() => setTab("closed")}
         >
           Pedidos cerrados
@@ -479,7 +448,6 @@ function DepositoOrdersPanel() {
 
       {err && <div className="state error deposito-state">{err}</div>}
 
-      {/* Tabla */}
       <div className="deposito-table-wrapper">
         <table className="deposito-table" aria-label="Pedidos (Depósito)">
           <thead>
@@ -507,7 +475,10 @@ function DepositoOrdersPanel() {
               <tr key={o.id} className="deposito-row">
                 <td>{String(o.id).padStart(7, "0")}</td>
                 <td>{remitoNum(o)}</td>
-                <td>{o.empleadoId}</td>
+                {/* CAMBIO: Mostrar el nombre del empleado si está disponible */}
+                <td>
+                  <strong>{o.empleadoNombre || o.empleadoId}</strong>
+                </td>
                 <td>{o.rol}</td>
                 <td>{formatFechaAr(o.fecha)}</td>
                 <td className="deposito-td--numeric">
@@ -522,37 +493,37 @@ function DepositoOrdersPanel() {
                     Ver remito
                   </button>
                   {tab === "open" && (
-  <button
-    type="button"
-    className="pill"
-    onClick={() => moveToPreparing(o.id)}
-    style={{ marginLeft: 6 }}
-  >
-    Pasar a preparación
-  </button>
-)}
+                    <button
+                      type="button"
+                      className="pill"
+                      onClick={() => moveToPreparing(o.id)}
+                      style={{ marginLeft: 6 }}
+                    >
+                      Pasar a preparación
+                    </button>
+                  )}
 
-{tab === "preparing" && (
-  <button
-    type="button"
-    className="pill"
-    onClick={() => closeOrder(o.id)}
-    style={{ marginLeft: 6 }}
-  >
-    Cerrar pedido
-  </button>
-)}
+                  {tab === "preparing" && (
+                    <button
+                      type="button"
+                      className="pill"
+                      onClick={() => closeOrder(o.id)}
+                      style={{ marginLeft: 6 }}
+                    >
+                      Cerrar pedido
+                    </button>
+                  )}
 
-{tab === "closed" && (
-  <button
-    type="button"
-    className="pill"
-    onClick={() => reopenOrder(o.id)}
-    style={{ marginLeft: 6 }}
-  >
-    Reabrir
-  </button>
-)}
+                  {tab === "closed" && (
+                    <button
+                      type="button"
+                      className="pill"
+                      onClick={() => reopenOrder(o.id)}
+                      style={{ marginLeft: 6 }}
+                    >
+                      Reabrir
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -566,9 +537,13 @@ function DepositoOrdersPanel() {
             {selected ? (
               <div className="muted">
                 Remito del pedido{" "}
-                <strong>#{String(selected.id).padStart(7, "0")}</strong> — Empleado{" "}
-                <strong>{selected.empleadoId}</strong> — Rol{" "}
-                <strong>{selected.rol}</strong>
+                <strong>#{String(selected.id).padStart(7, "0")}</strong> —{" "}
+                Empleado{" "}
+                {/* CAMBIO: Mostrar nombre en el detalle */}
+                <strong>
+                  {selected.empleadoNombre || selected.empleadoId}
+                </strong>{" "}
+                — Rol <strong>{selected.rol}</strong>
               </div>
             ) : (
               <div className="muted">Detalle de remito</div>
@@ -630,23 +605,19 @@ export default function Deposito() {
   const [end, setEnd] = useState(isoToday());
   const [threshold, setThreshold] = useState(10);
 
-  // % de riesgo (por defecto 30%)
   const [riskPercent, setRiskPercent] = useState(30);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [top, setTop] = useState([]);
   const [low, setLow] = useState([]);
-  const [consumos, setConsumos] = useState({}); // { [productId]: detalles }
+  const [consumos, setConsumos] = useState({});
 
-  // Filtros locales
   const [searchTop, setSearchTop] = useState("");
   const [searchLow, setSearchLow] = useState("");
 
-  // Filtro de stock bajo: todos / sin stock / en riesgo / bajo resto
-  const [lowFilter, setLowFilter] = useState("all"); // 'all' | 'sin-stock' | 'riesgo' | 'bajo'
+  const [lowFilter, setLowFilter] = useState("all");
 
-  // Ordenamiento
   const [sortTop, setSortTop] = useState({ field: "total", dir: "desc" });
   const [sortLow, setSortLow] = useState({ field: "stock", dir: "asc" });
 
@@ -656,7 +627,7 @@ export default function Deposito() {
   );
 
   useEffect(() => {
-    if (fechaInvalida) return; // No pedir si el rango está mal
+    if (fechaInvalida) return;
 
     let alive = true;
 
@@ -675,7 +646,6 @@ export default function Deposito() {
         setTop(topRows);
         setLow(lowRows);
 
-        // Cargar detalles por producto para la tabla de stock bajo
         const calls = lowRows.map((row) =>
           api
             .get(`/deposito/consumo-desde-ultimo-ingreso/${row.productId}`, {
@@ -714,7 +684,6 @@ export default function Deposito() {
     };
   }, [start, end, threshold, fechaInvalida]);
 
-  /* ===== Rango rápido de fechas ===== */
   const setQuickRange = (type) => {
     const today = isoToday();
     if (type === "7d") {
@@ -732,7 +701,6 @@ export default function Deposito() {
     }
   };
 
-  /* ===== Resumen rápido (con nueva lógica de riesgo) ===== */
   const resumen = useMemo(() => {
     const totalConsumido = top.reduce(
       (sum, r) => sum + (Number(r.total) || 0),
@@ -775,7 +743,6 @@ export default function Deposito() {
     };
   }, [top, low, threshold, riskPercent]);
 
-  /* ===== Tablas filtradas y ordenadas ===== */
   const topFiltrados = useMemo(() => {
     let rows = top;
     if (searchTop.trim()) {
@@ -802,7 +769,6 @@ export default function Deposito() {
     const riesgoLimite =
       threshold > 0 ? Math.floor(threshold * (riskPercent / 100)) : 0;
 
-    // Aplicar filtro (todos / sin stock / en riesgo / bajo resto)
     if (lowFilter !== "all") {
       rows = rows.filter((r) => {
         const stockActual = Number(r.stock || 0);
@@ -865,7 +831,6 @@ export default function Deposito() {
   const sortIndicator = (current, field) =>
     current.field === field ? (current.dir === "asc" ? " ▲" : " ▼") : "";
 
-  /* ===== Exportar CSV de stock bajo ===== */
   const handleExportLowCsv = () => {
     if (!lowFiltrados.length) return;
 
@@ -919,12 +884,10 @@ export default function Deposito() {
     URL.revokeObjectURL(url);
   };
 
-  /* ===== Render original + NUEVA sección Pedidos ===== */
   return (
     <section className="admin-panel deposito-page">
       <h1 className="deposito-title">Encargado de Depósito</h1>
 
-      {/* Filtros de cabecera */}
       <div className="filters deposito-filters">
         <label className="deposito-field">
           <span>Desde</span>
@@ -1022,7 +985,6 @@ export default function Deposito() {
         <div className="state error deposito-state">{error}</div>
       )}
 
-      {/* Resumen rápido */}
       {!loading && !error && !fechaInvalida && (
         <div className="deposito-summary">
           <div className="deposito-summary-card deposito-summary-card--main">
@@ -1111,7 +1073,6 @@ export default function Deposito() {
 
       {!loading && !error && !fechaInvalida && (
         <div className="deposito-grid">
-          {/* Más consumidos */}
           <div className="card deposito-card">
             <div className="card-header deposito-card-header">
               <div>
@@ -1182,7 +1143,6 @@ export default function Deposito() {
             </div>
           </div>
 
-          {/* Stock bajo */}
           <div className="card deposito-card deposito-card--alert">
             <div className="card-header deposito-card-header">
               <div>
@@ -1396,7 +1356,6 @@ export default function Deposito() {
         </div>
       )}
 
-      {/* ======= NUEVA SECCIÓN: Pedidos ======= */}
       <div style={{ marginTop: 24 }}>
         <h2 className="deposito-subtitle">Pedidos</h2>
         <DepositoOrdersPanel />
