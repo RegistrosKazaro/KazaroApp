@@ -1,8 +1,12 @@
 // server/src/routes/deposito.js
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.js";
-import { db, getFutureIncomingForProduct, getUserRoles } from "../db.js";
-
+import {
+  db,
+  discoverCatalogSchema,
+  getFutureIncomingForProduct,
+  getUserRoles,
+} from "../db.js";
 const router = Router();
 console.log("[deposito] Router cargado: Modo Seguro (JS JOIN)");
 
@@ -170,9 +174,81 @@ router.put("/orders/close/:id", mustWarehouse, (req, res) => { req.params.action
 router.put("/orders/reopen/:id", mustWarehouse, (req, res) => { req.params.action="reopen"; router.handle(req, res); });
 
 // Analytics Stubs (Para que no rompa)
-router.get("/overview", mustWarehouse, (req, res) => res.json({ top: [], low: [] }));
-router.get("/top-consumidos", mustWarehouse, (req, res) => res.json({ rows: [] }));
-router.get("/low-stock", mustWarehouse, (req, res) => res.json({ rows: [] }));
-router.get("/consumo-desde-ultimo-ingreso/:productId", mustWarehouse, (req, res) => res.json({ consumido: 0 }));
+router.get("/overview", mustWarehouse, (req, res) => {
+  try {
+    const threshold = Number.isNaN(Number(req.query.threshold))
+      ? 0
+      : Number(req.query.threshold);
 
+    const sch = discoverCatalogSchema();
+    if (!sch.ok) return res.json({ top: [], low: [] });
+
+    const { products } = sch.tables;
+    const { prodId, prodName, prodStock } = sch.cols;
+
+    if (!prodStock) return res.json({ top: [], low: [] });
+
+    const sql = `
+      SELECT ${prodId}   AS productId,
+             ${prodName} AS name,
+             ${prodStock} AS stock
+        FROM ${products}
+       WHERE ${prodStock} IS NOT NULL
+         AND CAST(${prodStock} AS REAL) <= CAST(? AS REAL)
+       ORDER BY CAST(${prodStock} AS REAL) ASC,
+                ${prodName} COLLATE NOCASE
+       LIMIT 500
+    `;
+
+    const low = db
+      .prepare(sql)
+      .all(threshold)
+      .map((row) => ({
+        ...row,
+        stock: Number(row.stock ?? 0),
+      }));
+
+    return res.json({ top: [], low });
+  } catch (e) {
+    console.error("[deposito] /overview error", e);
+    return res.json({ top: [], low: [] });
+  }
+});
+
+router.get("/top-consumidos", mustWarehouse, (_req, res) =>
+  res.json({ rows: [] })
+);
+
+router.get("/low-stock", mustWarehouse, (req, res) => {
+  // Alias a /overview.low para compatibilidad
+  req.url = "/overview";
+  return router.handle(req, res);
+});
+
+router.get(
+  "/consumo-desde-ultimo-ingreso/:productId",
+  mustWarehouse,
+  (req, res) => {
+    const productId = req.params.productId;
+    try {
+      const { incoming, nextEta } = getFutureIncomingForProduct(productId);
+      res.json({
+        productId,
+        consumido: null,
+        last_ingreso: null,
+        incoming_total: incoming,
+        next_eta: nextEta,
+      });
+    } catch (e) {
+      console.error("[deposito] consumo-desde-ultimo-ingreso", e);
+      res.json({
+        productId,
+        consumido: null,
+        last_ingreso: null,
+        incoming_total: null,
+        next_eta: null,
+      });
+    }
+  }
+);
 export default router;
