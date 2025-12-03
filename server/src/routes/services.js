@@ -1,8 +1,7 @@
 // server/src/routes/services.js
 import { Router } from "express";
 import { requireAuth, requireRole } from "../middleware/auth.js";
-import { db, tinfo, getBudgetByServiceId } from "../db.js";
-
+import { db, tinfo, getBudgetSettingsByServiceId } from "../db.js";
 const router = Router();
 
 /** Descubre columnas PK/Nombre de Servicios de forma robusta */
@@ -60,8 +59,8 @@ router.get("/", [requireAuth, requireRole("supervisor")], (req, res) => {
 router.get("/:id/budget", requireAuth, (req, res) => {
   try {
     const id = req.params.id;
-    const budget = getBudgetByServiceId(id);
-    return res.json({ servicioId: id, budget });
+    const { budget, maxPct } = getBudgetSettingsByServiceId(id);
+    return res.json({ servicioId: id, budget, maxPct });
   } catch (e) {
     console.error("[services/:id/budget] error:", e);
     return res.status(500).json({ error: "Error interno" });

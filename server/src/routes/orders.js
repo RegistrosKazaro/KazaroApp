@@ -7,7 +7,8 @@ import {
   getServiceById,
   getServiceEmails,
   getServiceNameById,
-  getBudgetByServiceId,
+  getBudgetSettingsByServiceId,
+  DEFAULT_SERVICE_PCT,
   getUserRoles,
   listServicesByUser,
   getUserById,
@@ -97,10 +98,31 @@ router.post("/", requireAuth, async (req, res) => {
       // administrativo: forzar sin servicio
       servicioId = null;
     }
-
+    let budgetSettings = { budget: null, maxPct: DEFAULT_SERVICE_PCT };
+    let maxTotalAllowed = null;
+    if (rolEfectivo === "supervisor" && servicioId != null && String(servicioId).trim() !== "") {
+      budgetSettings = getBudgetSettingsByServiceId(servicioId) || budgetSettings;
+      if (budgetSettings?.budget && Number(budgetSettings.budget) > 0) {
+        const pct = Number(budgetSettings.maxPct ?? DEFAULT_SERVICE_PCT);
+        if (Number.isFinite(pct) && pct > 0) {
+          maxTotalAllowed = (Number(budgetSettings.budget) * pct) / 100;
+        }
+      }
+    }
     // Crear pedido
-    const pedidoId = createOrder({ empleadoId, servicioId, nota, items });
-
+    let pedidoId = null;
+    try {
+      pedidoId = createOrder({ empleadoId, servicioId, nota, items, maxTotalAllowed });
+    } catch (err) {
+      if (err?.code === "ORDER_OVER_LIMIT" || err?.message === "ORDER_OVER_LIMIT") {
+        const pct = Number(budgetSettings?.maxPct ?? DEFAULT_SERVICE_PCT);
+        const pctMsg = Number.isFinite(pct) ? pct : DEFAULT_SERVICE_PCT;
+        return res.status(400).json({
+          error: `El pedido excede el ${pctMsg}% del presupuesto del servicio`,
+        });
+      }
+      throw err;
+    }
     // Guardar el rol explícitamente en la fila creada
     db.prepare(`UPDATE Pedidos SET Rol = ? WHERE PedidoID = ?`).run(rolEfectivo, Number(pedidoId));
 
@@ -148,7 +170,7 @@ router.post("/", requireAuth, async (req, res) => {
     try {
       let presupuestoLinea = "";
       if (rol === "supervisor" && sid) {
-        const presupuesto = getBudgetByServiceId(sid);
+        const presupuesto = budgetSettings?.budget;
         if (presupuesto && presupuesto > 0) {
           const pct = Math.min(100, (total / presupuesto) * 100);
           presupuestoLinea = `\nUsado: ${pct.toFixed(1)}%`;

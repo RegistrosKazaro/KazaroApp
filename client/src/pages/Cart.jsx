@@ -6,7 +6,7 @@ import { api } from "../api/client";
 import "../styles/catalog.css";
 
 function useServiceBudget(servicioId) {
-  const [budget, setBudget] = useState(null);
+  const [settings, setSettings] = useState({budget:null, maxPct: null})
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -14,15 +14,19 @@ function useServiceBudget(servicioId) {
 
     async function load() {
       if (!servicioId) {
-        setBudget(null);
+        setSettings({ budget: null, maxPct: null });
         return;
       }
       setLoading(true);
       try {
         const r = await api.get(`/services/${servicioId}/budget`);
-        if (alive) setBudget(r.data?.budget ?? null);
+        if (alive)
+          setSettings({
+            budget: r.data?.budget ?? null,
+            maxPct: r.data?.maxPct ?? null,
+          });
       } catch {
-        if (alive) setBudget(null);
+        if (alive) setSettings({ budget: null, maxPct: null });
       } finally {
         setLoading(false);
       }
@@ -34,7 +38,7 @@ function useServiceBudget(servicioId) {
     };
   }, [servicioId]);
 
-  return { budget, loading };
+  return { ...settings, loading };
 }
 
 export default function Cart() {
@@ -62,7 +66,7 @@ export default function Cart() {
   }, [user]);
 
   // Presupuesto del servicio SOLO en modo supervisor
-  const { budget } = useServiceBudget(
+  const { budget, maxPct } = useServiceBudget(
     isSupervisorRoute ? service?.id : null
   );
 
@@ -78,7 +82,15 @@ export default function Cart() {
     return (Number(total) / Number(budget)) * 100;
   }, [total, budget, isSupervisorRoute, service]);
 
-  const overLimit = usagePct != null && usagePct > 5;
+  const maxPctAllowed = useMemo(() => {
+    if (!isSupervisorRoute) return null;
+    const pctNum = Number(maxPct);
+    if (!Number.isFinite(pctNum) || pctNum <= 0) return null;
+    return pctNum;
+  }, [maxPct, isSupervisorRoute]);
+
+  const overLimit =
+    usagePct != null && maxPctAllowed != null && usagePct > maxPctAllowed;
 
   async function sendOrder() {
     setSending(true);
@@ -293,14 +305,14 @@ export default function Cart() {
               disabled={sending || items.length === 0 || overLimit}
               title={
                 overLimit
-                  ? "El pedido excede el 5% del presupuesto del servicio"
+                  ? `El pedido excede el ${maxPctAllowed ?? ""}% del presupuesto del servicio`
                   : ""
               }
             >
               {sending
                 ? "Enviando…"
                 : overLimit
-                ? "Excede 5% del presupuesto"
+                ? `Excede ${maxPctAllowed ?? ""}% del presupuesto`
                 : "Enviar pedido"}
             </button>
           </div>

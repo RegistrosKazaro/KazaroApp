@@ -858,11 +858,16 @@ router.put("/service-budgets/:id", mustBeAdmin, (req, res) => {
   const presupuesto = Number(
     req.body?.presupuesto ?? req.body?.budget ?? NaN,
   );
+   const maxPct = Number(
+    req.body?.maxPct ?? req.body?.porcentaje ?? req.body?.pct ?? NaN,
+  );
   if (!Number.isFinite(presupuesto) || presupuesto < 0)
     return res.status(400).json({ error: "Presupuesto inválido" });
+  if (!Number.isFinite(maxPct) || maxPct <= 0)
+    return res.status(400).json({ error: "Porcentaje máximo inválido" });
   try {
-    const newVal = setBudgetForService(id, presupuesto);
-    return res.json({ servicioId: id, presupuesto: newVal });
+     const newVal = setBudgetForService(id, presupuesto, maxPct);
+    return res.json({ servicioId: id, ...newVal });
   } catch (e) {
     console.error("[admin] PUT /service-budgets/:id", e);
     return res.status(500).json({ error: "Error interno" });

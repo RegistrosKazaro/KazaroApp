@@ -901,7 +901,7 @@ function ServiceProductsSection() {
  * 4) Presupuestos por servicio
  * ========================================================= */
 function ServiceBudgetsSection() {
-  const [rows, setRows] = useState([]); // [{id, name, budget}]
+  const [rows, setRows] = useState([]); // [{id, name, budget, maxPct}]
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [page, setPage] = useState(1);
@@ -933,22 +933,34 @@ function ServiceBudgetsSection() {
   }, [load]);
 
   const onSaveOne = async (row) => {
-    const raw = drafts[row.id] ?? (row.budget ?? "");
-    const presupuesto = Number(raw);
+    const rawBudget = drafts[row.id]?.budget ?? (row.budget ?? "");
+    const rawPct = drafts[row.id]?.maxPct ?? (row.maxPct ?? "");
+    const presupuesto = Number(rawBudget);
+    const maxPct = Number(rawPct);
     if (!Number.isFinite(presupuesto) || presupuesto < 0) {
       setErr("Presupuesto inválido");
       return;
     }
 
+    if (!Number.isFinite(maxPct) || maxPct <= 0){
+      setErr("Porcentaje invalido");
+    }
+
     setSavingIds((s) => new Set(s).add(row.id));
     setErr("");
     try {
-      await api.put(`/admin/service-budgets/${row.id}`, { presupuesto });
+      await api.put(`/admin/service-budgets/${row.id}`, { presupuesto, maxPct });
       setRows((prev) =>
         prev.map((it) =>
-          it.id === row.id ? { ...it, budget: presupuesto } : it
+          it.id === row.id ? { ...it, budget: presupuesto, maxPct } : it
         )
       );
+      setDrafts((d)=>{
+        const n = {...d};
+        delete n[row.id];
+        return n;
+      });
+
     } catch {
       setErr("No se pudo guardar");
     } finally {
@@ -977,7 +989,9 @@ function ServiceBudgetsSection() {
       <div className="list">
         {current.map((row) => {
           const saving = savingIds.has(row.id);
-          const value = drafts[row.id] ?? (row.budget ?? "");
+          const draft = drafts[row.id] || {};
+          const value = draft.budget ?? (row.budget ?? "");
+          const pct = draft.maxPct ?? (row.maxPct ?? "");
           return (
             <div key={row.id} className="budget-item">
               <div className="budget-title">
@@ -990,11 +1004,25 @@ function ServiceBudgetsSection() {
                 inputMode="decimal"
                 value={value}
                 onChange={(e) =>
-                  setDrafts((d) => ({ ...d, [row.id]: e.target.value }))
+                  setDrafts((d) => ({ ...d, [row.id]: {...d[row.id],budget:e.target.value} }))
                 }
                 placeholder="0"
                 style={{ width: 140 }}
                 aria-label={`Presupuesto para ${row.name}`}
+              />
+              <input
+                className="input"
+                type="number"
+                inputMode="decimal"
+                value={pct}
+                min="0"
+                step="0.1"
+                onChange={(e) =>
+                  setDrafts((d) => ({ ...d, [row.id]: { ...d[row.id], maxPct: e.target.value } }))
+                }
+                placeholder="5"
+                style={{ width: 100 }}
+                aria-label={`Porcentaje máximo por pedido de ${row.name}`}
               />
               <button
                 className="btn"

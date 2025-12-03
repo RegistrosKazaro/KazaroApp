@@ -44,7 +44,7 @@ export default function ServiceBudgets() {
     }
   }, [user, loading, nav]);
 
-  const [rows, setRows] = useState([]);          
+  const [rows, setRows] = useState([]);         
   const [q, setQ] = useState("");
   const [err, setErr] = useState("");
   const [savingId, setSavingId] = useState(null);
@@ -60,7 +60,7 @@ export default function ServiceBudgets() {
     try {
       const data = (await api.get("/admin/service-budgets")).data || [];
       setRows(data);
-      setDrafts({}); 
+      setDrafts({});
     } catch (e) {
       setErr(e?.response?.data?.error || e.message);
     }
@@ -88,12 +88,15 @@ export default function ServiceBudgets() {
     setSavingId(id);
     setStatus("");
     try {
-      const presupuesto = parseMoneyFlexible(valRaw);
+      const presupuesto = parseMoneyFlexible(valRaw?.budget ?? valRaw);
       if (!Number.isFinite(presupuesto) || presupuesto < 0) throw new Error("Presupuesto inválido");
 
+      const maxPct = Number(valRaw?.maxPct ?? drafts[id]?.maxPct ?? rows.find (r=> r.if === id)?.maxPct ?? NaN);
+      if(!Number.isFinite(maxPct) || maxPct <= 0) throw new Error("Porcentaje maximo invalido");
+
       // Persistimos en server
-      await api.put(`/admin/service-budgets/${id}`, { presupuesto });
-      setRows(prev => prev.map(r => (r.id === id ? { ...r, budget: presupuesto } : r)));
+      await api.put(`/admin/service-budgets/${id}`,{ presupuesto, maxPct});
+      setRows(prev => prev.map(r => (r.id === id ? { ...r, budget: presupuesto, maxPct } : r)));
 
       // Limpiamos el draft para que el input muestre el valor "oficial"
       setDrafts(d => {
@@ -123,7 +126,7 @@ export default function ServiceBudgets() {
         <div className="sb-title">
           <h1>Presupuesto de servicios</h1>
           <p className="sb-sub">
-            Definí el presupuesto base por servicio. Un pedido no puede superar el <strong>5%</strong> de este valor.
+            Definí el presupuesto base por servicio y el porcentaje máximo que se puede usar en cada pedido.
           </p>
         </div>
         <div className="sb-actions">
@@ -151,17 +154,25 @@ export default function ServiceBudgets() {
           <div className="sb-tr" role="row">
             <div role="columnheader">Servicio</div>
             <div role="columnheader" className="num">Presupuesto</div>
+            <div role="columnheader" className="num">Máx. % pedido</div>
             <div role="columnheader">Acciones</div>
           </div>
         </div>
         <div className="sb-tbody" role="rowgroup">
           {pageRows.map(r => {
             const inputId = `b-${r.id}`;
+            const draft = drafts[r.id] || {};
             const inputValue =
-              drafts[r.id] ??
+              draft.budget ??
               (r.budget === null || r.budget === undefined || r.budget === ""
                 ? ""
                 : String(r.budget).replace(".", ","));
+                const pctValue =
+              draft.maxPct ??
+              (r.maxPct === null || r.maxPct === undefined || r.maxPct === ""
+                ? ""
+                : String(r.maxPct));
+                
             return (
               <div key={r.id} className="sb-tr" role="row">
                 <div className="td" role="cell">
@@ -176,12 +187,32 @@ export default function ServiceBudgets() {
                     inputMode="decimal"
                     placeholder="0,00"
                     value={inputValue}
-                    onChange={(e) => setDrafts(d => ({ ...d, [r.id]: e.target.value }))}
+                    onChange={(e) => setDrafts(d => ({ ...d, [r.id]: { ...d[r.id], budget: e.target.value } }))}
                     className="sb-input sb-money mono"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
-                        onSave(r.id, inputValue);
+                        onSave(r.id, { budget: inputValue, maxPct: pctValue });
+                      }
+                    }}
+                  />
+                </div>
+                <div className="td num" role="cell">
+                  <label htmlFor={`p-${r.id}`} className="sr-only">Máximo permitido por pedido para {r.name}</label>
+                  <input
+                    id={`p-${r.id}`}
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="0.1"
+                    placeholder="5"
+                    value={pctValue}
+                    onChange={(e) => setDrafts(d => ({ ...d, [r.id]: { ...d[r.id], maxPct: e.target.value } }))}
+                    className="sb-input sb-money mono"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        onSave(r.id, { budget: inputValue, maxPct: pctValue });
                       }
                     }}
                   />
@@ -189,7 +220,7 @@ export default function ServiceBudgets() {
                 <div className="td" role="cell">
                   <button
                     className="sb-btn primary"
-                    onClick={() => onSave(r.id, inputValue)}
+                    onClick={() => onSave(r.id, { budget: inputValue, maxPct: pctValue })}
                     disabled={savingId === r.id}
                     aria-label={`Guardar presupuesto de ${r.name}`}
                   >

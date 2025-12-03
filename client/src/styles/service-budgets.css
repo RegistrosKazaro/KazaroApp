@@ -154,7 +154,7 @@
 /* El grid va SOLO en la fila del encabezado */
 .sb-thead .sb-tr{
   display: grid;
-  grid-template-columns: 2fr 1fr 1fr;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
   gap: 8px;
   align-items: center;
   font-weight: 800;
@@ -168,7 +168,7 @@
 /* Filas del body con grid */
 .sb-tbody .sb-tr{
   display: grid;
-  grid-template-columns: 2fr 1fr 1fr;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
   gap: 8px;
   align-items: center;
   padding: 12px 14px;

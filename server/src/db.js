@@ -741,8 +741,7 @@ export function getServiceById(serviceId) {
   }
 }
 
-export function createOrder({ empleadoId, servicioId, nota, items, asRole = null }) {
-  if (!empleadoId || !Array.isArray(items) || items.length === 0) {
+export function createOrder({ empleadoId, servicioId, nota, items, asRole = null, maxTotalAllowed = null }) {  if (!empleadoId || !Array.isArray(items) || items.length === 0) {
     throw new Error("Datos de pedido inválidos");
   }
 
@@ -841,7 +840,11 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
       total += subtotal;
       insItem.run(pedidoId, pid, row.name, precio, cantidad, subtotal, row.code || "");
     }
-
+    if (Number.isFinite(maxTotalAllowed) && total > maxTotalAllowed) {
+      const err = new Error("ORDER_OVER_LIMIT");
+      err.code = "ORDER_OVER_LIMIT";
+      throw err;
+    }    
     db.prepare(`UPDATE Pedidos SET Total = ? WHERE PedidoID = ?`).run(total, pedidoId);
     return pedidoId;
   });
@@ -1109,42 +1112,67 @@ function detectSPCols() {
 }
 
 /* ===================== presupuestos ===================== */
+export const DEFAULT_SERVICE_PCT = 5;
+
+function ensureBudgetPctColumn() {
+  const cols = db
+    .prepare(`PRAGMA table_info('service_budget')`)
+    .all()
+    .map((c) => String(c.name).toLowerCase());
+  if (!cols.includes("maxpct")) {
+    db.exec(`ALTER TABLE service_budget ADD COLUMN MaxPct REAL NOT NULL DEFAULT ${DEFAULT_SERVICE_PCT};`);
+  }
+}
+
 export function ensureServiceBudgetTable() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS service_budget (
       ServicioID INTEGER PRIMARY KEY,
-      Presupuesto REAL NOT NULL
+      Presupuesto REAL NOT NULL,
+      MaxPct REAL NOT NULL DEFAULT ${DEFAULT_SERVICE_PCT}
     );
   `);
+  ensureBudgetPctColumn();
   db.exec(`CREATE INDEX IF NOT EXISTS idx_srvbudget_serv ON service_budget(ServicioID);`);
 }
-export function getBudgetByServiceId(servicioId) {
+export function getBudgetSettingsByServiceId(servicioId) {
   ensureServiceBudgetTable();
   try {
     const row = db.prepare(`
-      SELECT Presupuesto AS budget
+      SELECT Presupuesto AS budget,
+             COALESCE(MaxPct, ${DEFAULT_SERVICE_PCT}) AS maxPct
       FROM service_budget
       WHERE CAST(ServicioID AS TEXT) = CAST(? AS TEXT)
       LIMIT 1
     `).get(servicioId);
-    return row?.budget ?? null;
+    return {
+      budget: row?.budget ?? null,
+      maxPct: Number(row?.maxPct ?? DEFAULT_SERVICE_PCT),
+    };
   } catch {
-    return null;
+    return { budget: null, maxPct: DEFAULT_SERVICE_PCT };
   }
 }
-export function setBudgetForService(servicioId, presupuesto) {
+export function getBudgetByServiceId(servicioId) {
+  return getBudgetSettingsByServiceId(servicioId).budget;
+}
+export function setBudgetForService(servicioId, presupuesto, maxPct = DEFAULT_SERVICE_PCT) {
   ensureServiceBudgetTable();
+  const pct = Number.isFinite(Number(maxPct)) && Number(maxPct) > 0
+    ? Number(maxPct)
+    : DEFAULT_SERVICE_PCT;
+
   const insert = db.prepare(`
-    INSERT OR IGNORE INTO service_budget(ServicioID, Presupuesto)
-    VALUES(CAST(? AS TEXT), ?)
-  `).run(servicioId, Number(presupuesto));
+    INSERT OR IGNORE INTO service_budget(ServicioID, Presupuesto, MaxPct)
+    VALUES(CAST(? AS TEXT), ?, ?)
+  `).run(servicioId, Number(presupuesto), pct);
   if (insert.changes === 0) {
     db.prepare(`
-      UPDATE service_budget SET Presupuesto = ?
+      UPDATE service_budget SET Presupuesto = ?, MaxPct = ?
       WHERE CAST(ServicioID AS TEXT) = CAST(? AS TEXT)
-    `).run(Number(presupuesto), servicioId);
+    `).run(Number(presupuesto), pct, servicioId);
   }
-  return getBudgetByServiceId(servicioId);
+  return getBudgetSettingsByServiceId(servicioId);
 }
 export function listServiceBudgets() {
   ensureServiceBudgetTable();
@@ -1153,7 +1181,8 @@ export function listServiceBudgets() {
     return db.prepare(`
       SELECT s.${spec.idCol} AS id,
              ${spec.nameExpr} AS name,
-             b.Presupuesto AS budget
+             b.Presupuesto AS budget,
+             COALESCE(b.MaxPct, ${DEFAULT_SERVICE_PCT}) AS maxPct
       FROM ${spec.table} s
       LEFT JOIN service_budget b
         ON CAST(b.ServicioID AS TEXT) = CAST(s.${spec.idCol} AS TEXT)
