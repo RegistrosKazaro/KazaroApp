@@ -933,7 +933,7 @@ function ServiceBudgetsSection() {
   }, [load]);
 
   const onSaveOne = async (row) => {
-    const rawBudget = drafts[row.id]?.budget ?? (row.budget ?? "");
+    const rawBudget = drafts[row.id]?.budget ?? (row.budget ?? "" );
     const rawPct = drafts[row.id]?.maxPct ?? (row.maxPct ?? "");
     const presupuesto = Number(rawBudget);
     const maxPct = Number(rawPct);
@@ -941,9 +941,9 @@ function ServiceBudgetsSection() {
       setErr("Presupuesto inválido");
       return;
     }
-
     if (!Number.isFinite(maxPct) || maxPct <= 0){
       setErr("Porcentaje invalido");
+      return;
     }
 
     setSavingIds((s) => new Set(s).add(row.id));

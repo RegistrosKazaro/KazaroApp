@@ -66,7 +66,7 @@ export default function Cart() {
   }, [user]);
 
   // Presupuesto del servicio SOLO en modo supervisor
-  const { budget, maxPct } = useServiceBudget(
+    const { budget, maxPct } = useServiceBudget(
     isSupervisorRoute ? service?.id : null
   );
 

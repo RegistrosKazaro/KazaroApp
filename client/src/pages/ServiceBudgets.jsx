@@ -44,7 +44,7 @@ export default function ServiceBudgets() {
     }
   }, [user, loading, nav]);
 
-  const [rows, setRows] = useState([]);         
+  const [rows, setRows] = useState([]);        
   const [q, setQ] = useState("");
   const [err, setErr] = useState("");
   const [savingId, setSavingId] = useState(null);

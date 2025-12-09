@@ -172,11 +172,14 @@ function DepositoOrdersPanel() {
         const empleado = String(o.empleadoNombre || o.empleadoId || "").toLowerCase();
         const rol = String(o.rol ?? "").toLowerCase();
         const remito = (
+          o.remitoDisplay ??
           o.remito ??
           o.remitoNumber ??
           o.remito_numero ??
           o.numero_remito ??
           o.nro_remito ??
+          o.remitonumero ??
+          o.remito_num ??
           ""
         ).toLowerCase();
         const total = o.total != null ? String(o.total) : "";
@@ -213,13 +216,22 @@ function DepositoOrdersPanel() {
     return arr;
   }, [orders, qDeb, sort]);
 
-  const remitoNum = (o) =>
+  const remitoNum = (o) => {
+    const val =
+    o.remitoDisplay ??
     o.remito ??
     o.remitoNumber ??
     o.remito_numero ??
     o.numero_remito ??
     o.nro_remito ??
-    "—";
+    o.remitonumero ??
+    o.remito_num ??
+    null;
+    if (val == null || val === "") {
+      return "-";
+    }
+    return val;
+  };
 
   const moveToPreparing = async (id) => {
     setErr("");
@@ -473,7 +485,7 @@ function DepositoOrdersPanel() {
             )}
             {filtered.map((o) => (
               <tr key={o.id} className="deposito-row">
-                <td>{String(o.id).padStart(7, "0")}</td>
+                <td>{o.displayId || String(o.id ?? "").padStart(7, "0")}</td>
                 <td>{remitoNum(o)}</td>
                 {/* CAMBIO: Mostrar el nombre del empleado si está disponible */}
                 <td>

@@ -12,7 +12,8 @@ import {
   reassignServiceToSupervisor,
   unassignService,
   getServiceNameById,
-  ensureServiceProductsPivot,     // para Servicio ⇄ Productos
+  getEmployeeDisplayName,
+  ensureServiceProductsPivot,      // para Servicio ⇄ Productos
 } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendMail } from "../utils/mailer.js";
@@ -580,7 +581,13 @@ router.get("/orders", mustBeAdmin, (_req, res) => {
     const rows = db
       .prepare(
         `
-      SELECT PedidoID AS id, EmpleadoID AS empleadoId, Rol AS rol, Total AS total, Fecha AS fecha
+      SELECT
+        PedidoID AS id,
+        EmpleadoID AS empleadoId,
+        Rol AS rol,
+        Total AS total,
+        Fecha AS fecha,
+        COALESCE(Remito, RemitoNumero, Remito_Numero, Numero_Remito, NroRemito) AS remito
       FROM Pedidos
       ORDER BY PedidoID DESC
       LIMIT 200
@@ -588,8 +595,15 @@ router.get("/orders", mustBeAdmin, (_req, res) => {
       )
       .all();
     res.json(rows);
+    const enriched = rows.map((row)=> ({
+      ...row,
+      empleadoNombre : row.EmpleadoID ? getEmployeeDisplayName(row.EmpleadoID)
+      : "",
+      remitoDisplay: row.remito ? String(row.remito):"-",
+    }));
+    res.json(enriched);
   } catch {
-    res.status(500).json({ error: "Error al listar pedidos" });
+    res.status(500).json({error: "Error al listar pedidos"});
   }
 });
 

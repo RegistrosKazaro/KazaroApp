@@ -4,6 +4,7 @@ import { requireAuth } from "../middleware/auth.js";
 import {
   db,
   discoverCatalogSchema,
+  getEmployeeDisplayName,
   getFutureIncomingForProduct,
   getUserRoles,
 } from "../db.js";
@@ -39,11 +40,12 @@ function ensureStatusColumn() {
 // Normalizador flexible de objetos (busca keys sin importar mayúsculas/minúsculas)
 const getVal = (obj, keys) => {
   if (!obj) return null;
-  const foundKey = Object.keys(obj).find(k => keys.includes(k.toLowerCase()));
+  const foundKey = Object.keys(obj).find((k) => keys.includes(k.toLowerCase()));
   return foundKey ? obj[foundKey] : null;
 };
 
 /* ----------------------------- Rutas ----------------------------- */
+const pad7 = (v) => String(v ?? "").padStart(7,"0");
 
 // LISTAR PEDIDOS (Con Nombres de Empleados - Método Seguro)
 router.get("/orders", mustWarehouse, (req, res) => {
@@ -51,8 +53,13 @@ router.get("/orders", mustWarehouse, (req, res) => {
     ensureStatusColumn();
     if (!hasTable("Pedidos")) return res.json([]);
 
+    const cols = db.prepare("PRAGMA table_info(Pedidos)").all();
+    const colNames = cols.map((c) =>c.name.toLowerCase());
+
     // 1. Traemos TODOS los pedidos (Sin JOINS complejos que pueden fallar)
-    const rawOrders = db.prepare("SELECT * FROM Pedidos ORDER BY Fecha DESC LIMIT 100").all();
+    const rawOrders = db
+      .prepare("SELECT rowid AS __rowid, * FROM Pedidos ORDER BY Fecha DESC LIMIT 100")
+      .all();
     
     // 2. Traemos TODOS los empleados (para buscar sus nombres aquí)
     let employees = [];
@@ -61,8 +68,11 @@ router.get("/orders", mustWarehouse, (req, res) => {
     }
 
     // 3. Unimos los datos manualmente
-    const cleanRows = rawOrders.map(row => {
-      const id = getVal(row, ["pedidoid", "id", "idpedido"]);
+      const cleanRows = rawOrders.map(row => {
+      const id = 
+      getVal(row, ["pedidoid", "id", "idpedido","pedido_id"]) ??
+      row.__rowid ??
+      null;
       const empId = getVal(row, ["empleadoid", "empleado", "empleado_id"]);
       
       // Buscar empleado correspondiente en la lista que trajimos
@@ -71,13 +81,14 @@ router.get("/orders", mustWarehouse, (req, res) => {
           return String(eId) === String(empId);
       });
 
-      // Extraer nombre del empleado encontrado
+     // Resolver nombre del empleado desde la tabla principal
       let empNombre = "";
-      if (empObj) {
-          const nom = getVal(empObj, ["nombre", "name", "firstname"]) || "";
-          const ape = getVal(empObj, ["apellido", "lastname", "surname"]) || "";
-          empNombre = `${nom} ${ape}`.trim();
-          if (!empNombre) empNombre = getVal(empObj, ["username", "usuario", "user"]);
+      try {
+        if(empId != null){
+          empNombre = getEmployeeDisplayName(empId) || "";
+        }
+      } catch{
+        empNombre = "";
       }
       // Si no encontramos nombre, usamos el ID
       if (!empNombre) empNombre = empId ? `ID: ${empId}` : "Desconocido";
@@ -94,8 +105,19 @@ router.get("/orders", mustWarehouse, (req, res) => {
       if (isClosed) finalStatus = "closed";
       else if (isPreparing) finalStatus = "preparing";
 
+      // detect remito across any column that contains "remito"
+      let remitoNumero = null;
+      const remitoCols = colNames.filter((c)=> c.includes("remito"));
+      for (const c of remitoCols){
+        const v = row[c];
+        if( v != null && String(v).trim() !== ""){
+          remitoNumero = v;
+          break;
+        }
+      }
       return {
-        id: id,
+        id,
+        displayId: pad7(id ?? ""),
         empleadoId: empId,
         empleadoNombre: empNombre, // <--- DATO CLAVE
         rol: getVal(row, ["rol", "role"]),
@@ -103,7 +125,8 @@ router.get("/orders", mustWarehouse, (req, res) => {
         total: getVal(row, ["total", "amount"]),
         status: finalStatus,
         isClosed: isClosed,
-        remito: getVal(row, ["remitonumber", "remito", "remito_numero"])
+        remito: remitoNumero,
+        remitoDisplay: remitoNumero ? String(remitoNumero): "-",
       };
     });
 

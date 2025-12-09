@@ -110,7 +110,7 @@ router.post("/", requireAuth, async (req, res) => {
       }
     }
     // Crear pedido
-    let pedidoId = null;
+   let pedidoId = null;
     try {
       pedidoId = createOrder({ empleadoId, servicioId, nota, items, maxTotalAllowed });
     } catch (err) {
