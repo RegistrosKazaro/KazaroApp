@@ -3,14 +3,15 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import argon2 from "argon2";
-import crypto from "crypto";
 import { env } from "../utils/env.js";
 import {
   getUserForLogin,
   getUserById,
   getUserRoles,
   listServicesByUser,
+  updateUserPasswordHash,
 } from "../db.js";
+import { verify } from "crypto";
 
 const router = express.Router();
 
@@ -26,18 +27,11 @@ function normalizeBool(v) {
 const IS_HTTPS = /^https:\/\//i.test(String(env.APP_BASE_URL || ""));
 
 /**
- * Verifica la contraseña del usuario.
- *
- * Soporta:
- *  - Argon2 ($argon2...)
- *  - bcrypt ($2a$, $2b$, $2y$)
- *  - MD5 (32 hex)
- *  - SHA1 (40 hex)
- *  - password_plain (texto plano, ideal en dev y usuarios creados a mano)
+ Verifica la contraseña del usuario y señala si requiere migracion.
  */
 async function verifyPassword(inputPassword, userRow) {
   const pass = String(inputPassword ?? "");
-  if (!pass) return false;
+  if(!pass) return {ok:false, reason:"empty"};
 
   const rawHash = userRow?.password_hash;
   const rawPlain = userRow?.password_plain;
@@ -48,15 +42,7 @@ async function verifyPassword(inputPassword, userRow) {
       : "";
   const plain = typeof rawPlain === "string" ? rawPlain : "";
 
-  // 1) Intentar primero texto plano (esto hace que usuarios nuevos con password_plain entren fácil)
-  if (plain) {
-    if (plain === pass) {
-      // console.log("[auth] verifyPassword: match por texto plano");
-      return true;
-    }
-  }
-
-  // 2) Si hay hash, intentamos cada tipo conocido
+  // Si hay  hash, intentamos cada tipo conocido
   if (hash) {
     const lower = hash.toLowerCase();
 
@@ -64,12 +50,12 @@ async function verifyPassword(inputPassword, userRow) {
     if (lower.startsWith("$argon2")) {
       try {
         if (await argon2.verify(hash, pass)) {
-          // console.log("[auth] verifyPassword: match por argon2");
-          return true;
+          return { ok: true, algorithm: "argon2"};
         }
       } catch (e) {
         console.warn("[auth] verifyPassword argon2 error:", e?.message || e);
       }
+      return { ok: false, algorithm: "argon2"};
     }
 
     // bcrypt ($2a$, $2b$, $2y$)
@@ -80,47 +66,54 @@ async function verifyPassword(inputPassword, userRow) {
     ) {
       try {
         if (await bcrypt.compare(pass, hash)) {
-          // console.log("[auth] verifyPassword: match por bcrypt");
-          return true;
+          return { ok: true, algorithm: "bcrypt"};
         }
       } catch (e) {
         console.warn("[auth] verifyPassword bcrypt error:", e?.message || e);
       }
+      return { ok: false, algorithm: "bcrypt"};
     }
 
-    // MD5 / SHA1 heredados
+    // MD5 / SHA1 heredados solo para migracion 
     try {
-      // MD5
+      const crypto = await import("crypto");
       if (/^[a-f0-9]{32}$/i.test(hash)) {
-        const md5 = crypto.createHash("md5").update(pass).digest("hex");
-        if (md5.toLowerCase() === lower) {
-          // console.log("[auth] verifyPassword: match por MD5");
-          return true;
+        const digest = crypto.createHash("md5").update(pass).digest("hex");
+        if(digest.toLocaleLowerCase()=== lower){
+          return { ok:true, algorithm: "md5", needsUpgrade: true};
         }
       }
       // SHA1
       if (/^[a-f0-9]{40}$/i.test(hash)) {
-        const sha1 = crypto.createHash("sha1").update(pass).digest("hex");
-        if (sha1.toLowerCase() === lower) {
-          // console.log("[auth] verifyPassword: match por SHA1");
-          return true;
+        const digest = createRequire.createHash("sha1").update(pass).digest("hex");
+        if( digest.toLocaleLowerCase()=== lower){
+          return { ok: true, algorithm: "sha1", needsUpgrade: true}; 
         }
       }
     } catch (e) {
       console.warn("[auth] verifyPassword legacy hash error:", e?.message || e);
     }
+    console.error("[auth] veryfyPassword: hash desconocido", hash?.slice.apply(0,12));
+    return { ok:false, reason: "unknown-has"};
   }
+    if (plain) {
+      if (plain === pass){
+        return { ok: true, algorithm: "plain", needsUpgrade: true};
+      }
+      return { ok:false, algorithm: "plain"};
 
-  // 3) Si no matcheó nada
-  return false;
+    }
+
+
+ 
+    return {ok: false};
 }
 
 function signJwt(userId) {
-  return jwt.sign(
-    { uid: Number(userId) },
-    env.JWT_SECRET || "dev-secret",
-    { expiresIn: "12h" },
-  );
+  if (!env.JWT_SECRET){
+    throw new Error("JWT_SECRET no esta definido en el entorno");
+  }
+  return jwt.sign({ uid: Number(userId) }, env.JWT_SECRET, { expiresIn: "12h"});
 }
 
 function setSessionCookies(res, token) {
@@ -138,6 +131,10 @@ function setSessionCookies(res, token) {
 }
 
 function readSession(req) {
+  if (!env.JWT_SECRET){
+    console.error("[auth] JWT_SECRET requerido para validar sesion");
+    return null;
+  }
   const raw =
     req.cookies?.sid ||
     req.cookies?.token ||
@@ -145,9 +142,21 @@ function readSession(req) {
     null;
   if (!raw) return null;
   try {
-    return jwt.verify(raw, env.JWT_SECRET || "dev-secret");
+    return jwt.verify(raw, env.JWT_SECRET);
   } catch {
     return null;
+  }
+}
+
+async function migrateLegacyPassword(userId, password) {
+  try{
+    const newHas = await argon2.hash(password, { type: argon2.argon2id});
+    const update = updateUserPasswordHash(userId, newHas);
+    if(update){
+      console.log(`[auth] hash legacy migrado a Argon2 para usuario ${userId}`);
+    }
+  } catch(e) {
+    console.error("[auth] No se pudo mirar el hash legacy:", e?.message || e);
   }
 }
 
@@ -215,12 +224,15 @@ router.post("/login", async (req, res) => {
       is_active: row.is_active,
     });
 
-    const ok = await verifyPassword(password, row);
-    if (!ok) {
+    const verification = await verifyPassword(password, row);
+    if(!verification?.ok) {
       console.log("[auth/login] contraseña incorrecta para:", row.username);
       return res
         .status(401)
         .json({ ok: false, error: "Usuario o contraseña inválidos" });
+    }
+    if (verification.needsUpgrade) {
+      await migrateLegacyPassword(row.id, password);
     }
 
     console.log("[auth/login] login OK para:", row.username);
@@ -258,4 +270,5 @@ router.post("/logout", (req, res) => {
   return res.json({ ok: true });
 });
 
+export { verifyPassword, signJwt};
 export default router;

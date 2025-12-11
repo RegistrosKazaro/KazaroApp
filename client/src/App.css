@@ -14,7 +14,17 @@
   font-size:20px;
   color:#fff;
   text-decoration:none;
-  letter-spacing:.2px;
+  border-radius:10px;
+  transition: color .2s ease, text-shadow .2s ease, outline-color .2s ease, box-shadow .2s ease;
+}
+.appbar .brand:hover{
+  color:#e5edff;
+  text-shadow:0 1px 6px rgba(255,255,255,.16);
+}
+.appbar .brand:focus-visible{
+  outline:3px solid rgba(143,211,255,.85);
+  outline-offset:3px;
+  box-shadow:0 0 0 3px rgba(143,211,255,.2);
 }
 
 .appbar-right{
@@ -25,8 +35,8 @@
 }
 
 .pill{
-  border:1px solid rgba(255,255,255,.45);
-  background:transparent;
+  border:1px solid rgba(255,255,255,.55);
+  background:rgba(255,255,255,.06);
   color:#fff;
   padding:8px 12px;
   border-radius:999px;
@@ -36,11 +46,9 @@
   display:inline-flex;
   align-items:center;
   gap:.35rem;
-  transition: background .15s ease, color .15s ease, border-color .15s ease, transform .06s ease;
-}
+transition: background-color .18s ease, color .18s ease, border-color .18s ease, box-shadow .18s ease, transform .06s ease;}
 .pill:hover{
   border-color:#ffffff;
-  background:rgba(255,255,255,.10);
 }
 .pill:active{ transform: translateY(1px); }
 .pill:focus-visible{
@@ -108,6 +116,18 @@
   padding:8px 14px;
   border-radius:10px;
   cursor:pointer;
+  transition: background-color .18s ease, border-color .18s ease, box-shadow .18s ease, transform .06s ease;
+}
+.btn:hover{
+  background:#1f4acc;
+  border-color:#1a3ea8;
+  box-shadow:0 4px 10px rgba(37,99,235,.25);
+}
+.btn:active{ transform:translateY(1px); }
+.btn:focus-visible{
+  outline:3px solid rgba(143,211,255,.85);
+  outline-offset:3px;
+  box-shadow:0 0 0 3px rgba(143,211,255,.2), 0 8px 16px rgba(0,0,0,.16);
 }
 .input{
   width:100%;

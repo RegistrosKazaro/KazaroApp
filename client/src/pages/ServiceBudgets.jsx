@@ -8,6 +8,18 @@ import "../styles/a11y.css";
 
 const PAGE_SIZE = 15;
 
+const moneyFormatter = (() => {
+  try {
+    return new Intl.NumberFormat("es-AR", {
+      style: "currency",
+      currency: "ARS",
+      minimumFractionDigits: 2,
+    });
+  } catch {
+    return { format: (n) => `$ ${Number(n || 0).toFixed(2)}` };
+  }
+})();
+
 function parseMoneyFlexible(raw) {
   if (raw == null) return NaN;
   let s = String(raw).trim().replace(/\s+/g, "");
@@ -91,8 +103,10 @@ export default function ServiceBudgets() {
       const presupuesto = parseMoneyFlexible(valRaw?.budget ?? valRaw);
       if (!Number.isFinite(presupuesto) || presupuesto < 0) throw new Error("Presupuesto inválido");
 
-      const maxPct = Number(valRaw?.maxPct ?? drafts[id]?.maxPct ?? rows.find (r=> r.if === id)?.maxPct ?? NaN);
-      if(!Number.isFinite(maxPct) || maxPct <= 0) throw new Error("Porcentaje maximo invalido");
+      const maxPct = Number(
+        valRaw?.maxPct ?? drafts[id]?.maxPct ?? rows.find((r) => r.id === id)?.maxPct ?? NaN
+      );
+      if (!Number.isFinite(maxPct) || maxPct <= 0) throw new Error("Porcentaje maximo invalido");
 
       // Persistimos en server
       await api.put(`/admin/service-budgets/${id}`,{ presupuesto, maxPct});
@@ -166,8 +180,8 @@ export default function ServiceBudgets() {
               draft.budget ??
               (r.budget === null || r.budget === undefined || r.budget === ""
                 ? ""
-                : String(r.budget).replace(".", ","));
-                const pctValue =
+                 : moneyFormatter.format(Number(r.budget)));
+            const pctValue =
               draft.maxPct ??
               (r.maxPct === null || r.maxPct === undefined || r.maxPct === ""
                 ? ""
@@ -185,7 +199,7 @@ export default function ServiceBudgets() {
                     id={inputId}
                     type="text"
                     inputMode="decimal"
-                    placeholder="0,00"
+                    placeholder="$ 0,00"
                     value={inputValue}
                     onChange={(e) => setDrafts(d => ({ ...d, [r.id]: { ...d[r.id], budget: e.target.value } }))}
                     className="sb-input sb-money mono"

@@ -615,9 +615,8 @@ function DepositoOrdersPanel() {
 export default function Deposito() {
   const [start, setStart] = useState(isoFirstOfMonth());
   const [end, setEnd] = useState(isoToday());
-  const [threshold, setThreshold] = useState(10);
-
-  const [riskPercent, setRiskPercent] = useState(30);
+  const [thresholdInput, setThresholdInput] = useState("10");
+  const [riskPercentInput, setRiskPercentInput] = useState("30");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -632,6 +631,17 @@ export default function Deposito() {
 
   const [sortTop, setSortTop] = useState({ field: "total", dir: "desc" });
   const [sortLow, setSortLow] = useState({ field: "stock", dir: "asc" });
+
+  const threshold = useMemo(()=>{
+    const parsed = parseInt(thresholdInput, 10);
+    return Number.isNaN(parsed) ? 0 : Math.max(0,parsed);
+  }, [thresholdInput]);
+
+  const riskPercent = useMemo(()=>{
+    const parsed = parseInt(riskPercentInput, 10);
+    if(Number.isNaN(parsed)) return 0;
+    return Math.min(100, Math.max(1, parsed));
+  }, [riskPercentInput]);
 
   const fechaInvalida = useMemo(
     () => !!start && !!end && start > end,
@@ -924,14 +934,13 @@ export default function Deposito() {
           <input
             type="number"
             min="0"
-            value={threshold}
-            onChange={(e) =>
-              setThreshold(
-                Number.isNaN(parseInt(e.target.value, 10))
-                  ? 0
-                  : parseInt(e.target.value, 10)
-              )
-            }
+            value = {thresholdInput}
+            onChange={(e)=>{
+              const { value } = e.target;
+              if(value === "" || /^\d*$/.test(value)){
+                setThresholdInput(value);
+              }
+            }}  
           />
         </label>
 
@@ -941,12 +950,12 @@ export default function Deposito() {
             type="number"
             min="1"
             max="100"
-            value={riskPercent}
+            value={riskPercentInput}
             onChange={(e) => {
-              const v = parseInt(e.target.value, 10);
-              setRiskPercent(
-                Number.isNaN(v) ? 30 : Math.min(100, Math.max(1, v))
-              );
+            const { value } = e.target;
+              if (value === "" || /^\d*$/.test(value)) {
+                setRiskPercentInput(value);
+              }
             }}
           />
         </label>

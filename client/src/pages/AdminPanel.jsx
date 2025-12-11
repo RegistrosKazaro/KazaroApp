@@ -28,6 +28,30 @@ const money = (v) => {
   }
 };
 
+const parseMoneyFlexible = (raw) => {
+  if (raw == null) return NaN;
+  let s = String(raw).trim().replace(/\s+/g, "");
+  if (s === "") return NaN;
+
+  s = s.replace(/[^\d.,-]/g, "");
+
+  const lastComma = s.lastIndexOf(",");
+  const lastDot = s.lastIndexOf(".");
+  const last = Math.max(lastComma, lastDot);
+
+  if (last === -1) {
+    s = s.replace(/[^\d-]/g, "");
+    return s ? Number(s) : NaN;
+  }
+
+  const intPart = s.slice(0, last).replace(/[^\d-]/g, "");
+  const decPart = s.slice(last + 1).replace(/[^\d]/g, "");
+  const normalized = `${intPart}.${decPart}`;
+
+  const num = Number(normalized);
+  return Number.isFinite(num) ? num : NaN;
+};
+
 const clampInt = (v, min = 0, max = Number.MAX_SAFE_INTEGER) =>
   Math.min(max, Math.max(min, parseInt(v ?? 0, 10) || 0));
 
@@ -935,7 +959,7 @@ function ServiceBudgetsSection() {
   const onSaveOne = async (row) => {
     const rawBudget = drafts[row.id]?.budget ?? (row.budget ?? "" );
     const rawPct = drafts[row.id]?.maxPct ?? (row.maxPct ?? "");
-    const presupuesto = Number(rawBudget);
+    const presupuesto = parseMoneyFlexible(rawBudget);
     const maxPct = Number(rawPct);
     if (!Number.isFinite(presupuesto) || presupuesto < 0) {
       setErr("Presupuesto inválido");
@@ -990,7 +1014,7 @@ function ServiceBudgetsSection() {
         {current.map((row) => {
           const saving = savingIds.has(row.id);
           const draft = drafts[row.id] || {};
-          const value = draft.budget ?? (row.budget ?? "");
+          const value = draft.budget ?? (row.budget == null ? "" : money(row.budget));
           const pct = draft.maxPct ?? (row.maxPct ?? "");
           return (
             <div key={row.id} className="budget-item">
@@ -1006,7 +1030,7 @@ function ServiceBudgetsSection() {
                 onChange={(e) =>
                   setDrafts((d) => ({ ...d, [row.id]: {...d[row.id],budget:e.target.value} }))
                 }
-                placeholder="0"
+                placeholder="$ 0,00"
                 style={{ width: 140 }}
                 aria-label={`Presupuesto para ${row.name}`}
               />

@@ -208,6 +208,34 @@ export function getUserForLogin(userOrEmailInput) {
     return null;
   }
 }
+
+export function updateUserPasswordHash(userId, newHas){
+  try {
+    const cols = tinfo("Empleados");
+    if(!cols.length) return false;
+
+    const idCol=
+    (cols.find(c=> c.pk === 1)?.name) || 
+    pickCol(cols, ["EmpleadosID", "EmpleadoID","IdEmpleado","empleado_id","user_id", "id","ID"]) ||
+    "EmpleadosID";
+
+    const hasCol = pickCol(cols, ["password_hash","hash","pass_hash","PasswordHash"]) || "password_hash";
+    const plainCol = pickCol(cols, ["password_plain","password","contrasena","contraseña","clave","pass","Password"]);
+
+    const sql = `
+    UPDATE Empleados
+    SET ${hasCol} = ? ${plainCol ? `, ${plainCol} = NULL `: ""}
+    WHERE ${idCol} = ?
+    `;
+    
+    const res = db.prepare(sql).run(newHas, userId);
+    return res?.changes > 0;
+  } catch(e){
+    console.error("[db] No se pudo actualizar el hash de contraseña:", e?.message || e);
+    return false;
+  }
+}
+
 export function getUserByUsername(username) {
   const u = getUserForLogin(username);
   if (!u) return null;

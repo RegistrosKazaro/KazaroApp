@@ -27,5 +27,5 @@ export const env = {
   MAIL_ALLOW_USER_FROM: bool(process.env.MAIL_ALLOW_USER_FROM, false),
 
   DEBUG_AUTH: bool(process.env.DEBUG_AUTH, false),
-  JWT_SECRET: process.env.JWT_SECRET || "dev-secret-change",
+  JWT_SECRET: process.env.JWT_SECRET,
 };

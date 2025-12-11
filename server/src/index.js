@@ -16,8 +16,7 @@ import supervisorRoutes from "./routes/supervisor.js";
 import serviceProductsRoutes from "./routes/serviceProducts.js";
 import reportsRoutes from "./routes/reports.js";
 import depositoRoutes from "./routes/deposito.js"; 
-import { verifyTransport } from "./utils/mailer.js";
-
+import { verifyTransport as verifyMailerTransport } from "./utils/mailer.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
@@ -66,8 +65,7 @@ ensureStockSyncTriggers();
 
 app.listen(env.PORT, async () => {
   console.log(`[server] Running on ${env.APP_BASE_URL}`);
-  try {
-    await verifyTransport();
+  try { await verifyMailerTransport();
   } catch (e) {
     console.warn(e.message);
   }
