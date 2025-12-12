@@ -1,11 +1,11 @@
 import express from "express";
-import cors from "cors";
 import cookieParser from "cookie-parser";
 import crypto from "crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 import { env } from "./utils/env.js";
 import { db, ensureStockColumn, ensureStockSyncTriggers, DB_RESOLVED_PATH } from "./db.js";
+import { createCorsMiddleware } from "./utils/corsConfig.js";
 
 import authRoutes from "./routes/auth.js";
 import ordersRoutes from "./routes/orders.js";
@@ -22,13 +22,11 @@ const app = express();
 
 app.disable("x-powered-by");
 
-app.use(
-  cors({
-    origin: (origin, cb) => cb(null, true),
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  })
-);
+if (env.TRUST_PROXY) {
+  app.set("trust proxy", env.TRUST_PROXY === "1" ? 1 : env.TRUST_PROXY);
+}
+
+app.use(createCorsMiddleware());
 
 app.use(express.json());
 app.use(cookieParser());

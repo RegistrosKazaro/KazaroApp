@@ -1,6 +1,9 @@
 const bool = (v, d = false) => v == null ? d : /^(1|true|yes|on)$/i.test(String(v).trim());
 const num  = (v, d) => Number.isFinite(Number(v)) ? Number(v) : d;
-
+const list = (v) => String(v || "")
+  .split(",")
+  .map((item) => item.trim())
+  .filter(Boolean);
 export const env = {
   NODE_ENV: process.env.NODE_ENV || "development",
 
