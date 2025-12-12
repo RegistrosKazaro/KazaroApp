@@ -163,9 +163,7 @@ router.post("/products", mustBeAdmin, (req, res) => {
     const placeholders = cols.map(() => "?").join(",");
     const info = db
       .prepare(
-        `INSERT INTO ${products} (${cols.join(
-          ",",
-        )}) VALUES (${placeholders})`,
+        `INSERT INTO ${products} (${cols.join(",")}) VALUES (${placeholders})`,
       )
       .run(...vals); // importante: spread de los valores
 
