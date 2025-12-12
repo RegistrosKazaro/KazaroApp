@@ -10,6 +10,13 @@ export const env = {
   APP_BASE_URL: process.env.APP_BASE_URL || "http://localhost:4000",
   PORT: num(process.env.PORT, 4000),
 
+  CORS_ALLOWED_ORIGINS: list(
+    process.env.CORS_ALLOWED_ORIGINS ??
+      (process.env.NODE_ENV === "development"
+        ? "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173"
+        : ""),
+  ),
+
   DB_PATH: process.env.DB_PATH,
 
   MAIL_DISABLE: bool(process.env.MAIL_DISABLE, false),
