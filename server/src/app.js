@@ -16,6 +16,10 @@ import { createCorsMiddleware } from "./utils/corsConfig.js";
 
 export const creatApp = () => {
   const app = express();
+  app.use(cors({
+  origin: true, 
+  credentials: true 
+}));
 
   app.disable("x-powered-by");
 
