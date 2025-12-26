@@ -1,0 +1,110 @@
+// server/src/index.js
+import "dotenv/config"; // ✅ SIEMPRE PRIMERO (antes de leer env)
+
+import express from "express";
+import cookieParser from "cookie-parser";
+import crypto from "crypto";
+
+import { env } from "./utils/env.js";
+import { db, ensureStockColumn, ensureStockSyncTriggers, DB_RESOLVED_PATH } from "./db.js";
+import { createCorsMiddleware } from "./utils/corsConfig.js";
+
+import authRoutes from "./routes/auth.js";
+import ordersRoutes from "./routes/orders.js";
+import adminRoutes from "./routes/admin.js";
+import catalogRoutes from "./routes/catalog.js";
+import servicesRoutes from "./routes/services.js";
+import supervisorRoutes from "./routes/supervisor.js";
+import serviceProductsRoutes from "./routes/serviceProducts.js";
+import reportsRoutes from "./routes/reports.js";
+import depositoRoutes from "./routes/deposito.js";
+
+import { verifyTransport as verifyMailerTransport } from "./utils/mailer.js";
+
+const app = express();
+const API_PREFIX = "/api";
+
+app.disable("x-powered-by");
+
+// ✅ detrás de Nginx/ELB suele ser necesario
+if (env.TRUST_PROXY) {
+  app.set("trust proxy", env.TRUST_PROXY === "1" ? 1 : env.TRUST_PROXY);
+}
+
+// ✅ CORS primero + preflight
+const corsMw = createCorsMiddleware();
+app.use(corsMw);
+app.options("*", corsMw);
+
+app.use(express.json());
+app.use(cookieParser());
+
+console.log("[db] PATH:", DB_RESOLVED_PATH);
+
+/**
+ * ✅ Montamos las rutas en / y /api para tolerar proxies.
+ */
+const routeMounts = [
+  ["/auth", authRoutes],
+  ["/orders", ordersRoutes],
+  ["/admin", adminRoutes],
+  ["/catalog", catalogRoutes],
+  ["/services", servicesRoutes],
+  ["/supervisor", supervisorRoutes],
+  ["/service-products", serviceProductsRoutes],
+  ["/reports", reportsRoutes],
+  ["/deposito", depositoRoutes],
+];
+
+for (const [p, router] of routeMounts) {
+  app.use(p, router);
+  app.use(`${API_PREFIX}${p}`, router);
+}
+
+// ✅ CSRF token en / y /api
+const csrfHandler = (req, res) => {
+  let token = req.cookies?.csrf_token;
+  if (!token) token = crypto.randomBytes(16).toString("hex");
+  res.cookie("csrf_token", token, {
+    httpOnly: false,
+    sameSite: "lax",
+    secure: env.NODE_ENV === "production",
+    maxAge: 12 * 60 * 60 * 1000,
+    path: "/",
+  });
+  return res.json({ csrfToken: token });
+};
+app.get("/csrf-token", csrfHandler);
+app.get(`${API_PREFIX}/csrf-token`, csrfHandler);
+
+// ✅ Health
+const healthHandler = (_req, res) => res.json({ ok: true });
+app.get("/_health", healthHandler);
+app.get(`${API_PREFIX}/_health`, healthHandler);
+
+// ✅ DB checks
+ensureStockColumn();
+ensureStockSyncTriggers();
+
+// ✅ escuchá en 0.0.0.0 para prod
+app.listen(env.PORT, "0.0.0.0", async () => {
+  console.log(`[server] NODE_ENV=${env.NODE_ENV}`);
+  console.log(`[server] Running on ${env.APP_BASE_URL} (port ${env.PORT})`);
+
+  // ✅ NO spamear verify (Gmail te bloquea). Solo una vez por arranque,
+  // y si MAIL_DISABLE=1 lo saltamos.
+  if (!env.MAIL_DISABLE) {
+    try {
+      await verifyMailerTransport();
+      console.log("[mailer] verify OK");
+    } catch (e) {
+      console.warn("[mailer] verify failed:", e?.message || e);
+    }
+  } else {
+    console.log("[mailer] disabled by MAIL_DISABLE=1");
+  }
+});
+npx pm2 flush
+npx pm2 restart kazaro-api
+npx pm2 logs kazaro-api --lines 50
+
