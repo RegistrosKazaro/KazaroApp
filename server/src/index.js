@@ -2,7 +2,7 @@ import express from "express";
 import cookieParser from "cookie-parser";
 import crypto from "crypto";
 import path from "path";
-import cors from "cors"; // Agregado para arreglar el error de consola
+import cors from "cors"; // IMPORTANTE: Para arreglar el error de consola
 import { fileURLToPath } from "url";
 import { env } from "./utils/env.js";
 import { db, ensureStockColumn, ensureStockSyncTriggers, DB_RESOLVED_PATH } from "./db.js";
@@ -27,7 +27,7 @@ if (env.TRUST_PROXY) {
   app.set("trust proxy", env.TRUST_PROXY === "1" ? 1 : env.TRUST_PROXY);
 }
 
-// --- SOLUCIÓN AL ERROR DE CONSOLA (CORS) ---
+// --- CONFIGURACIÓN DE SEGURIDAD (CORS) ---
 app.use(cors({
   origin: ["http://insumos.kazaro.com.ar", "http://18.207.207.60"],
   credentials: true,
@@ -40,7 +40,7 @@ app.use(cookieParser());
 
 console.log("[db] PATH:", DB_RESOLVED_PATH);
 
-// --- RUTAS (Agregamos /api para que coincida con el Frontend) ---
+// --- RUTAS CON PREFIJO /API ---
 app.use("/api/auth", authRoutes);
 app.use("/api/orders", ordersRoutes);
 app.use("/api/admin", adminRoutes);
@@ -51,7 +51,7 @@ app.use("/api/service-products", serviceProductsRoutes);
 app.use("/api/reports", reportsRoutes);
 app.use("/api/deposito", depositoRoutes);
 
-// Endpoint para CSRF Token
+// Endpoint para el Token CSRF
 app.get("/api/csrf-token", (req, res) => {
   let token = req.cookies?.csrf_token;
   if (!token) token = crypto.randomBytes(16).toString("hex");
@@ -67,7 +67,7 @@ app.get("/api/csrf-token", (req, res) => {
 
 app.get("/_health", (_req, res) => res.json({ ok: true }));
 
-// Inicialización de DB
+// Inicialización de base de datos
 ensureStockColumn();
 ensureStockSyncTriggers();
 
