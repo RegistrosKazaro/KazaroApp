@@ -11,7 +11,6 @@ import {
   listServicesByUser,
   updateUserPasswordHash,
 } from "../db.js";
-import { verify } from "crypto";
 
 const router = express.Router();
 
@@ -77,10 +76,10 @@ async function verifyPassword(inputPassword, userRow) {
     // MD5 / SHA1 heredados solo para migracion 
     try {
       const crypto = await import("crypto");
-      if (/^[a-f0-9]{32}$/i.test(hash)) {
-        const digest = crypto.createHash("md5").update(pass).digest("hex");
-        if(digest.toLocaleLowerCase()=== lower){
-          return { ok:true, algorithm: "md5", needsUpgrade: true};
+      if (/^[a-f0-9]{40}$/i.test(hash)) {
+      const digest = crypto.createHash("sha1").update(pass).digest("hex");
+      if (digest.toLowerCase() === lower) {
+      return { ok: true, algorithm: "sha1", needsUpgrade: true };
         }
       }
       // SHA1
@@ -93,8 +92,8 @@ async function verifyPassword(inputPassword, userRow) {
     } catch (e) {
       console.warn("[auth] verifyPassword legacy hash error:", e?.message || e);
     }
-    console.error("[auth] veryfyPassword: hash desconocido", hash?.slice.apply(0,12));
-    return { ok:false, reason: "unknown-has"};
+    console.error("[auth] verifyPassword: hash desconocido", hash?.slice(0, 12));
+    return { ok: false, reason: "unknown-hash" };
   }
     if (plain) {
       if (plain === pass){
