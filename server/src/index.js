@@ -20,6 +20,7 @@ import { createCorsMiddleware } from "./utils/corsConfig.js";  // Middleware de 
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
+console.log('SMTP_PASS:', process.env.SMTP_PASS);
 
 // Desactiva el header X-Powered-By
 app.disable("x-powered-by");
