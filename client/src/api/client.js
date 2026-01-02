@@ -1,5 +1,7 @@
 import axios from "axios";
 
+// Define la base URL de la API.  En desarrollo se usa http://localhost:4000 por defecto.
+// Si en producción sirves tu API bajo un prefijo (/api), puedes establecer VITE_API_URL accordingly.
 const BASE_URL =
   (import.meta?.env && import.meta.env.VITE_API_URL) ||
   "http://localhost:4000";
@@ -13,6 +15,7 @@ export const api = axios.create({
 let _csrf = null;
 let _pending = null;
 
+// Obtiene (o refresca) el token CSRF desde el backend
 async function fetchCsrf() {
   if (_pending) return _pending;
   _pending = api
@@ -32,7 +35,7 @@ export async function ensureCsrf() {
   return fetchCsrf();
 }
 
-// Inyecta CSRF sólo en métodos inseguros
+// Inyecta CSRF sólo en métodos inseguros (POST, PUT, PATCH, DELETE)
 api.interceptors.request.use(async (config) => {
   const method = (config.method || "get").toUpperCase();
   const unsafe = /^(POST|PUT|PATCH|DELETE)$/i.test(method);
@@ -45,6 +48,7 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
+// Maneja automáticamente el caso en que el CSRF caduca y el servidor responde 403
 api.interceptors.response.use(
   (res) => res,
   async (error) => {
