@@ -25,13 +25,11 @@ console.log('SMTP_PASS:', process.env.SMTP_PASS);
 // Desactiva el header X-Powered-By
 app.disable("x-powered-by");
 
-// Configura proxy inverso si corresponde
+
 if (env.TRUST_PROXY) {
   app.set("trust proxy", env.TRUST_PROXY === "1" ? 1 : env.TRUST_PROXY);
 }
 
-// Middleware CORS basado en .env (APP_BASE_URL y CORS_ALLOWED_ORIGINS)
-// Permite localhost:5173 y dominios definidos en producción.
 app.use(createCorsMiddleware());
 
 app.use(express.json());
