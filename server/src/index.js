@@ -72,13 +72,18 @@ ensureStockSyncTriggers();
 // Arranque del servidor
 const PORT = env.PORT || 4000;
 app.listen(PORT, "0.0.0.0", async () => {
-  // Usa APP_BASE_URL si existe, o fallback a localhost:PORT
   const host = env.APP_BASE_URL || `http://localhost:${PORT}`;
   console.log(`✅ [server] Running on ${host}`);
-  try {
-    await verifyMailerTransport();
+
+  // Verificación SMTP (útil para debug). En dev se saltea salvo que se fuerce.
+  const forceVerify = /^(1|true|yes|on)$/i.test(String(process.env.MAIL_VERIFY_ON_BOOT || "").trim());
+  const result = await verifyMailerTransport({ force: forceVerify });
+
+  if (result?.ok) {
     console.log("📧 Mailer verificado correctamente");
-  } catch (e) {
-    console.warn("⚠️ Mailer warning:", e.message);
+  } else if (result?.skipped) {
+    console.log(`📧 Mailer verificación omitida (${result.reason})`);
+  } else {
+    console.warn(`⚠️ Mailer no verificado: ${result?.reason || "unknown"}`);
   }
 });
