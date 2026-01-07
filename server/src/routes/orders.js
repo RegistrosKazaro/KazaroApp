@@ -23,9 +23,16 @@ const router = Router();
 const pad7 = (n) => String(n ?? "").padStart(7, "0");
 const money = (v) => {
   const n = Number(v || 0);
-  try { return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(n); }
-  catch { return `$ ${n.toFixed(2)}`; }
+  try {
+    return new Intl.NumberFormat("es-AR", {
+      style: "currency",
+      currency: "ARS",
+    }).format(n);
+  } catch {
+    return `$ ${n.toFixed(2)}`;
+  }
 };
+
 function fmtLocal(sqlTs) {
   if (!sqlTs) return "";
   try {
@@ -46,19 +53,20 @@ function fmtLocal(sqlTs) {
   }
 }
 
-
 function primaryRole(userId) {
-  const roles = (getUserRoles(userId) || []).map(r => String(r).toLowerCase());
+  const roles = (getUserRoles(userId) || []).map((r) => String(r).toLowerCase());
   if (roles.includes("supervisor")) return "supervisor";
   if (roles.includes("administrativo") || roles.includes("admin")) return "administrativo";
   return roles[0] || "administrativo";
 }
+
 function normalizeRoleName(v) {
   const s = String(v ?? "").trim().toLowerCase();
   if (s === "supervisor") return "supervisor";
   if (s === "administrativo" || s === "admin") return "administrativo";
   return null;
 }
+
 function resolveServiceName(servicioId, hintedName) {
   if (hintedName && String(hintedName).trim()) return String(hintedName).trim();
   const sid = String(servicioId ?? "").trim();
@@ -92,14 +100,18 @@ router.post("/", requireAuth, async (req, res) => {
       }
       // A esta altura, si sigue faltando, es error
       if (servicioId == null || String(servicioId).trim() === "") {
-        return res.status(400).json({ error: "servicioId es requerido para pedidos de supervisor" });
+        return res.status(400).json({
+          error: "servicioId es requerido para pedidos de supervisor",
+        });
       }
     } else {
       // administrativo: forzar sin servicio
       servicioId = null;
     }
+
     let budgetSettings = { budget: null, maxPct: DEFAULT_SERVICE_PCT };
     let maxTotalAllowed = null;
+
     if (rolEfectivo === "supervisor" && servicioId != null && String(servicioId).trim() !== "") {
       budgetSettings = getBudgetSettingsByServiceId(servicioId) || budgetSettings;
       if (budgetSettings?.budget && Number(budgetSettings.budget) > 0) {
@@ -109,8 +121,9 @@ router.post("/", requireAuth, async (req, res) => {
         }
       }
     }
+
     // Crear pedido
-   let pedidoId = null;
+    let pedidoId = null;
     try {
       pedidoId = createOrder({ empleadoId, servicioId, nota, items, maxTotalAllowed });
     } catch (err) {
@@ -123,8 +136,12 @@ router.post("/", requireAuth, async (req, res) => {
       }
       throw err;
     }
+
     // Guardar el rol explícitamente en la fila creada
-    db.prepare(`UPDATE Pedidos SET Rol = ? WHERE PedidoID = ?`).run(rolEfectivo, Number(pedidoId));
+    db.prepare(`UPDATE Pedidos SET Rol = ? WHERE PedidoID = ?`).run(
+      rolEfectivo,
+      Number(pedidoId)
+    );
 
     // Leer el pedido persistido
     const pedido = getFullOrder(pedidoId);
@@ -137,17 +154,15 @@ router.post("/", requireAuth, async (req, res) => {
     const rol = rolEfectivo; // ya normalizado y persistido
 
     // Servicio (solo supervisor)
-    const sid = rol === "supervisor"
-      ? String(pedido.ServicioID ?? servicioId ?? "").trim()
-      : ""; // administrativo: vacío
+    const sid =
+      rol === "supervisor" ? String(pedido.ServicioID ?? servicioId ?? "").trim() : "";
 
-    const serviceName = rol === "supervisor"
-      ? resolveServiceName(sid, pedido?.servicio?.name)
-      : ""; // administrativo: no mostrar
+    const serviceName =
+      rol === "supervisor" ? resolveServiceName(sid, pedido?.servicio?.name) : "";
 
-    const total      = Number(pedido.Total || 0);
+    const total = Number(pedido.Total || 0);
     const fechaLocal = fmtLocal(pedido.Fecha);
-    const notaFinal  = String(nota || pedido.Nota || "—");
+    const notaFinal = String(nota || pedido.Nota || "—");
 
     // ===== Generar PDF EN MEMORIA (sin tocar disco) =====
     const pedidoParaPdf = {
@@ -156,8 +171,10 @@ router.post("/", requireAuth, async (req, res) => {
       // administrativo: ocultar servicio completamente
       servicio: rol === "supervisor" ? { id: sid || null, name: serviceName } : null,
     };
+
     let filename = `remito_${nro}.pdf`;
     let buffer = null;
+
     try {
       const out = await generateRemitoPDFBuffer({ pedido: pedidoParaPdf });
       filename = out.filename || filename;
@@ -167,6 +184,9 @@ router.post("/", requireAuth, async (req, res) => {
     }
 
     // ===== Email =====
+    // IMPORTANTE: ahora devolvemos en la respuesta si el mail se envió o falló.
+    let mailStatus = { sent: false, skipped: true };
+
     try {
       let presupuestoLinea = "";
       if (rol === "supervisor" && sid) {
@@ -230,14 +250,14 @@ ${presupuestoLinea ? `<p><strong>${presupuestoLinea.replace("\n", "")}</strong><
 `.trim();
 
       // Solo enviar a destinatarios del servicio si es supervisor
-      const toArr = rol === "supervisor" && sid ? (getServiceEmails(sid) || []) : [];
+      const toArr = rol === "supervisor" && sid ? getServiceEmails(sid) || [] : [];
       const to = toArr.length ? toArr.join(",") : undefined;
 
       const attachments = buffer
         ? [{ filename, content: buffer, contentType: "application/pdf" }]
         : undefined;
 
-      await sendMail({
+      const info = await sendMail({
         to,
         subject,
         text,
@@ -245,17 +265,26 @@ ${presupuestoLinea ? `<p><strong>${presupuestoLinea.replace("\n", "")}</strong><
         attachments,
         entityType: "pedido",
         entityId: pedidoId,
-        displayAsUser: true,               // muestra nombre del usuario
+        displayAsUser: true, // muestra nombre del usuario (si mailer lo permite)
         userName: empleadoNombre,
-        userEmail: usuario?.email || null, // si hay mail del usuario
-        systemTag: "Kazaro Pedidos",       // etiqueta si no hay mail del user
+        userEmail: usuario?.email || null,
+        systemTag: "Kazaro Pedidos",
       });
+
+      mailStatus = { sent: true, messageId: info?.messageId || null };
     } catch (e) {
-      console.warn("[orders] sendMail falló:", e?.message || e);
+      mailStatus = { sent: false, error: e?.message || String(e) };
+      console.warn("[orders] sendMail falló:", mailStatus.error);
     }
 
     const pdfUrl = `/orders/pdf/${pedidoId}`;
-    return res.status(201).json({ ok: true, pedidoId, remito: { pdfUrl }, rol: rolEfectivo });
+    return res.status(201).json({
+      ok: true,
+      pedidoId,
+      remito: { pdfUrl },
+      rol: rolEfectivo,
+      mail: mailStatus,
+    });
   } catch (e) {
     console.error("[orders] POST / error:", e);
     return res.status(500).json({ error: "Error interno" });
