@@ -185,26 +185,26 @@ router.post("/", requireAuth, async (req, res) => {
 
     // ===== Email =====
     // IMPORTANTE: ahora devolvemos en la respuesta si el mail se envió o falló.
-    let mailStatus = { sent: false, skipped: true };
+   let mailStatus = { sent: false, skipped: true };
 
-    try {
-      let presupuestoLinea = "";
-      if (rol === "supervisor" && sid) {
-        const presupuesto = budgetSettings?.budget;
-        if (presupuesto && presupuesto > 0) {
-          const pct = Math.min(100, (total / presupuesto) * 100);
-          presupuestoLinea = `\nUsado: ${pct.toFixed(1)}%`;
-        }
-      }
+try {
+  let presupuestoLinea = "";
+  if (rol === "supervisor" && sid) {
+    const presupuesto = budgetSettings?.budget;
+    if (presupuesto && presupuesto > 0) {
+      const pct = Math.min(100, (total / presupuesto) * 100);
+      presupuestoLinea = `\nUsado: ${pct.toFixed(1)}%`;
+    }
+  }
 
-      const subject =
-        rol === "supervisor"
-          ? `NUEVO PEDIDO DE INSUMOS - "${serviceName}"`
-          : `NUEVO PEDIDO DE INSUMOS - Administrativo`;
+  const subject =
+    rol === "supervisor"
+      ? `NUEVO PEDIDO DE INSUMOS - "${serviceName}"`
+      : `NUEVO PEDIDO DE INSUMOS - Administrativo`;
 
-      const text =
-        rol === "supervisor"
-          ? `Se generó el pedido #${nro}.
+  const text =
+    rol === "supervisor"
+      ? `Se generó el pedido #${nro}.
 
 Empleado: ${empleadoNombre}
 Rol: ${rol}
@@ -214,7 +214,7 @@ Total: ${money(total)}
 Nota: ${notaFinal}${presupuestoLinea}
 
 Se adjunta PDF del remito.`
-          : `Se generó el pedido #${nro}.
+      : `Se generó el pedido #${nro}.
 
 Empleado: ${empleadoNombre}
 Rol: ${rol}
@@ -224,11 +224,10 @@ Nota: ${notaFinal}
 
 Se adjunta PDF del remito.`;
 
-      const html =
-        rol === "supervisor"
-          ? `
+  const html =
+    rol === "supervisor"
+      ? `
 <p>Se generó el pedido <strong>#${nro}</strong>.</p>
-
 <p><strong>Empleado:</strong> ${empleadoNombre}<br/>
 <strong>Rol:</strong> ${rol}<br/>
 <strong>Servicio:</strong> ${serviceName}<br/>
@@ -238,9 +237,8 @@ Se adjunta PDF del remito.`;
 ${presupuestoLinea ? `<p><strong>${presupuestoLinea.replace("\n", "")}</strong></p>` : ""}
 <p>Se adjunta PDF del remito.</p>
 `.trim()
-          : `
+      : `
 <p>Se generó el pedido <strong>#${nro}</strong>.</p>
-
 <p><strong>Empleado:</strong> ${empleadoNombre}<br/>
 <strong>Rol:</strong> ${rol}<br/>
 <strong>Fecha:</strong> ${fechaLocal}<br/>
@@ -249,42 +247,37 @@ ${presupuestoLinea ? `<p><strong>${presupuestoLinea.replace("\n", "")}</strong><
 <p>Se adjunta PDF del remito.</p>
 `.trim();
 
-      // Solo enviar a destinatarios del servicio si es supervisor
-      const toArr = rol === "supervisor" && sid ? getServiceEmails(sid) || [] : [];
-      const to = toArr.length ? toArr.join(",") : undefined;
+  // Solo enviar a destinatarios del servicio si es supervisor
+  const toArr = rol === "supervisor" && sid ? (getServiceEmails(sid) || []) : [];
+  const to = toArr.length ? toArr.join(",") : undefined;
 
-      const attachments = buffer
-        ? [{ filename, content: buffer, contentType: "application/pdf" }]
-        : undefined;
+  const attachments = buffer
+    ? [{ filename, content: buffer, contentType: "application/pdf" }]
+    : undefined;
 
-      const info = await sendMail({
-        to,
-        subject,
-        text,
-        html,
-        attachments,
-        entityType: "pedido",
-        entityId: pedidoId,
-        displayAsUser: true, // muestra nombre del usuario (si mailer lo permite)
-        userName: empleadoNombre,
-        userEmail: usuario?.email || null,
-        systemTag: "Kazaro Pedidos",
-      });
+  const info = await sendMail({
+    to,
+    subject,
+    text,
+    html,
+    attachments,
+    entityType: "pedido",
+    entityId: pedidoId,
+    displayAsUser: true,
+    userName: empleadoNombre,
+    userEmail: usuario?.email || null,
+    systemTag: "Kazaro Pedidos",
+  });
 
-      mailStatus = { sent: true, messageId: info?.messageId || null };
-    } catch (e) {
-      mailStatus = { sent: false, error: e?.message || String(e) };
-      console.warn("[orders] sendMail falló:", mailStatus.error);
-    }
+  mailStatus = { sent: true, messageId: info?.messageId || null };
+} catch (e) {
+  mailStatus = { sent: false, error: e?.message || String(e) };
+  console.warn("[orders] sendMail falló:", mailStatus.error);
+}
 
     const pdfUrl = `/orders/pdf/${pedidoId}`;
-    return res.status(201).json({
-      ok: true,
-      pedidoId,
-      remito: { pdfUrl },
-      rol: rolEfectivo,
-      mail: mailStatus,
-    });
+    return res.status(201).json({ ok: true, pedidoId, remito: { pdfUrl }, rol: rolEfectivo, mail: mailStatus });
+
   } catch (e) {
     console.error("[orders] POST / error:", e);
     return res.status(500).json({ error: "Error interno" });
