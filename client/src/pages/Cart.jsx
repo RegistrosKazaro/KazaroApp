@@ -6,7 +6,7 @@ import { api } from "../api/client";
 import "../styles/catalog.css";
 
 function useServiceBudget(servicioId) {
-  const [settings, setSettings] = useState({budget:null, maxPct: null})
+  const [settings, setSettings] = useState({ budget: null, maxPct: null });
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -41,6 +41,13 @@ function useServiceBudget(servicioId) {
   return { ...settings, loading };
 }
 
+function safeDateLabel(value) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("es-AR");
+}
+
 export default function Cart() {
   const { role } = useParams();
   const { user } = useAuth();
@@ -50,6 +57,9 @@ export default function Cart() {
   const [errorSend, setErrorSend] = useState("");
   const [remito, setRemito] = useState(null);
   const [note, setNote] = useState("");
+
+  // NUEVO: flag de éxito (para mostrar el cartel aunque falten campos del remito)
+  const [orderOk, setOrderOk] = useState(false);
 
   // Modo supervisor según la URL (/app/supervisor/...)
   const isSupervisorRoute = useMemo(
@@ -66,7 +76,7 @@ export default function Cart() {
   }, [user]);
 
   // Presupuesto del servicio SOLO en modo supervisor
-    const { budget, maxPct } = useServiceBudget(
+  const { budget, maxPct } = useServiceBudget(
     isSupervisorRoute ? service?.id : null
   );
 
@@ -96,6 +106,7 @@ export default function Cart() {
     setSending(true);
     setErrorSend("");
     setRemito(null);
+    setOrderOk(false);
 
     try {
       const payload = {
@@ -111,16 +122,46 @@ export default function Cart() {
       };
 
       const res = await api.post("/orders", payload);
+
+      // Marcamos éxito aunque el remito venga incompleto
+      setOrderOk(true);
+
+      // Guardamos remito si vino
       setRemito(res.data?.remito || null);
+
+      // Opcional: vaciar nota y carrito si tu flujo es “pedido enviado => limpiar”
       setNote("");
+      // clear(); // si querés que se limpie el carrito al enviar, descomentá
     } catch (e) {
-      setErrorSend(
-        e?.response?.data?.error || "No se pudo enviar el pedido"
-      );
+      setOrderOk(false);
+      setErrorSend(e?.response?.data?.error || "No se pudo enviar el pedido");
     } finally {
       setSending(false);
     }
   }
+
+  const showRemitoSection = orderOk || remito;
+
+  const successBoxStyle = {
+    border: "1px solid rgba(34,197,94,.35)",
+    background: "rgba(34,197,94,.10)",
+    borderRadius: 12,
+    padding: 12,
+    display: "flex",
+    gap: 10,
+    alignItems: "center",
+    marginBottom: 10,
+  };
+
+  const checkBadgeStyle = {
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    background: "rgba(34,197,94,.20)",
+    display: "grid",
+    placeItems: "center",
+    fontWeight: 900,
+  };
 
   return (
     <div className="catalog" style={{ maxWidth: 960, marginInline: "auto" }}>
@@ -138,21 +179,15 @@ export default function Cart() {
             <strong>Servicio:</strong> {service?.name}{" "}
             <small>(ID: {service?.id})</small>{" "}
             <>
-              •{" "}
-              <Link to="/app/supervisor/services">
-                cambiar
-              </Link>
+              • <Link to="/app/supervisor/services">cambiar</Link>
             </>
           </div>
         )}
 
         {isSupervisorRoute && !service && (
           <div style={{ marginTop: 6 }}>
-            <strong>Servicio:</strong>{" "}
-            <em>no seleccionado</em> —{" "}
-            <Link to="/app/supervisor/services">
-              elegir
-            </Link>
+            <strong>Servicio:</strong> <em>no seleccionado</em> —{" "}
+            <Link to="/app/supervisor/services">elegir</Link>
           </div>
         )}
 
@@ -182,13 +217,11 @@ export default function Cart() {
             </thead>
             <tbody>
               {items.map((it) => {
-                const sub =
-                  Number(it.price || 0) * Number(it.qty || 1);
+                const sub = Number(it.price || 0) * Number(it.qty || 1);
                 const max = Number.isFinite(Number(it.stock))
                   ? Number(it.stock)
                   : undefined;
-                const sinStock =
-                  max !== undefined && max <= 0;
+                const sinStock = max !== undefined && max <= 0;
 
                 return (
                   <tr key={it.productId}>
@@ -202,30 +235,21 @@ export default function Cart() {
                             marginTop: 4,
                           }}
                         >
-                          {sinStock
-                            ? "Sin stock"
-                            : `Stock disponible: ${max}`}
+                          {sinStock ? "Sin stock" : `Stock disponible: ${max}`}
                         </div>
                       )}
                     </td>
-                    <td className="mono">
-                      {nf.format(Number(it.price || 0))}
-                    </td>
+                    <td className="mono">{nf.format(Number(it.price || 0))}</td>
                     <td>
                       <input
                         type="number"
                         min="1"
-                        {...(max !== undefined
-                          ? { max: Math.max(1, max) }
-                          : {})}
+                        {...(max !== undefined ? { max: Math.max(1, max) } : {})}
                         step="1"
                         className="qty-input"
                         value={it.qty}
                         onChange={(e) => {
-                          const v = Math.max(
-                            1,
-                            Number(e.target.value) || 1
-                          );
+                          const v = Math.max(1, Number(e.target.value) || 1);
                           const safe =
                             max !== undefined
                               ? Math.min(v, Math.max(1, max))
@@ -238,10 +262,7 @@ export default function Cart() {
                     </td>
                     <td className="mono">{nf.format(sub)}</td>
                     <td>
-                      <button
-                        className="btn"
-                        onClick={() => remove(it.productId)}
-                      >
+                      <button className="btn" onClick={() => remove(it.productId)}>
                         Quitar
                       </button>
                     </td>
@@ -250,20 +271,8 @@ export default function Cart() {
               })}
             </tbody>
             <tfoot>
-              {usagePct != null && isSupervisorRoute && (
-                <tr>
-                  <td
-                    colSpan={3}
-                    style={{ textAlign: "right", fontWeight: 700 }}
-                  ></td>
-                  <td colSpan={2}></td>
-                </tr>
-              )}
               <tr>
-                <td
-                  colSpan={3}
-                  style={{ textAlign: "right", fontWeight: 700 }}
-                >
+                <td colSpan={3} style={{ textAlign: "right", fontWeight: 700 }}>
                   Total
                 </td>
                 <td className="mono" colSpan={2}>
@@ -277,11 +286,7 @@ export default function Cart() {
           <div className="state" style={{ marginTop: 12 }}>
             <label
               htmlFor="order-note"
-              style={{
-                display: "block",
-                fontWeight: 600,
-                marginBottom: 6,
-              }}
+              style={{ display: "block", fontWeight: 600, marginBottom: 6 }}
             >
               Nota del pedido (opcional)
             </label>
@@ -318,75 +323,91 @@ export default function Cart() {
           </div>
 
           {errorSend && (
-            <div
-              className="state error"
-              style={{ marginTop: 12 }}
-            >
+            <div className="state error" style={{ marginTop: 12 }}>
               {errorSend}
             </div>
           )}
 
-          {remito && (
-            <section
-              className="state"
-              style={{ marginTop: 12 }}
-            >
+          {/* NUEVO: Sección de éxito + remito (con fallbacks) */}
+          {showRemitoSection && (
+            <section className="state" style={{ marginTop: 12 }}>
               {/* % arriba del remito (solo supervisor) */}
               {isSupervisorRoute && usagePct != null && (
                 <div style={{ marginBottom: 6 }}>
-                  <span
-                    className={`budget-chip ${
-                      overLimit ? "over" : "ok"
-                    }`}
-                  >
+                  <span className={`budget-chip ${overLimit ? "over" : "ok"}`}>
                     {usagePct.toFixed(2)}% del presupuesto usado
                   </span>
                 </div>
               )}
 
-              <h3 style={{ marginTop: 0 }}>Remito generado</h3>
-              <div>
-                <strong>Número:</strong> {remito.numero}
-              </div>
-              <div>
-                <strong>Fecha:</strong>{" "}
-                {new Date(remito.fecha).toLocaleString("es-AR")}
-              </div>
-              <div>
-                <strong>Generado por:</strong> {remito.empleado}
-              </div>
-
-              {/* Servicio SOLO cuando vino y estamos en supervisor */}
-              {isSupervisorRoute && remito.servicio && (
+              {/* Cartelito de aprobación */}
+              <div style={successBoxStyle}>
+                <div style={checkBadgeStyle}>✓</div>
                 <div>
-                  <strong>Servicio:</strong>{" "}
-                  {remito.servicio.name}
+                  <div style={{ fontWeight: 800, lineHeight: 1.2 }}>
+                    Remito generado con éxito
+                  </div>
+                  <div style={{ fontSize: 13, opacity: 0.85 }}>
+                    El pedido fue registrado correctamente.
+                  </div>
                 </div>
-              )}
-
-              {/* Nota del remito */}
-              {remito.nota && remito.nota.trim() && (
-                <div style={{ whiteSpace: "pre-wrap" }}>
-                  <strong>Nota:</strong> {remito.nota}
-                </div>
-              )}
-
-              <div>
-                <strong>Total:</strong>{" "}
-                {nf.format(remito.total || 0)}
               </div>
-              {remito.pdfUrl && (
-                <div style={{ marginTop: 8 }}>
-                  <a
-                    className="pill"
-                    href={remito.pdfUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Descargar PDF
-                  </a>
-                </div>
-              )}
+
+              {/* Detalle SOLO si el backend devolvió remito con datos */}
+              {remito ? (
+                <>
+                  <h3 style={{ marginTop: 0 }}>Detalle del remito</h3>
+
+                  <div>
+                    <strong>Número:</strong>{" "}
+                    {remito.numero != null && String(remito.numero).trim()
+                      ? remito.numero
+                      : "—"}
+                  </div>
+
+                  <div>
+                    <strong>Fecha:</strong> {safeDateLabel(remito.fecha)}
+                  </div>
+
+                  <div>
+                    <strong>Generado por:</strong>{" "}
+                    {remito.empleado != null && String(remito.empleado).trim()
+                      ? remito.empleado
+                      : "—"}
+                  </div>
+
+                  {/* Servicio SOLO cuando vino y estamos en supervisor */}
+                  {isSupervisorRoute && remito.servicio?.name && (
+                    <div>
+                      <strong>Servicio:</strong> {remito.servicio.name}
+                    </div>
+                  )}
+
+                  {/* Nota del remito */}
+                  {remito.nota && remito.nota.trim() && (
+                    <div style={{ whiteSpace: "pre-wrap" }}>
+                      <strong>Nota:</strong> {remito.nota}
+                    </div>
+                  )}
+
+                  <div>
+                    <strong>Total:</strong> {nf.format(remito.total || 0)}
+                  </div>
+
+                  {remito.pdfUrl && (
+                    <div style={{ marginTop: 8 }}>
+                      <a
+                        className="pill"
+                        href={remito.pdfUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Descargar PDF
+                      </a>
+                    </div>
+                  )}
+                </>
+              ) : null}
             </section>
           )}
         </>
