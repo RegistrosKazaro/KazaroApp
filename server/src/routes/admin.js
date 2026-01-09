@@ -700,6 +700,60 @@ router.get("/services", mustBeAdmin, (req, res) => {
     res.status(500).json({ error: "Error al listar servicios" });
   }
 });
+router.get("/services-all", mustBeAdmin, (_req, res) => {
+  try {
+    const rows = db
+      .prepare(
+        `
+        SELECT 
+          s.${SRV_ID} AS id,
+          s.${SRV_NAME} AS name
+        FROM Servicios s
+        ORDER BY s.${SRV_NAME} COLLATE NOCASE
+      `
+      )
+      .all();
+
+    return res.json(Array.isArray(rows) ? rows : []);
+  } catch (e) {
+    console.error("GET /admin/services-all error:", e);
+    return res.status(500).json({ error: "Error al listar servicios" });
+  }
+});
+
+router.post("/services-create", mustBeAdmin, (req, res) => {
+  try {
+    const name = String(req.body?.name ?? "").trim();
+    if (!name) return res.status(400).json({ error: "El nombre es obligatorio" });
+
+    // Evitar duplicado por nombre (case-insensitive)
+    const exists = db
+      .prepare(
+        `
+        SELECT 1
+        FROM Servicios
+        WHERE lower(trim(${SRV_NAME})) = lower(trim(?))
+        LIMIT 1
+      `
+      )
+      .get(name);
+
+    if (exists) {
+      return res.status(409).json({ error: "Ya existe un servicio con ese nombre" });
+    }
+
+    const info = db
+      .prepare(`INSERT INTO Servicios (${SRV_NAME}) VALUES (?)`)
+      .run(name);
+
+    const id = Number(info.lastInsertRowid);
+
+    return res.status(201).json({ ok: true, service: { id, name } });
+  } catch (e) {
+    console.error("POST /admin/services-create error:", e);
+    return res.status(500).json({ error: "No se pudo crear el servicio" });
+  }
+});
 
 router.get("/supervisors", mustBeAdmin, (_req, res) => {
   try {
