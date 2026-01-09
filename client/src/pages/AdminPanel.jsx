@@ -1691,6 +1691,112 @@ function OrdersSection() {
 /* ===========================================================
  * Componente principal con tabs
  * ========================================================= */
+function CreateServiceSection() {
+  const [name, setName] = useState("");
+  const [services, setServices] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+
+  const loadAll = useCallback(async () => {
+    setLoading(true);
+    setErr("");
+    setMsg("");
+    try {
+      const { data } = await api.get("/admin/services-all");
+      setServices(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setErr(e?.response?.data?.error || "No se pudieron cargar los servicios");
+      setServices([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadAll();
+  }, [loadAll]);
+
+  const create = async () => {
+    const clean = String(name || "").trim();
+    if (!clean) {
+      setErr("El nombre es obligatorio");
+      return;
+    }
+
+    setSaving(true);
+    setErr("");
+    setMsg("");
+    try {
+      const { data } = await api.post("/admin/services-create", { name: clean });
+      setMsg(`Servicio creado: ${data?.service?.name || clean}`);
+      setName("");
+      await loadAll();
+    } catch (e) {
+      setErr(e?.response?.data?.error || "No se pudo crear el servicio");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="srv-card" aria-labelledby="create-service-heading">
+      <div className="section-header">
+        <h3 id="create-service-heading">Crear servicio</h3>
+        {(msg || err) && (
+          <div className={`state ${err ? "error" : "success"}`}>
+            {err || msg}
+          </div>
+        )}
+      </div>
+
+      <div className="toolbar" style={{ gap: 10 }}>
+        <input
+          className="input"
+          placeholder="Nombre del servicio…"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          aria-label="Nombre del servicio"
+        />
+        <button className="btn primary" onClick={create} disabled={saving}>
+          {saving ? "Creando…" : "+ Crear"}
+        </button>
+        <button className="btn" onClick={loadAll} disabled={loading}>
+          {loading ? "Actualizando…" : "Actualizar lista"}
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="state">Cargando…</div>
+      ) : (
+        <div className="table like" style={{ marginTop: 12 }}>
+          <div className="t-head">
+            <div style={{ flex: 2 }}>ID</div>
+            <div style={{ flex: 6 }}>Nombre</div>
+          </div>
+          {services.length === 0 ? (
+            <div className="t-row">
+              <div style={{ flex: 1 }}>—</div>
+              <div style={{ flex: 6 }}>Sin servicios</div>
+            </div>
+          ) : (
+            services.map((s) => (
+              <div key={String(s.id)} className="t-row">
+                <div style={{ flex: 2 }} className="mono">
+                  {s.id}
+                </div>
+                <div style={{ flex: 6 }}>{s.name}</div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+
 export default function AdminPanel() {
   const nav = useNavigate();
   const { user, loading } = useAuth();
@@ -1754,6 +1860,15 @@ export default function AdminPanel() {
         >
           Asignar servicios
         </button>
+        
+        <button
+          className={`tab-btn ${tab === "createService" ? "is-active" : ""}`}
+          onClick={() => setTab("createService")}
+          role="tab"
+          aria-selected={tab === "createService"}
+          >
+          Crear servicio
+          </button>
 
         <button
           className={`tab-btn ${tab === "serviceProducts" ? "is-active" : ""}`}
@@ -1801,6 +1916,8 @@ export default function AdminPanel() {
       {tab === "incomingStock" && <IncomingStockSection />}
       {tab === "massReassign" && <MassReassignServicesSection />}
       {tab === "orders" && <OrdersSection />}
+      {tab === "createService" && <CreateServiceSection />}
+
     </div>
   );
 }
