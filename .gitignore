@@ -29,3 +29,8 @@ pnpm-debug.log*
 .vscode/
 .DS_Store
 Thumbs.db
+# Archivos locales de pruebas con curl
+cookies.txt
+-d
+curl
+git
