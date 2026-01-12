@@ -4,8 +4,10 @@ import cookieParser from "cookie-parser";
 import crypto from "crypto";
 import path from "path";
 import { fileURLToPath } from "url";
+
 import { env } from "./utils/env.js";
-import { db, ensureStockColumn, ensureStockSyncTriggers, DB_RESOLVED_PATH } from "./db.js";
+import { ensureStockColumn, ensureStockSyncTriggers, DB_RESOLVED_PATH } from "./db.js";
+
 import authRoutes from "./routes/auth.js";
 import ordersRoutes from "./routes/orders.js";
 import adminRoutes from "./routes/admin.js";
@@ -14,30 +16,67 @@ import servicesRoutes from "./routes/services.js";
 import supervisorRoutes from "./routes/supervisor.js";
 import serviceProductsRoutes from "./routes/serviceProducts.js";
 import reportsRoutes from "./routes/reports.js";
-import depositoRoutes from "./routes/deposito.js"; 
+import depositoRoutes from "./routes/deposito.js";
+
 import { verifyTransport as verifyMailerTransport } from "./utils/mailer.js";
-import { createCorsMiddleware } from "./utils/corsConfig.js";  // Middleware de CORS dinámico
+import { createCorsMiddleware } from "./utils/corsConfig.js";
+
+// ✅ CSRF middleware (debe ser middleware express: (req,res,next) => {})
+import { requireCsrf } from "./utils/simpleCsrf.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-console.log('SMTP_PASS:', process.env.SMTP_PASS);
 
-// Desactiva el header X-Powered-By
+// Seguridad: desactiva header X-Powered-By
 app.disable("x-powered-by");
 
-
+// ✅ Si estás detrás de Nginx/ALB/CloudFront
 if (env.TRUST_PROXY) {
+  // TRUST_PROXY=1 recomendado detrás de ALB/Nginx
   app.set("trust proxy", env.TRUST_PROXY === "1" ? 1 : env.TRUST_PROXY);
 }
 
+// ✅ CORS (debe permitir credentials si usás cookies)
 app.use(createCorsMiddleware());
 
+// ✅ Body + cookies (cookies deben estar antes del CSRF)
 app.use(express.json());
 app.use(cookieParser());
 
 console.log("[db] PATH:", DB_RESOLVED_PATH);
 
-// Rutas sin prefijo /api (corresponden a los endpoints que usa tu frontend)
+// =========================
+// 1) CSRF TOKEN ENDPOINT
+// =========================
+app.get("/csrf-token", (req, res) => {
+  let token = req.cookies?.csrf_token;
+  if (!token) token = crypto.randomBytes(16).toString("hex");
+
+  res.cookie("csrf_token", token, {
+    httpOnly: false, // el frontend lo lee para mandarlo en X-CSRF-Token
+    sameSite: "lax",
+    secure: env.NODE_ENV === "production", // true con HTTPS real (y trust proxy correcto)
+    maxAge: 12 * 60 * 60 * 1000,
+    path: "/",
+  });
+
+  return res.json({ csrfToken: token });
+});
+
+// =========================
+// 2) HEALTHCHECK
+// =========================
+app.get("/_health", (_req, res) => res.json({ ok: true }));
+
+// =========================
+// 3) CSRF VALIDATION REAL
+// =========================
+// OJO: sin paréntesis. Es middleware express ya listo.
+app.use(requireCsrf);
+
+// =========================
+// 4) RUTAS PROTEGIDAS
+// =========================
 app.use("/auth", authRoutes);
 app.use("/orders", ordersRoutes);
 app.use("/admin", adminRoutes);
@@ -48,35 +87,26 @@ app.use("/service-products", serviceProductsRoutes);
 app.use("/reports", reportsRoutes);
 app.use("/deposito", depositoRoutes);
 
-// Endpoint para obtener el token CSRF
-app.get("/csrf-token", (req, res) => {
-  let token = req.cookies?.csrf_token;
-  if (!token) token = crypto.randomBytes(16).toString("hex");
-  res.cookie("csrf_token", token, {
-    httpOnly: false,
-    sameSite: "lax",
-    secure: env.NODE_ENV === "production", // usa true si sirves con HTTPS
-    maxAge: 12 * 60 * 60 * 1000,
-    path: "/",
-  });
-  return res.json({ csrfToken: token });
-});
-
-// Endpoint de salud
-app.get("/_health", (_req, res) => res.json({ ok: true }));
-
-// Inicializa columnas y triggers en la base de datos
+// =========================
+// DB init (si esto es idempotente, OK)
+// =========================
 ensureStockColumn();
 ensureStockSyncTriggers();
 
-// Arranque del servidor
+// =========================
+// START SERVER
+// =========================
 const PORT = env.PORT || 4000;
+
 app.listen(PORT, "0.0.0.0", async () => {
   const host = env.APP_BASE_URL || `http://localhost:${PORT}`;
   console.log(`✅ [server] Running on ${host}`);
 
-  // Verificación SMTP (útil para debug). En dev se saltea salvo que se fuerce.
-  const forceVerify = /^(1|true|yes|on)$/i.test(String(process.env.MAIL_VERIFY_ON_BOOT || "").trim());
+  // Verificación SMTP (NO imprime secretos)
+  const forceVerify = /^(1|true|yes|on)$/i.test(
+    String(process.env.MAIL_VERIFY_ON_BOOT || "").trim()
+  );
+
   const result = await verifyMailerTransport({ force: forceVerify });
 
   if (result?.ok) {
