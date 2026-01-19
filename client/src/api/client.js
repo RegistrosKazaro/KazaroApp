@@ -8,7 +8,7 @@ const BASE_URL =
 
 export const api = axios.create({
   baseURL: BASE_URL,
-  withCredentials: true, // envía cookies (token/sid/csrf) en CORS
+  withCredentials: true,
   headers: { "Content-Type": "application/json" },
 });
 
