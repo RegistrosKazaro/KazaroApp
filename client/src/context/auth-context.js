@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-/*comentarop*/ 
+/*comentario*/ 
 export const AuthContext = createContext(null);
 
 export function useAuth() {
