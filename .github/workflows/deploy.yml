@@ -1,11 +1,13 @@
 name: Deploy to AWS EC2
+
 on:
   push:
-    branches: [ "main" ]
-jobs:
+    branches: ["main"]
 
+jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.2.0
@@ -13,7 +15,16 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          port: ${{ secrets.EC2_PORT || 22 }}
+          port: ${{ secrets.EC2_PORT }}
+          script_stop: true
+          command_timeout: 15m
           script: |
-            set -e
-            /home/ec2-user/apps/KazaroApp/redeploy.sh
+            set -euo pipefail
+            echo "== whoami ==" && whoami
+            echo "== pwd ==" && pwd
+            echo "== home ==" && echo "$HOME"
+            echo "== file exists? =="
+            ls -la /home/ec2-user/apps/KazaroApp || true
+            ls -la /home/ec2-user/apps/KazaroApp/redeploy.sh || true
+            echo "== run redeploy =="
+            bash /home/ec2-user/apps/KazaroApp/redeploy.sh
