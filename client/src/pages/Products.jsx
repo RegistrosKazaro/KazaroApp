@@ -259,7 +259,7 @@ export default function Products() {
 }
 
 function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
-  const [qty, setQty] = useState(1);
+  const [qtyText, setQtyText] = useState("1");
 
   const priceText = useMemo(() => {
     if (p.price == null) return "";
@@ -307,14 +307,18 @@ function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
   }, [sinRestante, remainingStock]);
 
   // Ajustar cantidad si cambia el límite
-  useEffect(() => {
-    if (maxQty !== undefined) {
-      setQty((q) => {
-        const base = Math.max(1, q);
-        return Math.min(base, maxQty);
-      });
-    }
-  }, [maxQty]);
+
+const getQtyNumber = () => {
+  const n = Number(qtyText);
+  let v = Number.isFinite(n) ? Math.trunc(n) : 1;
+  v = Math.max(1, v);
+
+  if (maxQty !== undefined) {
+    v = Math.min(v, maxQty);
+  }
+
+  return v;
+};
 
   return (
     <article className="product-card">
@@ -343,32 +347,45 @@ function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
 
       <div className="actions">
         <input
-          type="number"
-          min="1"
-          {...(maxQty !== undefined ? { max: Math.max(1, maxQty) } : {})}
-          step="1"
-          className="qty-input"
-          value={qty}
-          onChange={(e) => {
-            const v = Math.max(1, Number(e.target.value) || 1);
-            if (maxQty !== undefined) {
-              setQty(Math.min(v, maxQty));
-            } else {
-              setQty(v);
-            }
-          }}
-          disabled={sinRestante}
-          aria-label={`Cantidad de ${p.name}`}
-        />
+  type="number"
+  min="1"
+  {...(maxQty !== undefined ? { max: Math.max(1, maxQty) } : {})}
+  step="1"
+  className="qty-input"
+  value={qtyText}
+  onChange={(e) => {
+    const next = e.target.value;
+
+    // permitir borrar el valor
+    if (next === "") {
+      setQtyText("");
+      return;
+    }
+
+    const n = Number(next);
+    if (!Number.isFinite(n)) return;
+
+    setQtyText(next);
+  }}
+  onBlur={() => {
+    setQtyText(String(getQtyNumber()));
+  }}
+  disabled={sinRestante}
+  aria-label={`Cantidad de ${p.name}`}
+/>
         <button
-          type="button"
-          className="btn btn-add"
-          onClick={() => onAdd(qty)}
-          disabled={addDisabled || sinRestante}
-          aria-label={`Agregar ${qty} de ${p.name} al carrito`}
-        >
-          Agregar
-        </button>
+  type="button"
+  className="btn btn-add"
+  onClick={() => {
+    const qn = getQtyNumber();
+    setQtyText(String(qn));
+    onAdd(qn);
+  }}
+  disabled={addDisabled || sinRestante}
+  aria-label={`Agregar ${getQtyNumber()} de ${p.name} al carrito`}
+>
+  Agregar
+</button>
       </div>
     </article>
   );
