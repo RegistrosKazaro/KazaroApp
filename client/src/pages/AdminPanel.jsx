@@ -55,6 +55,14 @@ const parseMoneyFlexible = (raw) => {
 const clampInt = (v, min = 0, max = Number.MAX_SAFE_INTEGER) =>
   Math.min(max, Math.max(min, parseInt(v ?? 0, 10) || 0));
 
+const norm = (v) =>
+  String(v ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // quita acentos
+    .replace(/\s+/g, " "); // compacta espacios
+
 const useDebounced = (value, delay = 300) => {
   const [v, setV] = useState(value);
   useEffect(() => {
@@ -63,6 +71,8 @@ const useDebounced = (value, delay = 300) => {
   }, [value, delay]);
   return v;
 };
+
+
 
 /* ===========================================================
  * 1) Productos
@@ -78,6 +88,16 @@ function ProductsSection() {
   // Categorías
   const [cats, setCats] = useState([]);
   const [catsErr, setCatsErr] = useState("");
+  const [catFilter, setCatFilter] = useState(""); // filtro por categoría (id o nombre)
+  
+  const catIdByName = useMemo(() => {
+    const m = new Map();
+    for (const c of cats) {
+      const key = norm(c?.name);
+      if (key) m.set(key, String(c.id));
+    }
+    return m;
+  }, [cats]);
 
   // Edición/alta
   const [editingId, setEditingId] = useState(null); // null | "__new__" | id
@@ -91,24 +111,101 @@ function ProductsSection() {
   const [catTouched, setCatTouched] = useState(false);
   const [editingLoading, setEditingLoading] = useState(false);
   const nameRef = useRef(null);
+  
 
   // Edición rápida de stock
   const [stockEdit, setStockEdit] = useState(null); // { id, value }
 
   const load = useCallback(async () => {
-    setLoading(true);
-    setErr("");
-    try {
-      const { data } = await api.get("/admin/products", {
-        params: { q: String(qDeb || "").trim(), limit: 200 },
-      });
-      setRows(Array.isArray(data) ? data : []);
-    } catch (e) {
-      setErr(e?.response?.data?.error || e.message || "Error al cargar");
-    } finally {
-      setLoading(false);
-    }
-  }, [qDeb]);
+  setLoading(true);
+  setErr("");
+  try {
+    const { data } = await api.get("/admin/products", {
+      params: { q: String(qDeb || "").trim(), limit: 200 },
+    });
+
+    const list = Array.isArray(data) ? data : [];
+    console.log("[admin/products] sample[0]:", list[0]);
+
+const sampleWithSomeCatFields = list.find((p) =>
+  p?.categoryId != null ||
+  p?.category_id != null ||
+  p?.CategoriaID != null ||
+  p?.categoriaId != null ||
+  p?.catId != null ||
+  p?.CatID != null ||
+  p?.categoryName != null ||
+  p?.category_name != null ||
+  p?.Categoria != null ||
+  p?.categoria != null ||
+  p?.category != null ||
+  p?.Category != null
+);
+
+console.log("[admin/products] sampleWithCatFields:", sampleWithSomeCatFields);
+
+const sampleWithoutCatFields = list.find((p) =>
+  (p?.categoryId == null &&
+    p?.category_id == null &&
+    p?.CategoriaID == null &&
+    p?.categoriaId == null &&
+    p?.catId == null &&
+    p?.CatID == null &&
+    p?.categoryName == null &&
+    p?.category_name == null &&
+    p?.Categoria == null &&
+    p?.categoria == null &&
+    p?.category == null &&
+    p?.Category == null)
+);
+
+console.log("[admin/products] sampleWithoutCatFields:", sampleWithoutCatFields);
+
+
+    // Filtro por categoría (soporta productos nuevos y viejos)
+    const filteredByCategory = !catFilter
+      ? list
+      : list.filter((p) => {
+          // Intento 1: ID directo (distintos nombres posibles)
+          const rawId =
+            p?.categoryId ??
+            p?.category_id ??
+            p?.CategoriaID ??
+            p?.categoriaId ??
+            p?.catId ??
+            p?.CatID ??
+            null;
+
+          if (rawId != null && String(rawId) === String(catFilter)) return true;
+
+          // Intento 2: nombre de categoría (productos viejos)
+          const rawName =
+            p?.categoryName ??
+            p?.category_name ??
+            p?.Categoria ??
+            p?.categoria ??
+            p?.category ??
+            p?.Category ??
+            null;
+
+          if (rawName != null) {
+          const key = norm(rawName);
+          const mappedId = catIdByName.get(key);
+          if (mappedId && String(mappedId) === String(catFilter)) return true;
+        }
+
+          return false;
+        });
+
+    setRows(filteredByCategory);
+  } catch (e) {
+    setErr(e?.response?.data?.error || e.message || "Error al cargar");
+  } finally {
+    setLoading(false);
+  }
+}, [qDeb, catFilter, catIdByName]);
+
+
 
   const loadCats = useCallback(async () => {
     try {
@@ -256,19 +353,26 @@ function ProductsSection() {
 
   const cancelStockEdit = () => setStockEdit(null);
 
-  const saveStock = async () => {
-    try {
-      await api.put(`/admin/products/${stockEdit.id}`, {
-        stock: Number(stockEdit.value),
-      });
-      await load();
-      setStatusMsg("Stock actualizado.");
-    } catch (e) {
-      setErr(e?.response?.data?.error || e.message);
-    } finally {
-      cancelStockEdit();
-    }
-  };
+  const saveStock = async (e) => {
+  if (e?.preventDefault) e.preventDefault();
+
+  try {
+    await api.put(`/admin/products/${stockEdit.id}`, {
+      stock: Number(stockEdit.value),
+    });
+    setRows((prev) =>
+      prev.map((it) =>
+        it.id === stockEdit.id ? { ...it, stock: Number(stockEdit.value) } : it
+      )
+    );
+
+    setStatusMsg("Stock actualizado.");
+  } catch (e2) {
+    setErr(e2?.response?.data?.error || e2.message);
+  } finally {
+    cancelStockEdit();
+  }
+};
 
   const onKeyDownStock = (e) => {
     if (e.key === "Enter") {
@@ -286,21 +390,51 @@ function ProductsSection() {
       <div className="section-header">
         <h3 id="products-heading">Productos</h3>
         <div className="toolbar" role="search">
-          <input
-            className="input"
-            placeholder="Buscar… (mín. 2 letras)"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            aria-label="Buscar productos"
-          />
-          <button className="btn" onClick={load} disabled={loading}>
-            {loading ? "Buscando…" : "Buscar"}
-          </button>
-          <div style={{ flex: 1 }} />
-          <button className="btn primary" onClick={startNew}>
-            + Nuevo
-          </button>
-        </div>
+  <input
+    className="input"
+    placeholder="Buscar… (mín. 2 letras)"
+    value={q}
+    onChange={(e) => setQ(e.target.value)}
+    aria-label="Buscar productos"
+  />
+
+  <select
+    className="select"
+    value={catFilter}
+    onChange={(e) => setCatFilter(e.target.value)}
+    aria-label="Filtrar por categoría"
+    style={{ minWidth: 220 }}
+  >
+    <option value="">— Todas las categorías —</option>
+    {cats.map((c) => (
+      <option key={c.id} value={String(c.id)}>
+        {c.name}
+      </option>
+    ))}
+  </select>
+
+  <button className="btn" onClick={load} disabled={loading}>
+    {loading ? "Buscando…" : "Buscar"}
+  </button>
+
+  <button
+    className="btn ghost"
+    type="button"
+    onClick={() => {
+      setQ("");
+      setCatFilter("");
+    }}
+  >
+    Limpiar filtros
+  </button>
+
+  <div style={{ flex: 1 }} />
+
+  <button className="btn primary" onClick={startNew}>
+    + Nuevo
+  </button>
+</div>
+
         {(statusMsg || err) && (
           <div
             className={`state ${err ? "error" : "success"}`}
@@ -457,10 +591,10 @@ function ProductsSection() {
               >
                 {stockEdit?.id === r.id ? (
                   <>
-                    <button className="pill" onClick={saveStock}>
-                      Guardar
+                    <button type="button" className="pill" onClick={saveStock}>
+                       Guardar
                     </button>
-                    <button className="pill ghost" onClick={cancelStockEdit}>
+                    <button type="button" className="pill ghost" onClick={cancelStockEdit}>
                       Cancelar
                     </button>
                   </>

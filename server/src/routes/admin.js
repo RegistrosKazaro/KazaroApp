@@ -61,7 +61,8 @@ router.get("/products", mustBeAdmin, (req, res) => {
   try {
     const sch = prodSchemaOrThrow();
     const { products } = sch.tables;
-    const { prodId, prodName, prodPrice, prodStock, prodCode } = sch.cols;
+    const { prodId, prodName, prodPrice, prodStock, prodCode, prodCat, prodCatName } = sch.cols;
+
 
     const q = String(req.query.q ?? "").trim();
     const like = `%${q}%`;
@@ -75,16 +76,18 @@ router.get("/products", mustBeAdmin, (req, res) => {
       : "";
 
     const sql = `
-      SELECT ${prodId} AS id,
-             ${prodName} AS name
-             ${prodCode  ? `, ${prodCode}  AS code`  : ""}
-             ${prodPrice ? `, ${prodPrice} AS price` : ""}
-             ${prodStock ? `, ${prodStock} AS stock` : ""}
-      FROM ${products}
-      ${where}
-      ORDER BY ${prodName} COLLATE NOCASE
-      LIMIT 500
-    `;
+  SELECT ${prodId} AS id,
+         ${prodName} AS name
+         ${prodCat ? `, ${prodCat} AS categoryId` : ""}
+         ${!prodCat && prodCatName ? `, ${prodCatName} AS categoryName` : ""}
+         ${prodCode  ? `, ${prodCode}  AS code`  : ""}
+         ${prodPrice ? `, ${prodPrice} AS price` : ""}
+         ${prodStock ? `, ${prodStock} AS stock` : ""}
+  FROM ${products}
+  ${where}
+  ORDER BY ${prodName} COLLATE NOCASE
+  LIMIT 500
+`;
     res.json(db.prepare(sql).all({ like }));
   } catch {
     res.status(500).json({ error: "Error al listar productos" });

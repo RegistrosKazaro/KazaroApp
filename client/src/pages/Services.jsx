@@ -8,13 +8,24 @@ import "../styles/services.css";
 
 const PER_PAGE = 15;
 
+/** Debounce simple para no disparar búsquedas en cada tecla */
+function useDebounced(value, delay = 350) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return v;
+}
+
 export default function ServicesPage() {
   const nav = useNavigate();
   const { user, loading: loadingUser } = useAuth();
   const { service, setService } = useCart();
 
   const [services, setServices] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true);     // SOLO primera carga
+  const [fetching, setFetching] = useState(false);  // búsquedas posteriores (no desmonta input)
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
   const [showOnlyAssigned, setShowOnlyAssigned] = useState(false); // solo admin
@@ -25,6 +36,8 @@ export default function ServicesPage() {
   );
   const isAdmin = roles.includes("admin");
   const isSupervisor = roles.includes("supervisor");
+
+  const debouncedQ = useDebounced(q, 350);
 
   // Permitir esta pantalla a supervisor **o** admin. Redirigir solo si no es ninguno.
   useEffect(() => {
@@ -41,29 +54,34 @@ export default function ServicesPage() {
   // Carga de datos:
   // - Admin: /admin/services?q=...  (muestra Asignado / Disponible)
   // - Supervisor: /supervisor/services (sus servicios)
-  useEffect(() => {
+   useEffect(() => {
     if (loadingUser || !user) return;
 
-    let alive = true;
+    const controller = new AbortController();
+
     (async () => {
-      setLoading(true);
+      const firstLoad = services.length === 0;
+      if (firstLoad) setLoading(true);
+      else setFetching(true);
+
       setErr("");
 
       try {
         let rows = [];
+
         if (isAdmin) {
           const r = await api.get("/admin/services", {
-            params: { q: String(q || "").trim(), limit: 50 },
+            params: { q: String(debouncedQ || "").trim(), limit: 50 },
+            signal: controller.signal,
           });
           rows = Array.isArray(r.data) ? r.data : [];
         } else {
           const r = await api.get("/supervisor/services", {
             withCredentials: true,
+            signal: controller.signal,
           });
           rows = Array.isArray(r.data) ? r.data : [];
         }
-
-        if (!alive) return;
 
         // Normalizo y deduplico por ID para evitar filas repetidas
         const byId = new Map();
@@ -115,20 +133,25 @@ export default function ServicesPage() {
           const only = list[0];
           setService({ id: only.id, name: only.name });
         }
-
-        setLoading(false);
       } catch (e) {
+        // Si se abortó, no lo tratamos como error real
+        if (controller.signal.aborted) return;
+
         console.error("[services] error:", e);
-        if (!alive) return;
         setErr("No se pudieron cargar los servicios.");
-        setLoading(false);
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+          setFetching(false);
+        }
       }
     })();
 
     return () => {
-      alive = false;
+      controller.abort();
     };
-  }, [user, loadingUser, isAdmin, q, setService, service?.id]);
+  }, [user, loadingUser, isAdmin, debouncedQ, setService, service?.id, services.length]);
+
 
   // Filtrado por nombre o ID (sobre lo que ya trajo el endpoint)
   const filtered = useMemo(() => {
@@ -197,72 +220,79 @@ export default function ServicesPage() {
 
       {err && <div className="state error">{err}</div>}
 
+      {/* Barra de búsqueda (siempre visible) */}
+      <div
+        className="catalog-toolbar"
+        style={{
+          display: "flex",
+          gap: 8,
+          alignItems: "center",
+          marginBottom: 10,
+          flexWrap: "wrap",
+        }}
+      >
+        <label
+          htmlFor="serviceSearch"
+          style={{ fontWeight: 700, color: "#000000" }}
+        >
+          Buscar
+        </label>
+        <input
+          id="serviceSearch"
+          className="input"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder={
+            isAdmin
+              ? "Buscá servicios para asignar… (nombre o ID)"
+              : "Nombre o ID del servicio…"
+          }
+          autoComplete="off"
+          style={{ flex: 1, maxWidth: 420 }}
+        />
+
+        {/* Indicador pequeño de búsqueda (no desmonta el input) */}
+        {fetching && (
+          <span style={{ fontSize: 12, opacity: 0.7 }}>Buscando…</span>
+        )}
+
+        {q && (
+          <button
+            type="button"
+            className="pill pill--primary"
+            onClick={() => setQ("")}
+            aria-label="Limpiar búsqueda"
+          >
+            Limpiar
+          </button>
+        )}
+
+        {isAdmin && (
+          <label
+            className="pill pill--primary"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              cursor: "pointer",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={showOnlyAssigned}
+              onChange={(e) => setShowOnlyAssigned(e.target.checked)}
+              style={{ margin: 0 }}
+            />
+            <span>Solo asignados</span>
+          </label>
+        )}
+      </div>
+
+      {/* Primera carga */}
       {loading ? (
         <div className="state">Cargando servicios…</div>
       ) : (
         <>
-          {/* Barra de búsqueda */}
-          <div
-            className="catalog-toolbar"
-            style={{
-              display: "flex",
-              gap: 8,
-              alignItems: "center",
-              marginBottom: 10,
-              flexWrap: "wrap",
-            }}
-          >
-            <label
-              htmlFor="serviceSearch"
-              style={{ fontWeight: 700, color: "#000000" }}
-            >
-              Buscar
-            </label>
-            <input
-              id="serviceSearch"
-              className="input"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder={
-                isAdmin
-                  ? "Buscá servicios para asignar… (nombre o ID)"
-                  : "Nombre o ID del servicio…"
-              }
-              autoComplete="off"
-              style={{ flex: 1, maxWidth: 420 }}
-            />
-            {q && (
-              <button
-                type="button"
-                className="pill pill--primary"
-                onClick={() => setQ("")}
-                aria-label="Limpiar búsqueda"
-              >
-                Limpiar
-              </button>
-            )}
-
-            {isAdmin && (
-              <label
-                className="pill pill--primary"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  cursor: "pointer",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={showOnlyAssigned}
-                  onChange={(e) => setShowOnlyAssigned(e.target.checked)}
-                  style={{ margin: 0 }}
-                />
-                <span>Solo asignados</span>
-              </label>
-            )}
-          </div>
-
           {/* Resultados */}
           {filtered.length === 0 ? (
             <div className="state">
@@ -271,10 +301,7 @@ export default function ServicesPage() {
                 : `No hay servicios que coincidan con “${q}”.`}
               {q && (
                 <div style={{ marginTop: 8 }}>
-                  <button
-                    className="pill pill--primary"
-                    onClick={() => setQ("")}
-                  >
+                  <button className="pill pill--primary" onClick={() => setQ("")}>
                     Ver todos
                   </button>
                 </div>
