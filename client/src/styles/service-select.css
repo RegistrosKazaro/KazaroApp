@@ -1,7 +1,27 @@
+/* ============== Services Legacy (lista simple) ============== */
+
 .services { padding: 20px; }
 .services h2 { margin: 0 0 14px; }
-.service-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; max-width: 560px; }
-.service-item {
+
+/* En lugar de max-width fijo, que sea fluido y no rompa mobile */
+.service-list{
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 10px;
+
+  width: 100%;
+  max-width: 560px;
+}
+
+/* En mobile: padding menor y max-width 100% para evitar cortes */
+@media (max-width: 480px){
+  .services{ padding: 14px 12px; }
+  .service-list{ max-width: 100%; }
+}
+
+.service-item{
   width: 100%;
   text-align: left;
   border: 1px solid #d9dfeb;
@@ -9,5 +29,8 @@
   border-radius: 10px;
   padding: 12px 14px;
   cursor: pointer;
+
+  /* Evita que texto largo desborde */
+  overflow-wrap: anywhere;
 }
 .service-item:hover { border-color: #2563eb; }

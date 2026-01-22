@@ -1,6 +1,6 @@
-/* ===== Service Budgets – UI Refresh (sin modo oscuro) ===== */
+/* ============== Service Budgets – UI Refresh (sin modo oscuro) ============== */
+
 :root{
-  /* Paleta base */
   --sb-bg: #f6f7fb;
   --sb-surface: #ffffff;
   --sb-surface-2: #f3f5fb;
@@ -8,22 +8,22 @@
   --sb-text: #0b1220;
   --sb-muted: #6b7280;
 
-  --sb-primary: #2563eb;      /* azul brand */
+  --sb-primary: #2563eb;
   --sb-primary-700: #1d4ed8;
-  --sb-primary-weak: #eaf1ff; /* fondo suave */
+  --sb-primary-weak: #eaf1ff;
   --sb-border: #e5e7eb;
   --sb-ring: color-mix(in srgb, var(--sb-primary) 35%, transparent);
 
   --sb-danger: #dc2626;
 
-  /* Tipografía y sombras */
   --sb-radius: 12px;
   --sb-shadow-1: 0 4px 14px rgba(17, 24, 39, .06);
   --sb-shadow-2: 0 10px 22px rgba(17, 24, 39, .08);
 }
 
-/* ===== Layout ===== */
+/* Layout */
 .sb-container{
+  width: 100%;
   max-width: 1040px;
   margin: 0 auto;
   padding: 22px 18px 28px;
@@ -31,6 +31,7 @@
   background: var(--sb-bg);
 }
 
+/* Header */
 .sb-header{
   display: flex;
   align-items: flex-start;
@@ -56,8 +57,8 @@
   color: var(--sb-muted);
 }
 
-/* ===== Botones ===== */
-.sb-actions{ display: flex; gap: 8px; }
+/* Botones */
+.sb-actions{ display: flex; gap: 8px; flex-wrap: wrap; }
 
 .sb-btn{
   display: inline-flex;
@@ -74,10 +75,10 @@
   font-weight: 700;
   transition: transform .05s ease, box-shadow .15s ease, background .15s ease, border-color .15s ease;
   box-shadow: var(--sb-shadow-1);
+  max-width: 100%;
+  white-space: normal;
 }
-.sb-btn:hover{
-  background: var(--sb-surface-2);
-}
+.sb-btn:hover{ background: var(--sb-surface-2); }
 .sb-btn:active{ transform: translateY(1px); }
 .sb-btn.primary{
   background: var(--sb-primary);
@@ -90,7 +91,7 @@
   box-shadow: 0 0 0 3px var(--sb-ring), var(--sb-shadow-2);
 }
 
-/* ===== Mensajes ===== */
+/* Alert */
 .sb-alert{
   border-radius: var(--sb-radius);
   padding: 10px 12px;
@@ -107,9 +108,13 @@
   border-color: color-mix(in srgb, var(--sb-danger) 25%, var(--sb-border));
 }
 
-/* ===== Toolbar / búsqueda ===== */
+/* Toolbar */
 .sb-toolbar{
-  display:flex; gap:10px; align-items:center; margin: 14px 0 12px; flex-wrap:wrap;
+  display:flex;
+  gap:10px;
+  align-items:center;
+  margin: 14px 0 12px;
+  flex-wrap:wrap;
   background: var(--sb-surface);
   border: 1px solid var(--sb-border);
   border-radius: var(--sb-radius);
@@ -132,17 +137,17 @@
   box-shadow: 0 0 0 3px var(--sb-ring);
 }
 
-/* ===== Tabla (grid tipo card) ===== */
+/* Tabla wrapper: clave para mobile sin tocar HTML */
 .sb-table{
   width: 100%;
   border: 1px solid var(--sb-border);
   border-radius: var(--sb-radius);
   background: var(--sb-surface);
-  overflow: hidden;
+  overflow: hidden; /* desktop */
   box-shadow: var(--sb-shadow-1);
 }
 
-/* Encabezado: contenedor sin grid */
+/* Head sticky */
 .sb-thead{
   position: sticky;
   top: 0;
@@ -150,8 +155,6 @@
   background: var(--sb-primary-weak);
   border-bottom: 1px solid #d9e2f5;
 }
-
-/* El grid va SOLO en la fila del encabezado */
 .sb-thead .sb-tr{
   display: grid;
   grid-template-columns: 2fr 1fr 1fr 1fr;
@@ -162,10 +165,9 @@
   color: var(--sb-primary-700);
   letter-spacing: .2px;
 }
-/* Alinear la cabecera numérica a la derecha */
 .sb-thead .num{ text-align: right; }
 
-/* Filas del body con grid */
+/* Body rows */
 .sb-tbody .sb-tr{
   display: grid;
   grid-template-columns: 2fr 1fr 1fr 1fr;
@@ -173,20 +175,19 @@
   align-items: center;
   padding: 12px 14px;
   border-bottom: 1px solid #eef2f7;
-  transition: background .12s ease, transform .06s ease;
+  transition: background .12s ease;
+  min-width: 720px; /* evita que se rompa el grid en pantallas angostas */
 }
 .sb-tbody .sb-tr:nth-child(odd){ background: #fafcff; }
 .sb-tbody .sb-tr:hover{ background: #f4f8ff; }
 
 .td.num{ text-align: right; }
 
-/* Tipografía mono para números */
 .mono{
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-variant-numeric: tabular-nums;
 }
 
-/* Nombre + chip ID */
 .sb-service{ font-weight: 800; line-height: 1.1; }
 .sb-id{
   display: inline-flex;
@@ -201,24 +202,23 @@
   border: 1px solid var(--sb-border);
 }
 
-/* Input de dinero mejorado */
+/* Inputs de dinero */
 .sb-money{
+  width: 100%;
   max-width: 240px;
   text-align: right;
   font-weight: 700;
 }
 .sb-money::placeholder{ color: #9aa4b2; }
 
-/* Botón Guardar en fila */
+/* Guardar en fila */
 .sb-tbody .sb-btn.primary{
   padding: 8px 12px;
   box-shadow: none;
 }
-.sb-tbody .sb-btn.primary:hover{
-  transform: translateY(-1px);
-}
+.sb-tbody .sb-btn.primary:hover{ transform: translateY(-1px); }
 
-/* ===== Paginación ===== */
+/* Paginación */
 .sb-pager{
   display: flex;
   align-items: center;
@@ -231,7 +231,7 @@
   font-size: 13px;
   color: var(--sb-muted);
 }
-.sb-page-controls{ display: inline-flex; gap: 6px; }
+.sb-page-controls{ display: inline-flex; gap: 6px; flex-wrap: wrap; }
 
 .sb-page-btn{
   min-width: 40px;
@@ -257,15 +257,27 @@
   box-shadow: 0 0 0 3px var(--sb-ring);
 }
 
-/* ===== Responsivo ===== */
+/* ===== Responsivo (solo CSS, sin tocar HTML) ===== */
 @media (max-width: 720px){
-  /* En mobile, una sola columna tanto para header como body */
-  .sb-thead .sb-tr,
-  .sb-tbody .sb-tr{
-    grid-template-columns: 1fr;
+  /* Header apilado */
+  .sb-header{ flex-direction: column; gap: 10px; }
+  .sb-actions{ width: 100%; justify-content: flex-start; }
+
+  /* Toolbar: input 100% */
+  .sb-toolbar{ align-items: stretch; }
+  .sb-input{ max-width: none; width: 100%; }
+
+  /* Tabla: permitir scroll horizontal controlado */
+  .sb-table{
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
-  .td.num{ text-align: left; }
-  .sb-header{ flex-direction: column; gap: 8px; }
-  .sb-actions{ align-self: flex-end; }
+  /* Mantener head visible y alineado con el body */
+  .sb-thead .sb-tr{ min-width: 720px; }
+  .sb-tbody .sb-tr{ min-width: 720px; }
+
+  /* Evitar que botones se aplasten */
+  .sb-btn{ width: 100%; }
+  .sb-page-controls{ width: 100%; }
   .sb-pager{ flex-direction: column; align-items: flex-start; gap: 10px; }
 }
