@@ -60,8 +60,8 @@ const norm = (v) =>
     .trim()
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // quita acentos
-    .replace(/\s+/g, " "); // compacta espacios
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
 
 const useDebounced = (value, delay = 300) => {
   const [v, setV] = useState(value);
@@ -71,8 +71,6 @@ const useDebounced = (value, delay = 300) => {
   }, [value, delay]);
   return v;
 };
-
-
 
 /* ===========================================================
  * 1) Productos
@@ -85,11 +83,15 @@ function ProductsSection() {
   const [err, setErr] = useState("");
   const [statusMsg, setStatusMsg] = useState("");
 
+  // Export/Import Excel
+  const [importing, setImporting] = useState(false);
+  const [importFile, setImportFile] = useState(null);
+
   // Categorías
   const [cats, setCats] = useState([]);
   const [catsErr, setCatsErr] = useState("");
-  const [catFilter, setCatFilter] = useState(""); // filtro por categoría (id o nombre)
-  
+  const [catFilter, setCatFilter] = useState("");
+
   const catIdByName = useMemo(() => {
     const m = new Map();
     for (const c of cats) {
@@ -111,101 +113,65 @@ function ProductsSection() {
   const [catTouched, setCatTouched] = useState(false);
   const [editingLoading, setEditingLoading] = useState(false);
   const nameRef = useRef(null);
-  
 
   // Edición rápida de stock
   const [stockEdit, setStockEdit] = useState(null); // { id, value }
 
+  // =========================
+  // Cargar productos (load)
+  // =========================
   const load = useCallback(async () => {
-  setLoading(true);
-  setErr("");
-  try {
-    const { data } = await api.get("/admin/products", {
-      params: { q: String(qDeb || "").trim(), limit: 200 },
-    });
+    setLoading(true);
+    setErr("");
+    try {
+      const { data } = await api.get("/admin/products", {
+        params: { q: String(qDeb || "").trim(), limit: 200 },
+      });
 
-    const list = Array.isArray(data) ? data : [];
-    console.log("[admin/products] sample[0]:", list[0]);
+      const list = Array.isArray(data) ? data : [];
 
-const sampleWithSomeCatFields = list.find((p) =>
-  p?.categoryId != null ||
-  p?.category_id != null ||
-  p?.CategoriaID != null ||
-  p?.categoriaId != null ||
-  p?.catId != null ||
-  p?.CatID != null ||
-  p?.categoryName != null ||
-  p?.category_name != null ||
-  p?.Categoria != null ||
-  p?.categoria != null ||
-  p?.category != null ||
-  p?.Category != null
-);
+      // Filtro por categoría (soporta productos nuevos y viejos)
+      const filteredByCategory = !catFilter
+        ? list
+        : list.filter((p) => {
+            // Intento 1: ID directo (distintos nombres posibles)
+            const rawId =
+              p?.categoryId ??
+              p?.category_id ??
+              p?.CategoriaID ??
+              p?.categoriaId ??
+              p?.catId ??
+              p?.CatID ??
+              null;
 
-console.log("[admin/products] sampleWithCatFields:", sampleWithSomeCatFields);
+            if (rawId != null && String(rawId) === String(catFilter)) return true;
 
-const sampleWithoutCatFields = list.find((p) =>
-  (p?.categoryId == null &&
-    p?.category_id == null &&
-    p?.CategoriaID == null &&
-    p?.categoriaId == null &&
-    p?.catId == null &&
-    p?.CatID == null &&
-    p?.categoryName == null &&
-    p?.category_name == null &&
-    p?.Categoria == null &&
-    p?.categoria == null &&
-    p?.category == null &&
-    p?.Category == null)
-);
+            // Intento 2: nombre de categoría (productos viejos)
+            const rawName =
+              p?.categoryName ??
+              p?.category_name ??
+              p?.Categoria ??
+              p?.categoria ??
+              p?.category ??
+              p?.Category ??
+              null;
 
-console.log("[admin/products] sampleWithoutCatFields:", sampleWithoutCatFields);
+            if (rawName != null) {
+              const key = norm(rawName);
+              const mappedId = catIdByName.get(key);
+              if (mappedId && String(mappedId) === String(catFilter)) return true;
+            }
 
+            return false;
+          });
 
-    // Filtro por categoría (soporta productos nuevos y viejos)
-    const filteredByCategory = !catFilter
-      ? list
-      : list.filter((p) => {
-          // Intento 1: ID directo (distintos nombres posibles)
-          const rawId =
-            p?.categoryId ??
-            p?.category_id ??
-            p?.CategoriaID ??
-            p?.categoriaId ??
-            p?.catId ??
-            p?.CatID ??
-            null;
-
-          if (rawId != null && String(rawId) === String(catFilter)) return true;
-
-          // Intento 2: nombre de categoría (productos viejos)
-          const rawName =
-            p?.categoryName ??
-            p?.category_name ??
-            p?.Categoria ??
-            p?.categoria ??
-            p?.category ??
-            p?.Category ??
-            null;
-
-          if (rawName != null) {
-          const key = norm(rawName);
-          const mappedId = catIdByName.get(key);
-          if (mappedId && String(mappedId) === String(catFilter)) return true;
-        }
-
-          return false;
-        });
-
-    setRows(filteredByCategory);
-  } catch (e) {
-    setErr(e?.response?.data?.error || e.message || "Error al cargar");
-  } finally {
-    setLoading(false);
-  }
-}, [qDeb, catFilter, catIdByName]);
-
-
+      setRows(filteredByCategory);
+    } catch (e) {
+      setErr(e?.response?.data?.error || e.message || "Error al cargar");
+    } finally {
+      setLoading(false);
+    }
+  }, [qDeb, catFilter, catIdByName]);
 
   const loadCats = useCallback(async () => {
     try {
@@ -300,15 +266,10 @@ console.log("[admin/products] sampleWithoutCatFields:", sampleWithoutCatFields);
     const payload = {
       name: String(draft.name || "").trim(),
       price:
-        draft.price === "" || draft.price === null
-          ? null
-          : Number(draft.price),
+        draft.price === "" || draft.price === null ? null : Number(draft.price),
       stock:
-        draft.stock === "" || draft.stock === null
-          ? null
-          : Number(draft.stock),
-      code:
-        draft.code === "" || draft.code === null ? null : String(draft.code),
+        draft.stock === "" || draft.stock === null ? null : Number(draft.stock),
+      code: draft.code === "" || draft.code === null ? null : String(draft.code),
     };
 
     if (!payload.name) {
@@ -354,25 +315,25 @@ console.log("[admin/products] sampleWithoutCatFields:", sampleWithoutCatFields);
   const cancelStockEdit = () => setStockEdit(null);
 
   const saveStock = async (e) => {
-  if (e?.preventDefault) e.preventDefault();
+    if (e?.preventDefault) e.preventDefault();
 
-  try {
-    await api.put(`/admin/products/${stockEdit.id}`, {
-      stock: Number(stockEdit.value),
-    });
-    setRows((prev) =>
-      prev.map((it) =>
-        it.id === stockEdit.id ? { ...it, stock: Number(stockEdit.value) } : it
-      )
-    );
+    try {
+      await api.put(`/admin/products/${stockEdit.id}`, {
+        stock: Number(stockEdit.value),
+      });
+      setRows((prev) =>
+        prev.map((it) =>
+          it.id === stockEdit.id ? { ...it, stock: Number(stockEdit.value) } : it
+        )
+      );
 
-    setStatusMsg("Stock actualizado.");
-  } catch (e2) {
-    setErr(e2?.response?.data?.error || e2.message);
-  } finally {
-    cancelStockEdit();
-  }
-};
+      setStatusMsg("Stock actualizado.");
+    } catch (e2) {
+      setErr(e2?.response?.data?.error || e2.message);
+    } finally {
+      cancelStockEdit();
+    }
+  };
 
   const onKeyDownStock = (e) => {
     if (e.key === "Enter") {
@@ -385,55 +346,154 @@ console.log("[admin/products] sampleWithoutCatFields:", sampleWithoutCatFields);
     }
   };
 
+  // =========================
+  // Export / Import Excel
+  // =========================
+  const downloadExcel = async () => {
+    setErr("");
+    setStatusMsg("");
+
+    try {
+      const res = await api.get("/admin/products/export", {
+        responseType: "blob",
+      });
+
+      const blob = new Blob([res.data], {
+        type:
+          res.headers?.["content-type"] ||
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "productos.xlsx";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+      setStatusMsg("Excel descargado.");
+    } catch (e) {
+      setErr(
+        e?.response?.data?.error || e?.message || "No se pudo descargar el Excel"
+      );
+    }
+  };
+
+  const importExcel = async () => {
+    setErr("");
+    setStatusMsg("");
+
+    if (!importFile) {
+      setErr("Elegí un archivo .xlsx primero");
+      return;
+    }
+
+    const fd = new FormData();
+    fd.append("file", importFile);
+
+    setImporting(true);
+    try {
+      const { data } = await api.post("/admin/products/import", fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
+      const updated = Number(data?.updated ?? 0);
+      const skipped = Number(data?.skipped ?? 0);
+
+      setStatusMsg(
+        data?.ok
+          ? `Importación lista. Actualizados: ${updated}. Omitidos: ${skipped}.`
+          : "Importación lista."
+      );
+
+      setImportFile(null);
+      await load();
+    } catch (e) {
+      setErr(
+        e?.response?.data?.error || e?.message || "No se pudo importar el Excel"
+      );
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <section className="srv-card" aria-labelledby="products-heading">
       <div className="section-header">
         <h3 id="products-heading">Productos</h3>
+
         <div className="toolbar" role="search">
-  <input
-    className="input"
-    placeholder="Buscar… (mín. 2 letras)"
-    value={q}
-    onChange={(e) => setQ(e.target.value)}
-    aria-label="Buscar productos"
-  />
+          <input
+            className="input"
+            placeholder="Buscar… (mín. 2 letras)"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            aria-label="Buscar productos"
+          />
 
-  <select
-    className="select"
-    value={catFilter}
-    onChange={(e) => setCatFilter(e.target.value)}
-    aria-label="Filtrar por categoría"
-    style={{ minWidth: 220 }}
-  >
-    <option value="">— Todas las categorías —</option>
-    {cats.map((c) => (
-      <option key={c.id} value={String(c.id)}>
-        {c.name}
-      </option>
-    ))}
-  </select>
+          <select
+            className="select"
+            value={catFilter}
+            onChange={(e) => setCatFilter(e.target.value)}
+            aria-label="Filtrar por categoría"
+            style={{ minWidth: 220 }}
+          >
+            <option value="">— Todas las categorías —</option>
+            {cats.map((c) => (
+              <option key={c.id} value={String(c.id)}>
+                {c.name}
+              </option>
+            ))}
+          </select>
 
-  <button className="btn" onClick={load} disabled={loading}>
-    {loading ? "Buscando…" : "Buscar"}
-  </button>
+          <button className="btn" onClick={load} disabled={loading}>
+            {loading ? "Buscando…" : "Buscar"}
+          </button>
 
-  <button
-    className="btn ghost"
-    type="button"
-    onClick={() => {
-      setQ("");
-      setCatFilter("");
-    }}
-  >
-    Limpiar filtros
-  </button>
+          <button
+            className="btn ghost"
+            type="button"
+            onClick={() => {
+              setQ("");
+              setCatFilter("");
+            }}
+          >
+            Limpiar filtros
+          </button>
 
-  <div style={{ flex: 1 }} />
+          {/* ===== Export/Import Excel ===== */}
+          <button className="btn" type="button" onClick={downloadExcel}>
+            Descargar Excel
+          </button>
 
-  <button className="btn primary" onClick={startNew}>
-    + Nuevo
-  </button>
-</div>
+          <label className="pill" style={{ cursor: "pointer" }}>
+            Subir Excel
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              style={{ display: "none" }}
+              onChange={(e) => setImportFile(e.target.files?.[0] || null)}
+            />
+          </label>
+
+          <button
+            className="btn"
+            type="button"
+            onClick={importExcel}
+            disabled={!importFile || importing}
+            title={!importFile ? "Elegí un .xlsx" : ""}
+          >
+            {importing ? "Importando…" : "Importar"}
+          </button>
+
+          <div style={{ flex: 1 }} />
+
+          <button className="btn primary" onClick={startNew}>
+            + Nuevo
+          </button>
+        </div>
 
         {(statusMsg || err) && (
           <div
@@ -459,6 +519,7 @@ console.log("[admin/products] sampleWithoutCatFields:", sampleWithoutCatFields);
                 }
               />
             </label>
+
             <label>
               <span>Precio</span>
               <input
@@ -471,6 +532,7 @@ console.log("[admin/products] sampleWithoutCatFields:", sampleWithoutCatFields);
                 }
               />
             </label>
+
             <label>
               <span>Stock</span>
               <input
@@ -483,6 +545,7 @@ console.log("[admin/products] sampleWithoutCatFields:", sampleWithoutCatFields);
                 }
               />
             </label>
+
             <label>
               <span>Código</span>
               <input
@@ -493,6 +556,7 @@ console.log("[admin/products] sampleWithoutCatFields:", sampleWithoutCatFields);
                 }
               />
             </label>
+
             <label>
               <span>Categoría</span>
               <select
@@ -549,6 +613,7 @@ console.log("[admin/products] sampleWithoutCatFields:", sampleWithoutCatFields);
             <div style={{ flex: 2 }}>Código</div>
             <div style={{ width: 160 }} />
           </div>
+
           {rows.map((r) => (
             <div key={r.id} className="t-row" role="row">
               <div style={{ flex: 4, minWidth: 0 }}>
@@ -556,9 +621,11 @@ console.log("[admin/products] sampleWithoutCatFields:", sampleWithoutCatFields);
                   {r.name} <span className="muted">#{r.id}</span>
                 </div>
               </div>
+
               <div style={{ flex: 2, textAlign: "right" }}>
                 {r.price == null ? "—" : money(r.price)}
               </div>
+
               <div style={{ flex: 2, textAlign: "center" }}>
                 {stockEdit?.id === r.id ? (
                   <input
@@ -580,7 +647,9 @@ console.log("[admin/products] sampleWithoutCatFields:", sampleWithoutCatFields);
                   r.stock ?? 0
                 )}
               </div>
+
               <div style={{ flex: 2 }}>{r.code ?? "—"}</div>
+
               <div
                 style={{
                   width: 160,
@@ -592,9 +661,13 @@ console.log("[admin/products] sampleWithoutCatFields:", sampleWithoutCatFields);
                 {stockEdit?.id === r.id ? (
                   <>
                     <button type="button" className="pill" onClick={saveStock}>
-                       Guardar
+                      Guardar
                     </button>
-                    <button type="button" className="pill ghost" onClick={cancelStockEdit}>
+                    <button
+                      type="button"
+                      className="pill ghost"
+                      onClick={cancelStockEdit}
+                    >
                       Cancelar
                     </button>
                   </>
@@ -623,6 +696,8 @@ console.log("[admin/products] sampleWithoutCatFields:", sampleWithoutCatFields);
     </section>
   );
 }
+
+
 /* ===========================================================
  * 2) Asignar servicios a supervisores
  * ========================================================= */
@@ -767,9 +842,7 @@ function AssignServicesSection() {
             <div className="list">
               {services.length === 0 ? (
                 <div className="state">
-                  {qDeb?.length >= 2
-                    ? "Sin coincidencias."
-                    : "Escribí para buscar…"}
+                  {qDeb?.length >= 2 ? "Sin coincidencias." : "Escribí para buscar…"}
                 </div>
               ) : (
                 services.map((s) => (
@@ -805,8 +878,7 @@ function AssignServicesSection() {
                 assignments.map((a) => (
                   <div key={a.id} className="list-row">
                     <div className="truncate">
-                      {a.service_name}{" "}
-                      <span className="muted">ID: {a.ServicioID}</span>
+                      {a.service_name} <span className="muted">ID: {a.ServicioID}</span>
                     </div>
                     <button
                       className="pill danger"
@@ -849,7 +921,6 @@ function ServiceProductsSection() {
   const [assignMsg, setAssignMsg] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // Buscar servicio
   const searchServices = useCallback(async () => {
     setSrvLoading(true);
     setSrvMsg("");
@@ -870,7 +941,6 @@ function ServiceProductsSection() {
     }
   }, [qSrvDeb]);
 
-  // Cargar productos y preselección por servicio
   const loadProductsAndSelection = useCallback(async () => {
     if (!service) return;
     setAssignMsg("");
@@ -888,7 +958,6 @@ function ServiceProductsSection() {
     }
   }, [service]);
 
-  // Filtro de productos
   useEffect(() => {
     const term = String(qDeb || "").trim().toLowerCase();
     if (!term) {
@@ -1075,9 +1144,7 @@ function ServiceBudgetsSection() {
     setLoading(true);
     setErr("");
     try {
-      const data = await api
-        .get("/admin/service-budgets")
-        .then((r) => r.data || []);
+      const data = await api.get("/admin/service-budgets").then((r) => r.data || []);
       setRows(data);
     } catch {
       setErr("Error al cargar presupuestos");
@@ -1091,7 +1158,7 @@ function ServiceBudgetsSection() {
   }, [load]);
 
   const onSaveOne = async (row) => {
-    const rawBudget = drafts[row.id]?.budget ?? (row.budget ?? "" );
+    const rawBudget = drafts[row.id]?.budget ?? (row.budget ?? "");
     const rawPct = drafts[row.id]?.maxPct ?? (row.maxPct ?? "");
     const presupuesto = parseMoneyFlexible(rawBudget);
     const maxPct = Number(rawPct);
@@ -1099,7 +1166,7 @@ function ServiceBudgetsSection() {
       setErr("Presupuesto inválido");
       return;
     }
-    if (!Number.isFinite(maxPct) || maxPct <= 0){
+    if (!Number.isFinite(maxPct) || maxPct <= 0) {
       setErr("Porcentaje invalido");
       return;
     }
@@ -1109,16 +1176,13 @@ function ServiceBudgetsSection() {
     try {
       await api.put(`/admin/service-budgets/${row.id}`, { presupuesto, maxPct });
       setRows((prev) =>
-        prev.map((it) =>
-          it.id === row.id ? { ...it, budget: presupuesto, maxPct } : it
-        )
+        prev.map((it) => (it.id === row.id ? { ...it, budget: presupuesto, maxPct } : it))
       );
-      setDrafts((d)=>{
-        const n = {...d};
+      setDrafts((d) => {
+        const n = { ...d };
         delete n[row.id];
         return n;
       });
-
     } catch {
       setErr("No se pudo guardar");
     } finally {
@@ -1162,7 +1226,7 @@ function ServiceBudgetsSection() {
                 inputMode="decimal"
                 value={value}
                 onChange={(e) =>
-                  setDrafts((d) => ({ ...d, [row.id]: {...d[row.id],budget:e.target.value} }))
+                  setDrafts((d) => ({ ...d, [row.id]: { ...d[row.id], budget: e.target.value } }))
                 }
                 placeholder="$ 0,00"
                 style={{ width: 140 }}
@@ -1176,17 +1240,16 @@ function ServiceBudgetsSection() {
                 min="0"
                 step="0.1"
                 onChange={(e) =>
-                  setDrafts((d) => ({ ...d, [row.id]: { ...d[row.id], maxPct: e.target.value } }))
+                  setDrafts((d) => ({
+                    ...d,
+                    [row.id]: { ...d[row.id], maxPct: e.target.value },
+                  }))
                 }
                 placeholder="5"
                 style={{ width: 100 }}
                 aria-label={`Porcentaje máximo por pedido de ${row.name}`}
               />
-              <button
-                className="btn"
-                onClick={() => onSaveOne(row)}
-                disabled={saving}
-              >
+              <button className="btn" onClick={() => onSaveOne(row)} disabled={saving}>
                 {saving ? "Guardando…" : "Guardar"}
               </button>
             </div>
@@ -1215,11 +1278,7 @@ function ServiceBudgetsSection() {
         >
           Siguiente
         </button>
-        <button
-          className="pill"
-          onClick={() => setPage(pageCount)}
-          disabled={page >= pageCount}
-        >
+        <button className="pill" onClick={() => setPage(pageCount)} disabled={page >= pageCount}>
           »
         </button>
       </div>
@@ -1306,7 +1365,7 @@ function IncomingStockSection() {
       await api.post("/admin/incoming-stock", {
         productId: product.id,
         qty,
-        eta, // "YYYY-MM-DD" o "YYYY-MM-DD HH:mm:ss"
+        eta,
       });
       setForm({ qty: "", eta: "" });
       await load();
@@ -1336,12 +1395,7 @@ function IncomingStockSection() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <button
-          className="btn"
-          type="button"
-          onClick={doFindProduct}
-          disabled={searchLoading}
-        >
+        <button className="btn" type="button" onClick={doFindProduct} disabled={searchLoading}>
           {searchLoading ? "Buscando…" : "Buscar"}
         </button>
       </div>
@@ -1357,11 +1411,7 @@ function IncomingStockSection() {
               <div className="truncate">
                 {p.name} <span className="muted">#{p.id}</span>
               </div>
-              <button
-                className="pill"
-                onClick={() => setProduct(p)}
-                aria-label={`Elegir ${p.name}`}
-              >
+              <button className="pill" onClick={() => setProduct(p)} aria-label={`Elegir ${p.name}`}>
                 Elegir
               </button>
             </div>
@@ -1386,9 +1436,7 @@ function IncomingStockSection() {
                   type="number"
                   inputMode="numeric"
                   value={form.qty}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, qty: clampInt(e.target.value, 1) }))
-                  }
+                  onChange={(e) => setForm((f) => ({ ...f, qty: clampInt(e.target.value, 1) }))}
                 />
               </label>
               <label>
@@ -1397,9 +1445,7 @@ function IncomingStockSection() {
                   className="input"
                   placeholder="2025-12-15"
                   value={form.eta}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, eta: e.target.value }))
-                  }
+                  onChange={(e) => setForm((f) => ({ ...f, eta: e.target.value }))}
                 />
               </label>
               <div className="actions-row">
@@ -1457,7 +1503,6 @@ function OrdersSection() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewErr, setPreviewErr] = useState("");
 
-  // Detecta "cerrado" con distintas convenciones de backend
   const isClosed = (o) => {
     if (!o) return false;
 
@@ -1484,8 +1529,6 @@ function OrdersSection() {
     );
   };
 
-  // 1) Usa /deposito/orders?status=closed (misma fuente que Depósito)
-  // 2) Si falla, intenta /admin/orders?status=closed como respaldo
   const load = useCallback(async () => {
     setErr("");
     try {
@@ -1516,7 +1559,6 @@ function OrdersSection() {
     load();
   }, [load]);
 
-  // Si borro un pedido seleccionado, cierro visor y limpio blob
   useEffect(() => {
     if (selectedOrder && !orders.some((o) => o.id === selectedOrder.id)) {
       setSelectedOrder(null);
@@ -1531,7 +1573,7 @@ function OrdersSection() {
     if (!raw) return "";
     try {
       const base = String(raw).replace(" ", "T");
-      const d = new Date(base + "-03:00"); // AR -03
+      const d = new Date(base + "-03:00");
       return d.toLocaleString("es-AR", {
         timeZone: "America/Argentina/Cordoba",
         year: "numeric",
@@ -1545,7 +1587,6 @@ function OrdersSection() {
     }
   };
 
-  // --------- Utils robustos para PDF ----------
   const isPdfBlob = async (blob) => {
     try {
       const head = await blob.slice(0, 5).text();
@@ -1558,7 +1599,6 @@ function OrdersSection() {
   const toBlobUrl = (blob) => URL.createObjectURL(blob);
 
   const tryLoadPdfFromPath = async (path) => {
-    // 1) axios con responseType: "blob"
     try {
       const res = await api.get(path, {
         responseType: "blob",
@@ -1574,18 +1614,13 @@ function OrdersSection() {
 
       if (!ct.includes("application/pdf") && !(await isPdfBlob(blob))) {
         const textPreview = await blob.text().catch(() => "");
-        throw new Error(
-          `Content-Type="${ct}". ${
-            textPreview ? "Preview: " + textPreview : ""
-          }`
-        );
+        throw new Error(`Content-Type="${ct}". ${textPreview ? "Preview: " + textPreview : ""}`);
       }
       return { url: toBlobUrl(blob), via: "axios-blob" };
     } catch (e) {
       console.debug("tryLoadPdfFromPath (axios-blob) falló", path, e?.message);
     }
 
-    // 2) axios sin responseType, asumiendo Blob igual
     try {
       const res = await api.get(path, {
         withCredentials: true,
@@ -1599,22 +1634,13 @@ function OrdersSection() {
       const blob = res.data;
       if (!ct.includes("application/pdf") && !(await isPdfBlob(blob))) {
         const textPreview = await blob.text().catch(() => "");
-        throw new Error(
-          `Content-Type="${ct}". ${
-            textPreview ? "Preview: " + textPreview : ""
-          }`
-        );
+        throw new Error(`Content-Type="${ct}". ${textPreview ? "Preview: " + textPreview : ""}`);
       }
       return { url: toBlobUrl(blob), via: "axios-arraybuffer" };
     } catch (e) {
-      console.debug(
-        "tryLoadPdfFromPath (axios-arraybuffer) falló",
-        path,
-        e?.message
-      );
+      console.debug("tryLoadPdfFromPath (axios-arraybuffer) falló", path, e?.message);
     }
 
-    // 3) fetch "crudo" como fallback absoluto
     const abs = (API_BASE_URL?.replace(/\/$/, "") || "") + path;
     const r = await fetch(abs, {
       method: "GET",
@@ -1625,9 +1651,7 @@ function OrdersSection() {
     const blob = await r.blob();
     if (!ct.includes("application/pdf") && !(await isPdfBlob(blob))) {
       const txt = await blob.text().catch(() => "");
-      throw new Error(
-        `Fetch: Content-Type="${ct}". ${txt ? "Detalle: " + txt : ""}`
-      );
+      throw new Error(`Fetch: Content-Type="${ct}". ${txt ? "Detalle: " + txt : ""}`);
     }
     return { url: toBlobUrl(blob), via: "fetch" };
   };
@@ -1651,7 +1675,6 @@ function OrdersSection() {
     if (lastErr) throw lastErr;
     throw new Error("No se encontró ninguna ruta válida para el remito.");
   };
-  // -------------------------------------------
 
   const onPreviewRemito = async (order) => {
     setPreviewLoading(true);
@@ -1732,9 +1755,7 @@ function OrdersSection() {
                 onClick={() => onPreviewRemito(o)}
                 disabled={previewLoading && selectedOrder?.id === o.id}
               >
-                {previewLoading && selectedOrder?.id === o.id
-                  ? "Cargando…"
-                  : "Ver remito"}
+                {previewLoading && selectedOrder?.id === o.id ? "Cargando…" : "Ver remito"}
               </button>
             </div>
           </div>
@@ -1757,12 +1778,9 @@ function OrdersSection() {
             {selectedOrder ? (
               <div className="muted">
                 Remito del pedido{" "}
-                <strong>
-                  #{selectedOrder && String(selectedOrder.id).padStart(7, "0")}
-                </strong>{" "}
-                — Empleado{" "}
-                <strong>{selectedOrder && selectedOrder.empleadoId}</strong> —
-                Rol <strong>{selectedOrder && selectedOrder.rol}</strong>
+                <strong>#{selectedOrder && String(selectedOrder.id).padStart(7, "0")}</strong> —
+                Empleado <strong>{selectedOrder && selectedOrder.empleadoId}</strong> — Rol{" "}
+                <strong>{selectedOrder && selectedOrder.rol}</strong>
               </div>
             ) : (
               <div className="muted">Detalle de remito</div>
@@ -1770,12 +1788,7 @@ function OrdersSection() {
 
             <div className="actions-row">
               {pdfUrl && (
-                <a
-                  href={pdfUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="btn ghost"
-                >
+                <a href={pdfUrl} target="_blank" rel="noreferrer" className="btn ghost">
                   Abrir en otra pestaña
                 </a>
               )}
@@ -1802,11 +1815,7 @@ function OrdersSection() {
               }}
             >
               <iframe
-                title={
-                  selectedOrder
-                    ? `Remito del pedido #${selectedOrder.id}`
-                    : "Remito"
-                }
+                title={selectedOrder ? `Remito del pedido #${selectedOrder.id}` : "Remito"}
                 src={pdfUrl}
                 style={{ width: "100%", height: "100%", border: "none" }}
               />
@@ -1823,7 +1832,7 @@ function OrdersSection() {
 }
 
 /* ===========================================================
- * Componente principal con tabs
+ * Crear servicio
  * ========================================================= */
 function CreateServiceSection() {
   const [name, setName] = useState("");
@@ -1878,11 +1887,7 @@ function CreateServiceSection() {
     <section className="srv-card" aria-labelledby="create-service-heading">
       <div className="section-header">
         <h3 id="create-service-heading">Crear servicio</h3>
-        {(msg || err) && (
-          <div className={`state ${err ? "error" : "success"}`}>
-            {err || msg}
-          </div>
-        )}
+        {(msg || err) && <div className={`state ${err ? "error" : "success"}`}>{err || msg}</div>}
       </div>
 
       <div className="toolbar" style={{ gap: 10 }}>
@@ -1930,16 +1935,12 @@ function CreateServiceSection() {
   );
 }
 
-
 export default function AdminPanel() {
   const nav = useNavigate();
   const { user, loading } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const roles = useMemo(
-    () => (user?.roles || []).map((r) => String(r).toLowerCase()),
-    [user]
-  );
+  const roles = useMemo(() => (user?.roles || []).map((r) => String(r).toLowerCase()), [user]);
   const isAdmin = roles.includes("admin");
 
   const initialTab = (() => {
@@ -1948,13 +1949,11 @@ export default function AdminPanel() {
   })();
   const [tab, setTab] = useState(initialTab);
 
-  // Guard: solo admins
   useEffect(() => {
     if (loading) return;
     if (!user || !isAdmin) nav("/app");
   }, [user, loading, isAdmin, nav]);
 
-  // Sincronizar ?tab= con estado
   useEffect(() => {
     setSearchParams((prev) => {
       const p = new URLSearchParams(prev);
@@ -1972,11 +1971,7 @@ export default function AdminPanel() {
         <h2>Panel de administración</h2>
       </header>
 
-      <div
-        className="tabs"
-        role="tablist"
-        aria-label="Secciones de administración"
-      >
+      <div className="tabs" role="tablist" aria-label="Secciones de administración">
         <button
           className={`tab-btn ${tab === "products" ? "is-active" : ""}`}
           onClick={() => setTab("products")}
@@ -1994,15 +1989,15 @@ export default function AdminPanel() {
         >
           Asignar servicios
         </button>
-        
+
         <button
           className={`tab-btn ${tab === "createService" ? "is-active" : ""}`}
           onClick={() => setTab("createService")}
           role="tab"
           aria-selected={tab === "createService"}
-          >
+        >
           Crear servicio
-          </button>
+        </button>
 
         <button
           className={`tab-btn ${tab === "serviceProducts" ? "is-active" : ""}`}
@@ -2051,7 +2046,6 @@ export default function AdminPanel() {
       {tab === "massReassign" && <MassReassignServicesSection />}
       {tab === "orders" && <OrdersSection />}
       {tab === "createService" && <CreateServiceSection />}
-
     </div>
   );
 }
