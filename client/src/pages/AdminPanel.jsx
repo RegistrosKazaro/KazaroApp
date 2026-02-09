@@ -1,5 +1,5 @@
 // client/src/pages/AdminPanel.jsx
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
@@ -12,8 +12,7 @@ import MassReassignServicesSection from "./MassReassignServicesSection";
  * Utilidades
  * --------------------------------------------------------- */
 const API_BASE_URL =
-  (import.meta?.env && import.meta.env.VITE_API_URL) ||
-  "http://localhost:4000";
+  (import.meta?.env && import.meta.env.VITE_API_URL) || "http://localhost:4000";
 
 const money = (v) => {
   const n = Number(v || 0);
@@ -33,6 +32,7 @@ const parseMoneyFlexible = (raw) => {
   let s = String(raw).trim().replace(/\s+/g, "");
   if (s === "") return NaN;
 
+  // deja dígitos, coma, punto y signo
   s = s.replace(/[^\d.,-]/g, "");
 
   const lastComma = s.lastIndexOf(",");
@@ -117,6 +117,21 @@ function ProductsSection() {
   // Edición rápida de stock
   const [stockEdit, setStockEdit] = useState(null); // { id, value }
 
+  const loadCats = useCallback(async () => {
+    try {
+      const { data } = await api.get("/catalog/categories");
+      setCats(Array.isArray(data) ? data : []);
+      setCatsErr("");
+    } catch (e) {
+      setCats([]);
+      setCatsErr(
+        e?.response?.data?.error ||
+          e.message ||
+          "No se pudieron cargar las categorías"
+      );
+    }
+  }, []);
+
   // =========================
   // Cargar productos (load)
   // =========================
@@ -134,7 +149,6 @@ function ProductsSection() {
       const filteredByCategory = !catFilter
         ? list
         : list.filter((p) => {
-            // Intento 1: ID directo (distintos nombres posibles)
             const rawId =
               p?.categoryId ??
               p?.category_id ??
@@ -146,7 +160,6 @@ function ProductsSection() {
 
             if (rawId != null && String(rawId) === String(catFilter)) return true;
 
-            // Intento 2: nombre de categoría (productos viejos)
             const rawName =
               p?.categoryName ??
               p?.category_name ??
@@ -173,28 +186,13 @@ function ProductsSection() {
     }
   }, [qDeb, catFilter, catIdByName]);
 
-  const loadCats = useCallback(async () => {
-    try {
-      const { data } = await api.get("/catalog/categories");
-      setCats(Array.isArray(data) ? data : []);
-      setCatsErr("");
-    } catch (e) {
-      setCats([]);
-      setCatsErr(
-        e?.response?.data?.error ||
-          e.message ||
-          "No se pudieron cargar las categorías"
-      );
-    }
-  }, []);
+  useEffect(() => {
+    loadCats();
+  }, [loadCats]);
 
   useEffect(() => {
     load();
   }, [load]);
-
-  useEffect(() => {
-    loadCats();
-  }, [loadCats]);
 
   const startNew = () => {
     setEditingId("__new__");
@@ -230,18 +228,22 @@ function ProductsSection() {
     setEditingLoading(true);
     try {
       const { data } = await api.get(`/admin/products/${row.id}`);
+
+      let catId = "";
+      if (data?.categoryId != null) catId = String(data.categoryId);
+      else if (data?.categoryName != null) {
+        // si viene nombre viejo, intentamos mapearlo al id real para que el select muestre bien
+        const mapped = catIdByName.get(norm(data.categoryName));
+        catId = mapped ? String(mapped) : "";
+      }
+
       setDraft((prev) => ({
         ...prev,
         name: data?.name ?? prev.name ?? "",
         price: data?.price ?? prev.price ?? "",
         stock: data?.stock ?? prev.stock ?? "",
         code: data?.code ?? prev.code ?? "",
-        catId:
-          data?.categoryId != null
-            ? String(data.categoryId)
-            : data?.categoryName != null
-            ? String(data.categoryName)
-            : prev.catId ?? "",
+        catId,
       }));
     } catch {
       setErr("No se pudo cargar el producto completo");
@@ -277,9 +279,8 @@ function ProductsSection() {
       return;
     }
 
-    if (editingId === "__new__") {
-      payload.catId = draft.catId || null;
-    } else if (catTouched) {
+    // solo enviamos catId si corresponde
+    if (editingId === "__new__" || catTouched) {
       payload.catId = draft.catId || null;
     }
 
@@ -316,6 +317,7 @@ function ProductsSection() {
 
   const saveStock = async (e) => {
     if (e?.preventDefault) e.preventDefault();
+    if (!stockEdit?.id) return;
 
     try {
       await api.put(`/admin/products/${stockEdit.id}`, {
@@ -326,7 +328,6 @@ function ProductsSection() {
           it.id === stockEdit.id ? { ...it, stock: Number(stockEdit.value) } : it
         )
       );
-
       setStatusMsg("Stock actualizado.");
     } catch (e2) {
       setErr(e2?.response?.data?.error || e2.message);
@@ -395,9 +396,10 @@ function ProductsSection() {
 
     setImporting(true);
     try {
-      const { data } = await api.post("/admin/products/import", fd, {
-        headers: { "Content-Type": "multipart/form-data" },
+      const { data } = await api.post("/admin/products/import?mode=sync", fd, {
+      headers: { "Content-Type": "multipart/form-data" },
       });
+
 
       const updated = Number(data?.updated ?? 0);
       const skipped = Number(data?.skipped ?? 0);
@@ -570,7 +572,7 @@ function ProductsSection() {
               >
                 <option value="">— Sin categoría —</option>
                 {cats.map((c) => (
-                  <option key={c.id} value={c.id}>
+                  <option key={c.id} value={String(c.id)}>
                     {c.name}
                   </option>
                 ))}
@@ -696,7 +698,6 @@ function ProductsSection() {
     </section>
   );
 }
-
 
 /* ===========================================================
  * 2) Asignar servicios a supervisores
@@ -878,7 +879,8 @@ function AssignServicesSection() {
                 assignments.map((a) => (
                   <div key={a.id} className="list-row">
                     <div className="truncate">
-                      {a.service_name} <span className="muted">ID: {a.ServicioID}</span>
+                      {a.service_name}{" "}
+                      <span className="muted">ID: {a.ServicioID}</span>
                     </div>
                     <button
                       className="pill danger"
@@ -1059,7 +1061,7 @@ function ServiceProductsSection() {
         </>
       )}
 
-      {step === "manage" && (
+      {step === "manage" && service && (
         <>
           <div className="section-header">
             <div className="muted">
@@ -1145,7 +1147,7 @@ function ServiceBudgetsSection() {
     setErr("");
     try {
       const data = await api.get("/admin/service-budgets").then((r) => r.data || []);
-      setRows(data);
+      setRows(Array.isArray(data) ? data : []);
     } catch {
       setErr("Error al cargar presupuestos");
     } finally {
@@ -1162,12 +1164,13 @@ function ServiceBudgetsSection() {
     const rawPct = drafts[row.id]?.maxPct ?? (row.maxPct ?? "");
     const presupuesto = parseMoneyFlexible(rawBudget);
     const maxPct = Number(rawPct);
+
     if (!Number.isFinite(presupuesto) || presupuesto < 0) {
       setErr("Presupuesto inválido");
       return;
     }
     if (!Number.isFinite(maxPct) || maxPct <= 0) {
-      setErr("Porcentaje invalido");
+      setErr("Porcentaje inválido");
       return;
     }
 
@@ -1176,7 +1179,9 @@ function ServiceBudgetsSection() {
     try {
       await api.put(`/admin/service-budgets/${row.id}`, { presupuesto, maxPct });
       setRows((prev) =>
-        prev.map((it) => (it.id === row.id ? { ...it, budget: presupuesto, maxPct } : it))
+        prev.map((it) =>
+          it.id === row.id ? { ...it, budget: presupuesto, maxPct } : it
+        )
       );
       setDrafts((d) => {
         const n = { ...d };
@@ -1212,7 +1217,9 @@ function ServiceBudgetsSection() {
         {current.map((row) => {
           const saving = savingIds.has(row.id);
           const draft = drafts[row.id] || {};
-          const value = draft.budget ?? (row.budget == null ? "" : money(row.budget));
+          const value =
+            draft.budget ??
+            (row.budget == null ? "" : money(row.budget));
           const pct = draft.maxPct ?? (row.maxPct ?? "");
           return (
             <div key={row.id} className="budget-item">
@@ -1226,7 +1233,10 @@ function ServiceBudgetsSection() {
                 inputMode="decimal"
                 value={value}
                 onChange={(e) =>
-                  setDrafts((d) => ({ ...d, [row.id]: { ...d[row.id], budget: e.target.value } }))
+                  setDrafts((d) => ({
+                    ...d,
+                    [row.id]: { ...d[row.id], budget: e.target.value },
+                  }))
                 }
                 placeholder="$ 0,00"
                 style={{ width: 140 }}
@@ -1436,7 +1446,9 @@ function IncomingStockSection() {
                   type="number"
                   inputMode="numeric"
                   value={form.qty}
-                  onChange={(e) => setForm((f) => ({ ...f, qty: clampInt(e.target.value, 1) }))}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, qty: clampInt(e.target.value, 1) }))
+                  }
                 />
               </label>
               <label>
@@ -1511,7 +1523,6 @@ function OrdersSection() {
     const closedAt = o.closedAt ?? o.ClosedAt ?? o.closed_at ?? null;
 
     const flagFields = [o.isClosed, o.is_closed, o.cerrado, o.Cerrado];
-
     const flagTrue = flagFields.some((v) => {
       if (v === 1 || v === true) return true;
       if (v === "1") return true;
@@ -1599,48 +1610,55 @@ function OrdersSection() {
   const toBlobUrl = (blob) => URL.createObjectURL(blob);
 
   const tryLoadPdfFromPath = async (path) => {
+    // 1) axios blob
     try {
       const res = await api.get(path, {
         responseType: "blob",
         withCredentials: true,
         headers: { Accept: "application/pdf" },
       });
-      const ct = (
-        res.headers?.["content-type"] ||
-        res.headers?.["Content-Type"] ||
-        ""
+      const ct = String(
+        res.headers?.["content-type"] || res.headers?.["Content-Type"] || ""
       ).toLowerCase();
       const blob = res.data;
 
       if (!ct.includes("application/pdf") && !(await isPdfBlob(blob))) {
         const textPreview = await blob.text().catch(() => "");
-        throw new Error(`Content-Type="${ct}". ${textPreview ? "Preview: " + textPreview : ""}`);
+        throw new Error(
+          `Content-Type="${ct}". ${textPreview ? "Preview: " + textPreview : ""}`
+        );
       }
       return { url: toBlobUrl(blob), via: "axios-blob" };
     } catch (e) {
       console.debug("tryLoadPdfFromPath (axios-blob) falló", path, e?.message);
     }
 
+    // 2) axios arraybuffer -> blob
     try {
       const res = await api.get(path, {
+        responseType: "arraybuffer",
         withCredentials: true,
         headers: { Accept: "application/pdf" },
       });
-      const ct = (
-        res.headers?.["content-type"] ||
-        res.headers?.["Content-Type"] ||
-        ""
+      const ct = String(
+        res.headers?.["content-type"] || res.headers?.["Content-Type"] || ""
       ).toLowerCase();
-      const blob = res.data;
+      const blob = new Blob([res.data], {
+        type: ct.includes("application/pdf") ? "application/pdf" : "application/octet-stream",
+      });
+
       if (!ct.includes("application/pdf") && !(await isPdfBlob(blob))) {
         const textPreview = await blob.text().catch(() => "");
-        throw new Error(`Content-Type="${ct}". ${textPreview ? "Preview: " + textPreview : ""}`);
+        throw new Error(
+          `Content-Type="${ct}". ${textPreview ? "Preview: " + textPreview : ""}`
+        );
       }
       return { url: toBlobUrl(blob), via: "axios-arraybuffer" };
     } catch (e) {
       console.debug("tryLoadPdfFromPath (axios-arraybuffer) falló", path, e?.message);
     }
 
+    // 3) fetch absoluto
     const abs = (API_BASE_URL?.replace(/\/$/, "") || "") + path;
     const r = await fetch(abs, {
       method: "GET",
@@ -1700,9 +1718,7 @@ function OrdersSection() {
       }
       const status = e?.response?.status ? ` (HTTP ${e.response.status})` : "";
       setPreviewErr(
-        (e?.message || "No se pudo cargar el remito") +
-          status +
-          (msg ? ` — Detalle: ${msg}` : "")
+        (e?.message || "No se pudo cargar el remito") + status + (msg ? ` — Detalle: ${msg}` : "")
       );
       setSelectedOrder(null);
     } finally {
@@ -1733,6 +1749,7 @@ function OrdersSection() {
           <div style={{ flex: 2, textAlign: "right" }}>Total</div>
           <div style={{ width: 220 }} />
         </div>
+
         {orders.map((o) => (
           <div key={o.id} className="t-row">
             <div style={{ flex: 1 }}>{String(o.id).padStart(7, "0")}</div>
@@ -1760,6 +1777,7 @@ function OrdersSection() {
             </div>
           </div>
         ))}
+
         {orders.length === 0 && (
           <div className="t-row">
             <div style={{ flex: 1 }}>—</div>
@@ -1778,9 +1796,9 @@ function OrdersSection() {
             {selectedOrder ? (
               <div className="muted">
                 Remito del pedido{" "}
-                <strong>#{selectedOrder && String(selectedOrder.id).padStart(7, "0")}</strong> —
-                Empleado <strong>{selectedOrder && selectedOrder.empleadoId}</strong> — Rol{" "}
-                <strong>{selectedOrder && selectedOrder.rol}</strong>
+                <strong>#{String(selectedOrder.id).padStart(7, "0")}</strong> — Empleado{" "}
+                <strong>{selectedOrder.empleadoId}</strong> — Rol{" "}
+                <strong>{selectedOrder.rol}</strong>
               </div>
             ) : (
               <div className="muted">Detalle de remito</div>
@@ -1887,7 +1905,9 @@ function CreateServiceSection() {
     <section className="srv-card" aria-labelledby="create-service-heading">
       <div className="section-header">
         <h3 id="create-service-heading">Crear servicio</h3>
-        {(msg || err) && <div className={`state ${err ? "error" : "success"}`}>{err || msg}</div>}
+        {(msg || err) && (
+          <div className={`state ${err ? "error" : "success"}`}>{err || msg}</div>
+        )}
       </div>
 
       <div className="toolbar" style={{ gap: 10 }}>
@@ -1940,13 +1960,17 @@ export default function AdminPanel() {
   const { user, loading } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const roles = useMemo(() => (user?.roles || []).map((r) => String(r).toLowerCase()), [user]);
+  const roles = useMemo(
+    () => (user?.roles || []).map((r) => String(r).toLowerCase()),
+    [user]
+  );
   const isAdmin = roles.includes("admin");
 
   const initialTab = (() => {
     const t = searchParams.get("tab");
     return t || "products";
   })();
+
   const [tab, setTab] = useState(initialTab);
 
   useEffect(() => {
@@ -2009,6 +2033,15 @@ export default function AdminPanel() {
         </button>
 
         <button
+          className={`tab-btn ${tab === "budgets" ? "is-active" : ""}`}
+          onClick={() => setTab("budgets")}
+          role="tab"
+          aria-selected={tab === "budgets"}
+        >
+          Presupuestos
+        </button>
+
+        <button
           className={`tab-btn ${tab === "incomingStock" ? "is-active" : ""}`}
           onClick={() => setTab("incomingStock")}
           role="tab"
@@ -2040,12 +2073,12 @@ export default function AdminPanel() {
 
       {tab === "products" && <ProductsSection />}
       {tab === "services" && <AssignServicesSection />}
+      {tab === "createService" && <CreateServiceSection />}
       {tab === "serviceProducts" && <ServiceProductsSection />}
       {tab === "budgets" && <ServiceBudgetsSection />}
       {tab === "incomingStock" && <IncomingStockSection />}
       {tab === "massReassign" && <MassReassignServicesSection />}
       {tab === "orders" && <OrdersSection />}
-      {tab === "createService" && <CreateServiceSection />}
     </div>
   );
 }

@@ -26,11 +26,51 @@ const mustBeAdmin = [requireAuth, requireRole(["admin", "Admin"])];
 
 // Upload Excel en memoria
 const upload = multer({ storage: multer.memoryStorage() });
+function getOrCreateCategoryIdByName(sch, name) {
+  const { categories } = sch.tables;
+  if (!categories) return null;
+
+  const nm = String(name || "").trim();
+  if (!nm) return null;
+
+  const info = db.prepare(`PRAGMA table_info('${categories}')`).all();
+  const cols = info.map((c) => String(c.name));
+
+  const idCol =
+    cols.find((c) => /(^id$|categoriaid$|categoryid$)/i.test(c)) || cols[0];
+  const nameCol =
+    cols.find((c) => /(name|nombre)/i.test(c)) || cols[1] || cols[0];
+
+  // Buscar existente (case-insensitive)
+  const found = db
+    .prepare(
+      `SELECT ${idCol} AS id
+       FROM ${categories}
+       WHERE lower(trim(${nameCol})) = lower(trim(?))
+       LIMIT 1`
+    )
+    .get(nm);
+
+  if (found?.id != null) return String(found.id);
+
+  // Crear si no existe
+  const ins = db
+    .prepare(`INSERT INTO ${categories} (${nameCol}) VALUES (?)`)
+    .run(nm);
+
+  return String(ins.lastInsertRowid);
+}
+
 
 function prodSchemaOrThrow() {
   const sch = discoverCatalogSchema();
   if (!sch?.ok) throw new Error(sch?.reason || "No hay esquema de productos");
   return sch;
+}
+
+// ✅ Quote seguro para identificadores SQL (SQLite)
+function qid(x) {
+  return `"${String(x).replace(/"/g, '""')}"`;
 }
 
 /* =========================
@@ -62,7 +102,6 @@ router.get("/product-categories", mustBeAdmin, (_req, res) => {
 });
 
 /**
- * ✅ ESTE ERA EL ENDPOINT QUE FALTABA (por eso te daba 404):
  * GET /admin/products?q=...
  */
 router.get("/products", mustBeAdmin, (req, res) => {
@@ -79,26 +118,35 @@ router.get("/products", mustBeAdmin, (req, res) => {
       prodCatName,
     } = sch.cols;
 
+    const T = qid(products);
+    const C_ID = qid(prodId);
+    const C_NAME = qid(prodName);
+    const C_PRICE = prodPrice ? qid(prodPrice) : null;
+    const C_STOCK = prodStock ? qid(prodStock) : null;
+    const C_CODE = prodCode ? qid(prodCode) : null;
+    const C_CAT = prodCat ? qid(prodCat) : null;
+    const C_CATNAME = !prodCat && prodCatName ? qid(prodCatName) : null;
+
     const q = String(req.query.q ?? "").trim();
     const like = `%${q}%`;
 
     const where = q
-      ? `WHERE ${prodName} LIKE @like
-             ${prodCode ? `OR IFNULL(${prodCode},'') LIKE @like` : ""}
-             OR CAST(${prodId} AS TEXT) LIKE @like`
+      ? `WHERE ${C_NAME} LIKE @like
+             ${C_CODE ? `OR IFNULL(${C_CODE},'') LIKE @like` : ""}
+             OR CAST(${C_ID} AS TEXT) LIKE @like`
       : "";
 
     const sql = `
-      SELECT ${prodId} AS id,
-             ${prodName} AS name
-             ${prodCat ? `, ${prodCat} AS categoryId` : ""}
-             ${!prodCat && prodCatName ? `, ${prodCatName} AS categoryName` : ""}
-             ${prodCode  ? `, ${prodCode}  AS code`  : ""}
-             ${prodPrice ? `, ${prodPrice} AS price` : ""}
-             ${prodStock ? `, ${prodStock} AS stock` : ""}
-      FROM ${products}
+      SELECT ${C_ID} AS id,
+             ${C_NAME} AS name
+             ${C_CAT ? `, ${C_CAT} AS categoryId` : ""}
+             ${C_CATNAME ? `, ${C_CATNAME} AS categoryName` : ""}
+             ${C_CODE  ? `, ${C_CODE}  AS code`  : ""}
+             ${C_PRICE ? `, ${C_PRICE} AS price` : ""}
+             ${C_STOCK ? `, ${C_STOCK} AS stock` : ""}
+      FROM ${T}
       ${where}
-      ORDER BY ${prodName} COLLATE NOCASE
+      ORDER BY ${C_NAME} COLLATE NOCASE
       LIMIT 500
     `;
 
@@ -110,7 +158,7 @@ router.get("/products", mustBeAdmin, (req, res) => {
 });
 
 /* =========================
-   ✅ Export / Import Excel
+   Export / Import Excel
    ========================= */
 
 /**
@@ -120,34 +168,56 @@ router.get("/products", mustBeAdmin, (req, res) => {
 router.get("/products/export", mustBeAdmin, (_req, res) => {
   try {
     const sch = prodSchemaOrThrow();
-    const { products } = sch.tables;
+    const { products, categories } = sch.tables;
     const {
       prodId,
       prodName,
       prodPrice,
       prodStock,
       prodCode,
-      prodCat,
-      prodCatName,
+      prodCat,      // categoryId en productos (si existe)
+      prodCatName,  // categoryName guardado en productos (si existe)
     } = sch.cols;
 
-    const sql = `
-      SELECT ${prodId} AS id,
-             ${prodName} AS name
-             ${prodCode  ? `, ${prodCode}  AS code`  : `, NULL AS code`}
-             ${prodPrice ? `, ${prodPrice} AS price` : `, NULL AS price`}
-             ${prodStock ? `, ${prodStock} AS stock` : `, NULL AS stock`}
-             ${
-               prodCat
-                 ? `, ${prodCat} AS categoryId`
-                 : prodCatName
-                 ? `, ${prodCatName} AS categoryName`
-                 : `, NULL AS categoryName`
-             }
-      FROM ${products}
-      ORDER BY ${prodName} COLLATE NOCASE
-      LIMIT 5000
+    // Si hay tabla categorías y prodCat, hacemos LEFT JOIN para traer el nombre real
+    let sql = `
+      SELECT p.${prodId} AS id,
+             p.${prodName} AS name
+             ${prodCode  ? `, p.${prodCode}  AS code`  : `, NULL AS code`}
+             ${prodPrice ? `, p.${prodPrice} AS price` : `, NULL AS price`}
+             ${prodStock ? `, p.${prodStock} AS stock` : `, NULL AS stock`}
+             ${prodCat   ? `, p.${prodCat}   AS categoryId` : `, NULL AS categoryId`}
     `;
+
+    if (prodCat && categories) {
+      // Intentamos detectar columnas de la tabla de categorías
+      const catInfo = db.prepare(`PRAGMA table_info('${categories}')`).all();
+      const catCols = catInfo.map((c) => String(c.name));
+
+      const catIdCol =
+        catCols.find((c) => /(^id$|categoriaid$|categoryid$)/i.test(c)) || catCols[0];
+      const catNameCol =
+        catCols.find((c) => /(name|nombre)/i.test(c)) || catCols[1] || catCols[0];
+
+      sql += `, c.${catNameCol} AS categoryName
+              FROM ${products} p
+              LEFT JOIN ${categories} c
+                ON CAST(c.${catIdCol} AS TEXT) = CAST(p.${prodCat} AS TEXT)
+              ORDER BY p.${prodName} COLLATE NOCASE
+              LIMIT 5000`;
+    } else if (prodCatName) {
+      // Si no hay tabla categorías pero el producto ya tiene texto de categoría
+      sql += `, p.${prodCatName} AS categoryName
+              FROM ${products} p
+              ORDER BY p.${prodName} COLLATE NOCASE
+              LIMIT 5000`;
+    } else {
+      // No tenemos forma de sacar el nombre
+      sql += `, NULL AS categoryName
+              FROM ${products} p
+              ORDER BY p.${prodName} COLLATE NOCASE
+              LIMIT 5000`;
+    }
 
     const rows = db.prepare(sql).all();
 
@@ -159,8 +229,8 @@ router.get("/products/export", mustBeAdmin, (_req, res) => {
         code: r.code ?? "",
         price: r.price ?? "",
         stock: r.stock ?? "",
-        categoryId: r.categoryId ?? "",
-        categoryName: r.categoryName ?? "",
+        categoryName: r.categoryName ?? "",  // ✅ HUMANO
+        categoryId: r.categoryId ?? "",      // (opcional, lo dejo por compatibilidad)
       }))
     );
     XLSX.utils.book_append_sheet(wb, ws, "Productos");
@@ -179,11 +249,10 @@ router.get("/products/export", mustBeAdmin, (_req, res) => {
   }
 });
 
+
 /**
  * POST /admin/products/import
- * Subís Excel y actualiza price/stock por:
- * - id (preferido)
- * - code (si existe columna de code en DB)
+ * mode=merge (default) | mode=sync (borra lo que no esté en el excel; requiere columna id)
  *
  * FormData: file=<xlsx>
  */
@@ -193,101 +262,331 @@ router.post("/products/import", mustBeAdmin, upload.single("file"), (req, res) =
       return res.status(400).json({ error: "Archivo requerido (field: file)" });
     }
 
-    const sch = prodSchemaOrThrow();
-    const { products } = sch.tables;
-    const { prodId, prodPrice, prodStock, prodCode } = sch.cols;
+    const mode = String(req.query.mode || req.body?.mode || "merge").toLowerCase();
+    const allowDelete = mode === "sync";
 
+    const sch = prodSchemaOrThrow();
+    function getOrCreateCategoryIdByName(sch, name) {
+  const { categories } = sch.tables;
+  if (!categories) return null;
+
+  const nm = String(name || "").trim();
+  if (!nm) return null;
+
+  const info = db.prepare(`PRAGMA table_info('${categories}')`).all();
+  const cols = info.map((c) => String(c.name));
+
+  const idCol =
+    cols.find((c) => /(^id$|categoriaid$|categoryid$)/i.test(c)) || cols[0];
+  const nameCol =
+    cols.find((c) => /(name|nombre)/i.test(c)) || cols[1] || cols[0];
+
+  // Buscar categoría existente
+  const found = db
+    .prepare(
+      `SELECT ${idCol} AS id
+       FROM ${categories}
+       WHERE lower(trim(${nameCol})) = lower(trim(?))
+       LIMIT 1`
+    )
+    .get(nm);
+
+  if (found?.id != null) return String(found.id);
+
+  // Crear si no existe
+  const ins = db
+    .prepare(`INSERT INTO ${categories} (${nameCol}) VALUES (?)`)
+    .run(nm);
+
+  return String(ins.lastInsertRowid);
+}
+
+    
+    const { products } = sch.tables;
+    const {
+      prodId,
+      prodName,
+      prodPrice,
+      prodStock,
+      prodCode,
+      prodCat,
+      prodCatName,
+    } = sch.cols;
+
+    if (!prodName) {
+      return res.status(500).json({ error: "No se detectó columna name en productos" });
+    }
     if (!prodId) {
       return res.status(500).json({ error: "No se detectó columna ID en productos" });
     }
-    if (!prodPrice && !prodStock) {
-      return res.status(400).json({
-        error: "La tabla de productos no tiene columnas de price/stock para actualizar",
-      });
-    }
 
+    const T = qid(products);
+    const C_ID = qid(prodId);
+    const C_NAME = qid(prodName);
+    const C_PRICE = prodPrice ? qid(prodPrice) : null;
+    const C_STOCK = prodStock ? qid(prodStock) : null;
+    const C_CODE = prodCode ? qid(prodCode) : null;
+    const C_CAT = prodCat ? qid(prodCat) : null;
+    const C_CATNAME = !prodCat && prodCatName ? qid(prodCatName) : null;
+
+    // Leer Excel
     const wb = XLSX.read(req.file.buffer, { type: "buffer" });
     const sheetName = wb.SheetNames?.[0];
     if (!sheetName) return res.status(400).json({ error: "El Excel está vacío" });
 
     const ws = wb.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: "El Excel está vacío" });
+    }
+
+    const pick = (r, keys) => {
+      for (const k of keys) if (r[k] !== undefined) return r[k];
+      return "";
+    };
 
     let updated = 0;
+    let inserted = 0;
+    let deleted = 0;
     let skipped = 0;
     const errors = [];
+
+    // Para SYNC: ids que vienen en el Excel (y también los ids nuevos insertados)
+    const excelIds = new Set();
 
     const tx = db.transaction(() => {
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i];
 
-        // Headers soportados
-        const idRaw = r.id ?? r.ID ?? r.Id ?? "";
-        const codeRaw = r.code ?? r.CODE ?? r.Codigo ?? r.codigo ?? r["Código"] ?? "";
-
-        const priceRaw = r.price ?? r.PRECIO ?? r.Precio ?? r.precio ?? "";
-        const stockRaw = r.stock ?? r.STOCK ?? r.Stock ?? r.stock_actual ?? "";
+        const idRaw = pick(r, ["id", "ID", "Id"]);
+        const codeRaw = pick(r, ["code", "CODE", "Codigo", "codigo", "CÓDIGO", "Código"]);
+        const nameRaw = pick(r, ["name", "NAME", "Nombre", "nombre"]);
+        const priceRaw = pick(r, ["price", "PRICE", "Precio", "precio"]);
+        const stockRaw = pick(r, ["stock", "STOCK", "Stock", "stock_actual"]);
+        const catIdRaw = pick(r, ["categoryId", "CategoryId", "categoriaId", "catId"]);
+        const catNameRaw = pick(r, ["categoryName", "CategoryName", "Categoria", "categoria"]);
 
         const idStr = String(idRaw).trim();
         const codeStr = String(codeRaw).trim();
+        const nameStr = String(nameRaw).trim();
+
+        if (idStr) excelIds.add(idStr);
 
         const hasId = idStr !== "";
         const hasCode = codeStr !== "";
 
-        if (!hasId && !(prodCode && hasCode)) {
-          skipped++;
-          continue;
-        }
-
         const sets = [];
         const vals = [];
 
-        if (prodPrice && String(priceRaw).trim() !== "") {
+        if (nameStr) {
+          sets.push(`${C_NAME} = ?`);
+          vals.push(nameStr);
+        }
+
+        if (C_PRICE && String(priceRaw).trim() !== "") {
           const n = Number(String(priceRaw).replace(",", "."));
           if (!Number.isFinite(n) || n < 0) {
             errors.push({ row: i + 2, error: "Precio inválido" });
           } else {
-            sets.push(`${prodPrice} = ?`);
+            sets.push(`${C_PRICE} = ?`);
             vals.push(n);
           }
         }
 
-        if (prodStock && String(stockRaw).trim() !== "") {
+        if (C_STOCK && String(stockRaw).trim() !== "") {
           const n = Number(String(stockRaw).replace(",", "."));
           if (!Number.isFinite(n) || n < 0) {
             errors.push({ row: i + 2, error: "Stock inválido" });
           } else {
-            sets.push(`${prodStock} = ?`);
+            sets.push(`${C_STOCK} = ?`);
             vals.push(Math.trunc(n));
           }
         }
 
-        if (!sets.length) {
+        if (C_CODE && codeStr !== "") {
+          sets.push(`${C_CODE} = ?`);
+          vals.push(codeStr);
+        }
+
+        // ✅ categoría: preferimos categoryName (humano) y lo traducimos a id si hay tabla categorías
+const catNameStr = String(catNameRaw).trim();
+const catIdStr = String(catIdRaw).trim();
+
+if (C_CAT) {
+  // Si DB soporta categoryId en productos:
+  let finalCatId = null;
+
+  if (catNameStr) {
+    finalCatId = getOrCreateCategoryIdByName(sch, catNameStr); // devuelve id como string
+    if (!finalCatId) {
+      errors.push({ row: i + 2, error: "No se pudo resolver categoryName a categoryId" });
+    }
+  } else if (catIdStr) {
+    finalCatId = catIdStr;
+  }
+
+  if (finalCatId !== null && String(finalCatId).trim() !== "") {
+    sets.push(`${C_CAT} = ?`);
+    vals.push(String(finalCatId).trim());
+  }
+} else if (C_CATNAME) {
+  // Si productos guarda el nombre directamente:
+  if (catNameStr) {
+    sets.push(`${C_CATNAME} = ?`);
+    vals.push(catNameStr);
+  }
+}
+
+
+        if (sets.length === 0) {
           skipped++;
           continue;
         }
 
-        let info;
+        const setSql = sets.join(", ");
+
+        // 1) UPDATE por id (preferido)
         if (hasId) {
-          info = db
+          const info = db
             .prepare(
-              `UPDATE ${products}
-               SET ${sets.join(", ")}
-               WHERE CAST(${prodId} AS TEXT) = CAST(? AS TEXT) OR rowid = ?`
+              `UPDATE ${T}
+               SET ${setSql}
+               WHERE CAST(${C_ID} AS TEXT) = CAST(? AS TEXT)`
             )
-            .run(...vals, idStr, idStr);
-        } else {
-          info = db
+            .run(...vals, idStr);
+
+          if (info.changes) {
+            updated += info.changes;
+            continue;
+          }
+        } else if (C_CODE && hasCode) {
+          // 2) UPDATE por code si no hay id
+          const info = db
             .prepare(
-              `UPDATE ${products}
-               SET ${sets.join(", ")}
-               WHERE CAST(${prodCode} AS TEXT) = CAST(? AS TEXT)`
+              `UPDATE ${T}
+               SET ${setSql}
+               WHERE CAST(${C_CODE} AS TEXT) = CAST(? AS TEXT)`
             )
             .run(...vals, codeStr);
+
+          if (info.changes) {
+            updated += info.changes;
+            continue;
+          }
+        } else {
+          skipped++;
+          continue;
         }
 
-        if (info.changes) updated += info.changes;
-        else skipped++;
+        // 3) INSERT si no actualizó
+        if (!nameStr) {
+          skipped++;
+          errors.push({ row: i + 2, error: "No existe y falta name para crear" });
+          continue;
+        }
+
+        const cols = [C_NAME];
+        const ivals = [nameStr];
+        // =======================
+// CATEGORÍA POR NOMBRE
+// =======================
+const catNameStr2 = String(catNameRaw).trim();
+const catIdStr2 = String(catIdRaw).trim();
+
+if (C_CAT) {
+  let finalCatId = null;
+
+  // Preferimos categoryName (humano)
+  if (catNameStr2) {
+    finalCatId = getOrCreateCategoryIdByName(sch, catNameStr2);
+  } 
+  // Fallback a categoryId si viene
+  else if (catIdStr2) {
+    finalCatId = catIdStr2;
+  }
+
+  if (finalCatId !== null && String(finalCatId).trim() !== "") {
+    cols.push(C_CAT);
+    ivals.push(String(finalCatId).trim());
+  }
+} 
+// Si la tabla productos guarda nombre directo
+else if (C_CATNAME && catNameStr2) {
+  cols.push(C_CATNAME);
+  ivals.push(catNameStr2);
+}
+
+        
+
+        if (C_CODE && codeStr !== "") {
+          cols.push(C_CODE);
+          ivals.push(codeStr);
+        }
+
+        if (C_PRICE && String(priceRaw).trim() !== "") {
+          const n = Number(String(priceRaw).replace(",", "."));
+          if (Number.isFinite(n) && n >= 0) {
+            cols.push(C_PRICE);
+            ivals.push(n);
+          }
+        }
+
+        if (C_STOCK && String(stockRaw).trim() !== "") {
+          const n = Number(String(stockRaw).replace(",", "."));
+          if (Number.isFinite(n) && n >= 0) {
+            cols.push(C_STOCK);
+            ivals.push(Math.trunc(n));
+          }
+        }
+
+        if (C_CAT && String(catIdRaw).trim() !== "") {
+          cols.push(C_CAT);
+          ivals.push(String(catIdRaw).trim());
+        } else if (!C_CAT && C_CATNAME && String(catNameRaw).trim() !== "") {
+          cols.push(C_CATNAME);
+          ivals.push(String(catNameRaw).trim());
+        }
+
+        const placeholders = cols.map(() => "?").join(", ");
+        const ins = db
+          .prepare(`INSERT INTO ${T} (${cols.join(", ")}) VALUES (${placeholders})`)
+          .run(...ivals);
+
+        if (ins.changes) {
+          inserted += ins.changes;
+
+          // ✅ CLAVE: si estamos en SYNC, el nuevo id insertado debe contarse como “presente en el Excel”
+          // para que el paso de DELETE no lo borre.
+          if (allowDelete) {
+            excelIds.add(String(ins.lastInsertRowid));
+          }
+        } else {
+          skipped++;
+        }
+      }
+
+      // 4) DELETE en modo sync (solo si excel tiene ids)
+      if (allowDelete) {
+        if (excelIds.size === 0) {
+          errors.push({
+            row: 1,
+            error: "SYNC requiere columna id en el Excel (para borrar con seguridad)",
+          });
+        } else {
+          const all = db.prepare(`SELECT ${C_ID} AS id FROM ${T}`).all();
+          const del = db.prepare(
+            `DELETE FROM ${T}
+             WHERE CAST(${C_ID} AS TEXT) = CAST(? AS TEXT)`
+          );
+
+          for (const r of all) {
+            const id = String(r.id);
+            if (!excelIds.has(id)) {
+              const info = del.run(id);
+              deleted += info.changes || 0;
+            }
+          }
+        }
       }
     });
 
@@ -295,8 +594,11 @@ router.post("/products/import", mustBeAdmin, upload.single("file"), (req, res) =
 
     return res.json({
       ok: true,
+      mode,
       totalRows: rows.length,
       updated,
+      inserted,
+      deleted,
       skipped,
       errors: errors.slice(0, 50),
     });
@@ -305,6 +607,7 @@ router.post("/products/import", mustBeAdmin, upload.single("file"), (req, res) =
     return res.status(500).json({ error: e?.message || "No se pudo importar el Excel" });
   }
 });
+
 
 /* =========================
    CRUD Productos
@@ -328,54 +631,60 @@ router.post("/products", mustBeAdmin, (req, res) => {
     const { prodName, prodPrice, prodStock, prodCode, prodCat, prodCatName } =
       sch.cols;
 
+    const T = qid(products);
+    const C_NAME = qid(prodName);
+    const C_PRICE = prodPrice ? qid(prodPrice) : null;
+    const C_STOCK = prodStock ? qid(prodStock) : null;
+    const C_CODE = prodCode ? qid(prodCode) : null;
+    const C_CAT = prodCat ? qid(prodCat) : null;
+    const C_CATNAME = !prodCat && prodCatName ? qid(prodCatName) : null;
+
     const name = String(req.body?.name ?? "").trim();
     if (!name) return res.status(400).json({ error: "name es requerido" });
 
-    const cols = [prodName];
+    const cols = [C_NAME];
     const vals = [name];
 
-    if (prodPrice && req.body?.price !== undefined) {
+    if (C_PRICE && req.body?.price !== undefined) {
       const v =
         req.body.price === "" || req.body.price === null
           ? null
           : Number(req.body.price);
-      cols.push(prodPrice);
+      cols.push(C_PRICE);
       vals.push(v);
     }
-    if (prodStock && req.body?.stock !== undefined) {
+    if (C_STOCK && req.body?.stock !== undefined) {
       const v =
         req.body.stock === "" || req.body.stock === null
           ? null
           : Number(req.body.stock);
-      cols.push(prodStock);
+      cols.push(C_STOCK);
       vals.push(v);
     }
-    if (prodCode && req.body?.code !== undefined) {
+    if (C_CODE && req.body?.code !== undefined) {
       const v =
         req.body.code === "" || req.body.code === null
           ? null
           : String(req.body.code);
-      cols.push(prodCode);
+      cols.push(C_CODE);
       vals.push(v);
     }
 
-    if (prodCat) {
+    if (C_CAT) {
       const catId =
         req.body?.catId !== undefined ? req.body.catId : req.body?.categoryId;
       if (catId !== undefined) {
-        cols.push(prodCat);
+        cols.push(C_CAT);
         vals.push(catId === "" || catId === null ? null : catId);
       }
-    } else if (prodCatName && req.body?.categoryName !== undefined) {
-      cols.push(prodCatName);
+    } else if (C_CATNAME && req.body?.categoryName !== undefined) {
+      cols.push(C_CATNAME);
       vals.push(String(req.body.categoryName ?? "").trim() || null);
     }
 
-    const placeholders = cols.map(() => "?").join(",");
+    const placeholders = cols.map(() => "?").join(", ");
     const info = db
-      .prepare(
-        `INSERT INTO ${products} (${cols.join(",")}) VALUES (${placeholders})`
-      )
+      .prepare(`INSERT INTO ${T} (${cols.join(", ")}) VALUES (${placeholders})`)
       .run(...vals);
 
     res.status(201).json({ ok: true, id: info.lastInsertRowid });
@@ -398,47 +707,53 @@ router.put("/products/:id", mustBeAdmin, (req, res) => {
       prodCatName,
     } = sch.cols;
 
+    const T = qid(products);
+    const C_ID = qid(prodId);
+    const C_NAME = qid(prodName);
+    const C_PRICE = prodPrice ? qid(prodPrice) : null;
+    const C_STOCK = prodStock ? qid(prodStock) : null;
+    const C_CODE = prodCode ? qid(prodCode) : null;
+    const C_CAT = prodCat ? qid(prodCat) : null;
+    const C_CATNAME = !prodCat && prodCatName ? qid(prodCatName) : null;
+
     const id = req.params.id;
 
     const sets = [];
     const vals = [];
 
-    if (prodName && req.body?.name !== undefined) {
-      sets.push(`${prodName} = ?`);
+    if (req.body?.name !== undefined) {
+      sets.push(`${C_NAME} = ?`);
       vals.push(String(req.body.name ?? ""));
     }
 
-    if (prodPrice && req.body?.price !== undefined) {
+    if (C_PRICE && req.body?.price !== undefined) {
       let v = req.body.price;
       if (v === "") v = 0;
       v = v === null ? null : Number(v);
-      sets.push(`${prodPrice} = ?`);
+      sets.push(`${C_PRICE} = ?`);
       vals.push(v);
     }
 
-    if (prodStock && req.body?.stock !== undefined) {
+    if (C_STOCK && req.body?.stock !== undefined) {
       let v = req.body.stock;
       if (v === "") v = 0;
       v = v === null ? null : Number(v);
-      sets.push(`${prodStock} = ?`);
+      sets.push(`${C_STOCK} = ?`);
       vals.push(v);
     }
 
-    if (prodCode && req.body?.code !== undefined) {
+    if (C_CODE && req.body?.code !== undefined) {
       const v = req.body.code === null ? null : String(req.body.code ?? "");
-      sets.push(`${prodCode} = ?`);
+      sets.push(`${C_CODE} = ?`);
       vals.push(v);
     }
 
-    if (
-      prodCat &&
-      (req.body?.catId !== undefined || req.body?.categoryId !== undefined)
-    ) {
+    if (C_CAT && (req.body?.catId !== undefined || req.body?.categoryId !== undefined)) {
       const v = req.body.catId !== undefined ? req.body.catId : req.body.categoryId;
-      sets.push(`${prodCat} = ?`);
+      sets.push(`${C_CAT} = ?`);
       vals.push(v === "" || v === null ? null : v);
-    } else if (!prodCat && prodCatName && req.body?.categoryName !== undefined) {
-      sets.push(`${prodCatName} = ?`);
+    } else if (!C_CAT && C_CATNAME && req.body?.categoryName !== undefined) {
+      sets.push(`${C_CATNAME} = ?`);
       vals.push(String(req.body.categoryName ?? "").trim() || null);
     }
 
@@ -446,26 +761,26 @@ router.put("/products/:id", mustBeAdmin, (req, res) => {
 
     const info = db
       .prepare(
-        `UPDATE ${products} SET ${sets.join(", ")} WHERE ${prodId} = ? OR rowid = ?`
+        `UPDATE ${T} SET ${sets.join(", ")} WHERE CAST(${C_ID} AS TEXT) = CAST(? AS TEXT)`
       )
-      .run(...vals, id, id);
+      .run(...vals, id);
 
     if (!info.changes) return res.status(404).json({ error: "Producto no encontrado" });
 
     const updated = db
       .prepare(
         `
-        SELECT ${prodId} AS id,
-               ${prodName} AS name
-               ${prodCode ? `, ${prodCode} AS code` : ""}
-               ${prodPrice ? `, ${prodPrice} AS price` : ""}
-               ${prodStock ? `, ${prodStock} AS stock` : ""}
-        FROM ${products}
-        WHERE ${prodId} = ? OR rowid = ?
+        SELECT ${C_ID} AS id,
+               ${C_NAME} AS name
+               ${C_CODE ? `, ${C_CODE} AS code` : ""}
+               ${C_PRICE ? `, ${C_PRICE} AS price` : ""}
+               ${C_STOCK ? `, ${C_STOCK} AS stock` : ""}
+        FROM ${T}
+        WHERE CAST(${C_ID} AS TEXT) = CAST(? AS TEXT)
         LIMIT 1
       `
       )
-      .get(id, id);
+      .get(id);
 
     res.json({ ok: true, product: updated });
   } catch (e) {
@@ -478,11 +793,15 @@ router.delete("/products/:id", mustBeAdmin, (req, res) => {
     const sch = prodSchemaOrThrow();
     const { products } = sch.tables;
     const { prodId } = sch.cols;
+
+    const T = qid(products);
+    const C_ID = qid(prodId);
+
     const id = req.params.id;
 
     const info = db
-      .prepare(`DELETE FROM ${products} WHERE ${prodId} = ? OR rowid = ?`)
-      .run(id, id);
+      .prepare(`DELETE FROM ${T} WHERE CAST(${C_ID} AS TEXT) = CAST(? AS TEXT)`)
+      .run(id);
 
     if (!info.changes) return res.status(404).json({ error: "Producto no encontrado" });
     res.json({ ok: true });
@@ -502,6 +821,10 @@ router.patch("/products/:id/stock", mustBeAdmin, (req, res) => {
         .status(400)
         .json({ error: "La tabla de productos no tiene columna de stock" });
 
+    const T = qid(products);
+    const C_ID = qid(prodId);
+    const C_STOCK = qid(prodStock);
+
     const id = req.params.id;
     const delta = Number(req.body?.delta ?? NaN);
     if (!Number.isFinite(delta))
@@ -509,17 +832,17 @@ router.patch("/products/:id/stock", mustBeAdmin, (req, res) => {
 
     const r = db
       .prepare(
-        `UPDATE ${products} SET ${prodStock} = COALESCE(${prodStock},0) + ? WHERE ${prodId} = ? OR rowid = ?`
+        `UPDATE ${T} SET ${C_STOCK} = COALESCE(${C_STOCK},0) + ? WHERE CAST(${C_ID} AS TEXT) = CAST(? AS TEXT)`
       )
-      .run(delta, id, id);
+      .run(delta, id);
 
     if (!r.changes) return res.status(404).json({ error: "Producto no encontrado" });
 
     const row = db
       .prepare(
-        `SELECT ${prodId} AS id, ${prodStock} AS stock FROM ${products} WHERE ${prodId} = ? OR rowid = ? LIMIT 1`
+        `SELECT ${C_ID} AS id, ${C_STOCK} AS stock FROM ${T} WHERE CAST(${C_ID} AS TEXT) = CAST(? AS TEXT) LIMIT 1`
       )
-      .get(id, id);
+      .get(id);
 
     res.json({ ok: true, product: row });
   } catch {
@@ -589,12 +912,16 @@ function confirmIncomingById(id) {
   const { prodId, prodStock } = sch.cols;
   if (!prodStock) throw new Error("La tabla de productos no tiene columna de stock");
 
+  const T = qid(products);
+  const C_ID = qid(prodId);
+  const C_STOCK = qid(prodStock);
+
   const tx = db.transaction(() => {
     db.prepare(
-      `UPDATE ${products}
-       SET ${prodStock} = COALESCE(${prodStock},0) + ?
-       WHERE ${prodId} = ? OR rowid = ?`
-    ).run(row.qty, row.product_id, row.product_id);
+      `UPDATE ${T}
+       SET ${C_STOCK} = COALESCE(${C_STOCK},0) + ?
+       WHERE CAST(${C_ID} AS TEXT) = CAST(? AS TEXT)`
+    ).run(row.qty, row.product_id);
 
     db.prepare(`DELETE FROM IncomingStock WHERE id = ?`).run(id);
   });
@@ -604,13 +931,13 @@ function confirmIncomingById(id) {
   const updated = db
     .prepare(
       `
-    SELECT ${prodId} AS id, ${prodStock} AS stock
-    FROM ${products}
-    WHERE ${prodId} = ? OR rowid = ?
+    SELECT ${C_ID} AS id, ${C_STOCK} AS stock
+    FROM ${T}
+    WHERE CAST(${C_ID} AS TEXT) = CAST(? AS TEXT)
     LIMIT 1
   `
     )
-    .get(row.product_id, row.product_id);
+    .get(row.product_id);
 
   return { incoming: row, product: updated };
 }
