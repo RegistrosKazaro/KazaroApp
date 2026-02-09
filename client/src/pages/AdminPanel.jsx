@@ -2033,15 +2033,6 @@ export default function AdminPanel() {
         </button>
 
         <button
-          className={`tab-btn ${tab === "budgets" ? "is-active" : ""}`}
-          onClick={() => setTab("budgets")}
-          role="tab"
-          aria-selected={tab === "budgets"}
-        >
-          Presupuestos
-        </button>
-
-        <button
           className={`tab-btn ${tab === "incomingStock" ? "is-active" : ""}`}
           onClick={() => setTab("incomingStock")}
           role="tab"
