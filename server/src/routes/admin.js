@@ -26,40 +26,7 @@ const mustBeAdmin = [requireAuth, requireRole(["admin", "Admin"])];
 
 // Upload Excel en memoria
 const upload = multer({ storage: multer.memoryStorage() });
-function getOrCreateCategoryIdByName(sch, name) {
-  const { categories } = sch.tables;
-  if (!categories) return null;
 
-  const nm = String(name || "").trim();
-  if (!nm) return null;
-
-  const info = db.prepare(`PRAGMA table_info('${categories}')`).all();
-  const cols = info.map((c) => String(c.name));
-
-  const idCol =
-    cols.find((c) => /(^id$|categoriaid$|categoryid$)/i.test(c)) || cols[0];
-  const nameCol =
-    cols.find((c) => /(name|nombre)/i.test(c)) || cols[1] || cols[0];
-
-  // Buscar existente (case-insensitive)
-  const found = db
-    .prepare(
-      `SELECT ${idCol} AS id
-       FROM ${categories}
-       WHERE lower(trim(${nameCol})) = lower(trim(?))
-       LIMIT 1`
-    )
-    .get(nm);
-
-  if (found?.id != null) return String(found.id);
-
-  // Crear si no existe
-  const ins = db
-    .prepare(`INSERT INTO ${categories} (${nameCol}) VALUES (?)`)
-    .run(nm);
-
-  return String(ins.lastInsertRowid);
-}
 
 
 function prodSchemaOrThrow() {
@@ -539,14 +506,6 @@ else if (C_CATNAME && catNameStr2) {
           }
         }
 
-        if (C_CAT && String(catIdRaw).trim() !== "") {
-          cols.push(C_CAT);
-          ivals.push(String(catIdRaw).trim());
-        } else if (!C_CAT && C_CATNAME && String(catNameRaw).trim() !== "") {
-          cols.push(C_CATNAME);
-          ivals.push(String(catNameRaw).trim());
-        }
-
         const placeholders = cols.map(() => "?").join(", ");
         const ins = db
           .prepare(`INSERT INTO ${T} (${cols.join(", ")}) VALUES (${placeholders})`)
@@ -853,6 +812,17 @@ router.patch("/products/:id/stock", mustBeAdmin, (req, res) => {
 /* =========================
    IncomingStock (ingresos futuros)
    ========================= */
+function tableCols(db, table) {
+  return db.prepare(`PRAGMA table_info(${table})`).all().map(r => r.name);
+}
+
+function pickCol(cols, candidates) {
+  const set = new Set(cols.map(c => String(c).toLowerCase()));
+  for (const cand of candidates) {
+    if (set.has(String(cand).toLowerCase())) return cand;
+  }
+  return null;
+}
 
 // Helpers reutilizables
 function listIncomingForProduct(productId) {
@@ -1213,6 +1183,274 @@ router.get("/services-all", mustBeAdmin, (_req, res) => {
   } catch (e) {
     console.error("GET /admin/services-all error:", e);
     return res.status(500).json({ error: "Error al listar servicios" });
+  }
+});
+
+router.get("/services/export", mustBeAdmin, (_req, res) => {
+  try {
+    const rows = db
+      .prepare(
+        `
+        SELECT
+          ${SRV_ID} AS id,
+          ${SRV_NAME} AS name
+        FROM Servicios
+        ORDER BY ${SRV_NAME} COLLATE NOCASE
+      `
+      )
+      .all();
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(
+      rows.map((r) => ({
+        id: r.id,
+        name: r.name ?? "",
+      }))
+    );
+    XLSX.utils.book_append_sheet(wb, ws, "Servicios");
+
+    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader("Content-Disposition", `attachment; filename="servicios.xlsx"`);
+    return res.send(buf);
+  } catch (e) {
+    console.error("GET /admin/services/export error:", e);
+    return res.status(500).json({ error: "No se pudo exportar el Excel de servicios" });
+  }
+});
+
+/**
+ * POST /admin/services/import
+ *
+ * Importa el maestro de Servicios en modo FULL:
+ * - Requiere columna "id" (o "ServiciosID") en el Excel.
+ * - Hace UPSERT por id (update si existe, insert si no).
+ * - Borra de la tabla Servicios todo lo que NO esté en el Excel.
+ * - Limpia también:
+ *    - supervisor_services
+ *    - service_products (detectando la columna de servicio dinámicamente)
+ *
+ * FormData: file=<xlsx>
+ */
+router.post("/services/import", mustBeAdmin, upload.single("file"), (req, res) => {
+  try {
+    if (!req.file?.buffer) {
+      return res.status(400).json({ error: "Archivo requerido (field: file)" });
+    }
+
+    // FULL replace, ignoramos mode=...
+    const allowDelete = true;
+
+    // --- Leer Excel ---
+    const wb = XLSX.read(req.file.buffer, { type: "buffer" });
+    const sheetName = wb.SheetNames?.[0];
+    if (!sheetName) return res.status(400).json({ error: "El Excel está vacío" });
+
+    const ws = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: "El Excel está vacío" });
+    }
+
+    const pick = (r, keys) => {
+      for (const k of keys) if (r[k] !== undefined) return r[k];
+      return "";
+    };
+
+    // TABLA/COLUMNAS de servicios
+    const T = "Servicios";
+    const SRV_ID_COL = "ServiciosID";
+    const SRV_NAME_COL = "ServicioNombre";
+
+    let updated = 0;
+    let inserted = 0;
+    let deleted = 0;
+    let skipped = 0;
+    const errors = [];
+
+    // ids que vienen en el Excel (para saber qué NO borrar)
+    const excelIds = new Set();
+
+    const tx = db.transaction(() => {
+      // 1) UPSERT por id
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+
+        const idRaw = pick(r, ["id", "ID", "Id", SRV_ID_COL]);
+        const nameRaw = pick(r, [
+          "name",
+          "NAME",
+          "Nombre",
+          "nombre",
+          SRV_NAME_COL,
+          "Servicio",
+          "servicio",
+        ]);
+
+        const idStr = String(idRaw).trim();
+        const nameStr = String(nameRaw).trim();
+
+        if (!idStr) {
+          skipped++;
+          errors.push({ row: i + 2, error: "Falta id" });
+          continue;
+        }
+        excelIds.add(idStr);
+
+        if (!nameStr) {
+          skipped++;
+          errors.push({ row: i + 2, error: "Falta name" });
+          continue;
+        }
+
+        // UPDATE
+        const u = db
+          .prepare(
+            `
+            UPDATE ${T}
+            SET ${SRV_NAME_COL} = ?
+            WHERE CAST(${SRV_ID_COL} AS TEXT) = CAST(? AS TEXT)
+          `
+          )
+          .run(nameStr, idStr);
+
+        if (u.changes) {
+          updated += u.changes;
+          continue;
+        }
+
+        // INSERT
+        const ins = db
+          .prepare(
+            `
+            INSERT INTO ${T} (${SRV_ID_COL}, ${SRV_NAME_COL})
+            VALUES (?, ?)
+          `
+          )
+          .run(idStr, nameStr);
+
+        if (ins.changes) inserted += ins.changes;
+        else skipped++;
+      }
+
+      // 2) DELETE de servicios que no estén en el Excel
+      if (allowDelete) {
+        if (excelIds.size === 0) {
+          errors.push({
+            row: 1,
+            error: "El Excel debe tener columna id",
+          });
+        } else {
+          const all = db.prepare(`SELECT ${SRV_ID_COL} AS id FROM ${T}`).all();
+
+          // Aseguramos pivots
+          ensureSupervisorPivotExclusive();
+          const { srv: SP_SRV_COL } = detectSPCols(); // service_products.* columna servicio
+
+          // Preparamos deletes sólo si las tablas existen
+          const hasServiceBudgets = !!db
+            .prepare(
+              `SELECT name FROM sqlite_master WHERE type='table' AND name='service_budgets' LIMIT 1`
+            )
+            .get();
+
+          const hasServiceEmails = !!db
+            .prepare(
+              `SELECT name FROM sqlite_master WHERE type='table' AND name='service_emails' LIMIT 1`
+            )
+            .get();
+
+          const delAssign = db.prepare(
+            `DELETE FROM supervisor_services WHERE CAST(ServicioID AS TEXT) = CAST(? AS TEXT)`
+          );
+          const delSP = db.prepare(
+            `DELETE FROM service_products WHERE CAST(${SP_SRV_COL} AS TEXT) = CAST(? AS TEXT)`
+          );
+          const delSrv = db.prepare(
+            `DELETE FROM ${T} WHERE CAST(${SRV_ID_COL} AS TEXT) = CAST(? AS TEXT)`
+          );
+
+          const delBud = hasServiceBudgets
+            ? db.prepare(
+                `DELETE FROM service_budgets WHERE CAST(service_id AS TEXT) = CAST(? AS TEXT)`
+              )
+            : null;
+
+          const delEmails = hasServiceEmails
+            ? db.prepare(
+                `DELETE FROM service_emails WHERE CAST(service_id AS TEXT) = CAST(? AS TEXT)`
+              )
+            : null;
+
+          for (const r of all) {
+            const id = String(r.id);
+            if (!excelIds.has(id)) {
+              // limpiamos pivots y tablas opcionales
+              delAssign.run(id);
+              delSP.run(id);
+              if (delBud) delBud.run(id);
+              if (delEmails) delEmails.run(id);
+
+              const info = delSrv.run(id);
+              deleted += info.changes || 0;
+            }
+          }
+        }
+      }
+    });
+
+    tx();
+
+    return res.json({
+      ok: true,
+      mode: "full",
+      totalRows: rows.length,
+      updated,
+      inserted,
+      deleted,
+      skipped,
+      errors: errors.slice(0, 50),
+    });
+  } catch (e) {
+    console.error("POST /admin/services/import error:", e);
+    return res
+      .status(500)
+      .json({ error: e?.message || "No se pudo importar el Excel de servicios" });
+  }
+});
+
+
+/**
+ * DELETE /admin/services/:id
+ * Elimina un servicio + limpia pivots
+ */
+router.delete("/services/:id", mustBeAdmin, (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    if (!id) return res.status(400).json({ error: "id requerido" });
+
+    const tx = db.transaction(() => {
+      db.prepare(`DELETE FROM supervisor_services WHERE CAST(ServicioID AS TEXT) = CAST(? AS TEXT)`).run(id);
+      db.prepare(`DELETE FROM service_products WHERE CAST(ServicioID AS TEXT) = CAST(? AS TEXT)`).run(id);
+
+      const r = db
+        .prepare(`DELETE FROM Servicios WHERE CAST(${SRV_ID} AS TEXT) = CAST(? AS TEXT)`)
+        .run(id);
+
+      return r.changes || 0;
+    });
+
+    const changes = tx();
+    if (!changes) return res.status(404).json({ error: "Servicio no encontrado" });
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("DELETE /admin/services/:id error:", e);
+    return res.status(500).json({ error: "No se pudo eliminar el servicio" });
   }
 });
 
@@ -1580,5 +1818,6 @@ router.put("/sp/assignments/:serviceId", mustBeAdmin, (req, res) => {
     res.status(500).json({ error: "No se pudieron actualizar las asignaciones" });
   }
 });
+
 
 export default router;

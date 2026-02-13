@@ -1860,6 +1860,10 @@ function CreateServiceSection() {
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
 
+  // Excel Servicios
+  const [importServiceFile, setImportServiceFile] = useState(null);
+  const [importingServices, setImportingServices] = useState(false);
+
   const loadAll = useCallback(async () => {
     setLoading(true);
     setErr("");
@@ -1878,6 +1882,91 @@ function CreateServiceSection() {
   useEffect(() => {
     loadAll();
   }, [loadAll]);
+
+  const downloadServicesExcel = async () => {
+    setErr("");
+    setMsg("");
+    try {
+      const res = await api.get("/admin/services/export", { responseType: "blob" });
+
+      const blob = new Blob([res.data], {
+        type:
+          res.headers?.["content-type"] ||
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "servicios.xlsx";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+      setMsg("Excel de servicios descargado.");
+    } catch (e) {
+      setErr(
+        e?.response?.data?.error ||
+          e?.message ||
+          "No se pudo descargar el Excel de servicios"
+      );
+    }
+  };
+
+ const importServicesExcel = async () => {
+  setErr("");
+  setMsg("");
+
+  if (!importServiceFile) {
+    setErr("Elegí un archivo .xlsx de servicios primero");
+    return;
+  }
+
+  const fd = new FormData();
+  fd.append("file", importServiceFile);
+
+  setImportingServices(true);
+  try {
+    const { data } = await api.post(`/admin/services/import?mode=sync`, fd, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+
+    const updated = Number(data?.updated ?? 0);
+    const inserted = Number(data?.inserted ?? 0);
+    const deleted = Number(data?.deleted ?? 0);
+    const skipped = Number(data?.skipped ?? 0);
+
+    setMsg(
+      `Servicios sincronizados. Actualizados: ${updated}. Nuevos: ${inserted}. Borrados: ${deleted}. Omitidos: ${skipped}.`
+    );
+
+    setImportServiceFile(null);
+    await loadAll();
+  } catch (e) {
+    setErr(e?.response?.data?.error || e?.message || "No se pudo importar el Excel de servicios");
+  } finally {
+    setImportingServices(false);
+  }
+};
+
+
+  const deleteService = async (id) => {
+    if (!confirm("¿Eliminar este servicio?")) return;
+
+    setErr("");
+    setMsg("");
+
+    try {
+      await api.delete(`/admin/services/${id}`);
+      setMsg("Servicio eliminado.");
+      await loadAll();
+    } catch (e) {
+      setErr(
+        e?.response?.data?.error || e?.message || "No se pudo eliminar el servicio"
+      );
+    }
+  };
 
   const create = async () => {
     const clean = String(name || "").trim();
@@ -1918,11 +2007,39 @@ function CreateServiceSection() {
           onChange={(e) => setName(e.target.value)}
           aria-label="Nombre del servicio"
         />
+
         <button className="btn primary" onClick={create} disabled={saving}>
           {saving ? "Creando…" : "+ Crear"}
         </button>
+
         <button className="btn" onClick={loadAll} disabled={loading}>
           {loading ? "Actualizando…" : "Actualizar lista"}
+        </button>
+
+        <div style={{ flex: 1 }} />
+
+        <button className="btn" type="button" onClick={downloadServicesExcel}>
+          Descargar Excel
+        </button>
+
+        <label className="pill" style={{ cursor: "pointer" }}>
+          Subir Excel
+          <input
+            type="file"
+            accept=".xlsx,.xls"
+            style={{ display: "none" }}
+            onChange={(e) => setImportServiceFile(e.target.files?.[0] || null)}
+          />
+        </label>
+
+        <button
+          className="btn"
+          type="button"
+          onClick={importServicesExcel}
+          disabled={!importServiceFile || importingServices}
+          title={!importServiceFile ? "Elegí un .xlsx" : ""}
+        >
+          {importingServices ? "Importando…" : "Importar"}
         </button>
       </div>
 
@@ -1933,7 +2050,9 @@ function CreateServiceSection() {
           <div className="t-head">
             <div style={{ flex: 2 }}>ID</div>
             <div style={{ flex: 6 }}>Nombre</div>
+            <div style={{ width: 140 }} />
           </div>
+
           {services.length === 0 ? (
             <div className="t-row">
               <div style={{ flex: 1 }}>—</div>
@@ -1946,6 +2065,16 @@ function CreateServiceSection() {
                   {s.id}
                 </div>
                 <div style={{ flex: 6 }}>{s.name}</div>
+
+                <div style={{ width: 140, textAlign: "right" }}>
+                  <button
+                    className="pill danger"
+                    onClick={() => deleteService(s.id)}
+                    aria-label={`Eliminar servicio ${s.name}`}
+                  >
+                    Eliminar
+                  </button>
+                </div>
               </div>
             ))
           )}
