@@ -445,7 +445,7 @@ export function ensureVisibilitySchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS ProductRoleVisibility (
       product_id INTEGER NOT NULL,
-      role       TEXT    NOT NULL CHECK (LOWER(role) IN ('administrativo','supervisor')),
+      role       TEXT    NOT NULL CHECK (LOWER(role) IN ('administrativo','supervisor','admin')),
       PRIMARY KEY (product_id, role)
     );
   `);
@@ -454,7 +454,7 @@ export function ensureVisibilitySchema() {
 }
 export function assignVisibility(productId, roleName) {
   const role = String(roleName || "").toLowerCase();
-  if (!["administrativo","supervisor"].includes(role)) {
+  if (!["administrativo","supervisor","admin"].includes(role)) {
     throw new Error(`Rol inválido: ${roleName}`);
   }
   return db.prepare(`
@@ -591,10 +591,10 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
     .map(r => String(r).trim().toLowerCase())
     .filter(Boolean);
 
-  const joinPRV = normRoles.length
-    ? `JOIN ProductRoleVisibility prv
-         ON CAST(prv.product_id AS TEXT) = CAST(p.${prodId} AS TEXT)`
-    : ``;
+  const joinPRV = `
+  JOIN ProductRoleVisibility prv
+    ON CAST(prv.product_id AS TEXT) = CAST(p.${prodId} AS TEXT)
+`;
 
   const incomingJoin = `
     LEFT JOIN (
@@ -630,11 +630,14 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
     params.push(String(serviceId));
   }
 
-  if (normRoles.length) {
-    const placeholders = normRoles.map(() => '?').join(',');
-    where.push(`LOWER(prv.role) IN (${placeholders})`);
+    if (!normRoles.length) {
+    where.push(`1 = 0`); // si no tiene rol, no ve nada
+  } else {
+    // IMPORTANT: usamos placeholders posicionales (?) porque .all(...params) es posicional
+    where.push(`prv.role IN (${normRoles.map(() => `?`).join(",")})`);
     params.push(...normRoles);
   }
+
 
   const whereSQL = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
@@ -1377,4 +1380,5 @@ export function adminUpdateProduct(id, fields = {}) {
     LIMIT 1
   `;
   return db.prepare(sql).get(id, id);
+  
 }

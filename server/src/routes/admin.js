@@ -483,8 +483,6 @@ else if (C_CATNAME && catNameStr2) {
   ivals.push(catNameStr2);
 }
 
-        
-
         if (C_CODE && codeStr !== "") {
           cols.push(C_CODE);
           ivals.push(codeStr);
@@ -950,6 +948,69 @@ router.post("/products/:id/incoming", mustBeAdmin, (req, res) => {
     res.status(500).json({ error: "No se pudo crear el ingreso futuro" });
   }
 });
+router.get("/products/:id/roles", mustBeAdmin, (req, res) => {
+  try {
+    const id = String(req.params.id);
+
+    const rows = db.prepare(`
+      SELECT role
+      FROM ProductRoleVisibility
+      WHERE CAST(product_id AS TEXT) = CAST(? AS TEXT)
+    `).all(id);
+
+    res.json(rows.map(r => r.role));
+  } catch (e) {
+    console.error("GET /admin/products/:id/roles", e);
+    res.status(500).json({ error: "No se pudieron cargar los roles" });
+  }
+});
+router.put("/products/:id/roles", mustBeAdmin, (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    if (!id) return res.status(400).json({ error: "id de producto requerido" });
+
+    // roles visibles para el producto (NO confundir con roles de usuario)
+    const rolesRaw = req.body?.roles ?? req.body?.visibleRoles ?? [];
+    const roles = Array.isArray(rolesRaw)
+      ? rolesRaw.map((r) => String(r).toLowerCase().trim()).filter(Boolean)
+      : [];
+
+    // Debe matchear el CHECK de ProductRoleVisibility en db.js
+    const allowed = new Set(["administrativo", "supervisor", "admin"]);
+    const clean = roles.filter((r) => allowed.has(r));
+
+    if (!clean.length) {
+      return res.status(400).json({
+        error: "roles requerido (array) con valores: administrativo | supervisor | admin",
+      });
+    }
+
+    const tx = db.transaction(() => {
+      db.prepare(`
+        DELETE FROM ProductRoleVisibility
+        WHERE CAST(product_id AS TEXT) = CAST(? AS TEXT)
+      `).run(id);
+
+      const ins = db.prepare(`
+        INSERT INTO ProductRoleVisibility (product_id, role)
+        VALUES (?, ?)
+      `);
+
+      for (const role of clean) {
+        ins.run(id, role);
+      }
+    });
+
+    tx();
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("PUT /admin/products/:id/roles", e);
+    res.status(500).json({ error: "No se pudieron actualizar los roles" });
+  }
+});
+
+
 
 router.delete("/incoming/:incomingId", mustBeAdmin, (req, res) => {
   try {

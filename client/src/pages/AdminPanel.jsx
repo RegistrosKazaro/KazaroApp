@@ -73,7 +73,8 @@ const useDebounced = (value, delay = 300) => {
 };
 
 /* ===========================================================
- * 1) Productos
+ * 1) Productosconst [roleVisibility, setRoleVisibility] = useState([]);
+
  * ========================================================= */
 function ProductsSection() {
   const [rows, setRows] = useState([]);
@@ -82,6 +83,7 @@ function ProductsSection() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [statusMsg, setStatusMsg] = useState("");
+  const [roleVisibility, setRoleVisibility] = useState([]);
 
   // Export/Import Excel
   const [importing, setImporting] = useState(false);
@@ -195,63 +197,82 @@ function ProductsSection() {
   }, [load]);
 
   const startNew = () => {
-    setEditingId("__new__");
-    setCatTouched(false);
-    setDraft({
-      name: "",
-      price: "",
-      stock: "",
-      code: "",
-      catId: "",
-    });
-    setTimeout(() => nameRef.current?.focus(), 0);
-  };
+  setEditingId("__new__");
+  setCatTouched(false);
 
-  const onEdit = async (row) => {
-    if (!row || !row.id) {
-      startNew();
-      return;
+  setRoleVisibility(["supervisor", "administrativo"]); // ✅ AGREGAR
+
+  setDraft({
+    name: "",
+    price: "",
+    stock: "",
+    code: "",
+    catId: "",
+  });
+  setTimeout(() => nameRef.current?.focus(), 0);
+};
+
+const onEdit = async (row) => {
+  if (!row || !row.id) {
+    startNew();
+    return;
+  }
+
+  setStatusMsg("");
+  setErr("");
+  setCatTouched(false);
+
+  setEditingId(row.id);
+  setDraft({
+    name: row.name ?? "",
+    price: row.price ?? "",
+    stock: row.stock ?? "",
+    code: row.code ?? "",
+    catId: "",
+  });
+
+  // default mientras carga (opcional)
+  setRoleVisibility(["supervisor", "administrativo"]);
+
+  setEditingLoading(true);
+  try {
+    // 1) Traer datos del producto (sin roles)
+    const { data } = await api.get(`/admin/products/${row.id}`);
+
+    // 2) Traer roles reales desde el endpoint correcto
+    const rolesRes = await api.get(`/admin/products/${row.id}/roles`);
+
+    const rawRoles = rolesRes?.data ?? [];
+    const roles = Array.isArray(rawRoles)
+      ? rawRoles.map((x) => String(x).toLowerCase().trim()).filter(Boolean)
+      : [];
+
+    // Si no hay roles guardados, por defecto que sean ambos visibles
+    setRoleVisibility(roles.length ? roles : ["supervisor", "administrativo"]);
+
+    let catId = "";
+    if (data?.categoryId != null) catId = String(data.categoryId);
+    else if (data?.categoryName != null) {
+      const mapped = catIdByName.get(norm(data.categoryName));
+      catId = mapped ? String(mapped) : "";
     }
-    setStatusMsg("");
-    setErr("");
-    setCatTouched(false);
 
-    setEditingId(row.id);
-    setDraft({
-      name: row.name ?? "",
-      price: row.price ?? "",
-      stock: row.stock ?? "",
-      code: row.code ?? "",
-      catId: "",
-    });
+    setDraft((prev) => ({
+      ...prev,
+      name: data?.name ?? prev.name ?? "",
+      price: data?.price ?? prev.price ?? "",
+      stock: data?.stock ?? prev.stock ?? "",
+      code: data?.code ?? prev.code ?? "",
+      catId,
+    }));
+  } catch (e) {
+    setErr(e?.response?.data?.error || e.message || "No se pudo cargar el producto completo");
+  } finally {
+    setEditingLoading(false);
+  }
 
-    setEditingLoading(true);
-    try {
-      const { data } = await api.get(`/admin/products/${row.id}`);
+};
 
-      let catId = "";
-      if (data?.categoryId != null) catId = String(data.categoryId);
-      else if (data?.categoryName != null) {
-        // si viene nombre viejo, intentamos mapearlo al id real para que el select muestre bien
-        const mapped = catIdByName.get(norm(data.categoryName));
-        catId = mapped ? String(mapped) : "";
-      }
-
-      setDraft((prev) => ({
-        ...prev,
-        name: data?.name ?? prev.name ?? "",
-        price: data?.price ?? prev.price ?? "",
-        stock: data?.stock ?? prev.stock ?? "",
-        code: data?.code ?? prev.code ?? "",
-        catId,
-      }));
-    } catch {
-      setErr("No se pudo cargar el producto completo");
-    } finally {
-      setEditingLoading(false);
-      setTimeout(() => nameRef.current?.focus(), 0);
-    }
-  };
 
   const onCancel = () => {
     setEditingId(null);
@@ -262,42 +283,63 @@ function ProductsSection() {
   };
 
   const onSave = async () => {
-    setStatusMsg("");
-    setErr("");
+  setStatusMsg("");
+  setErr("");
 
-    const payload = {
-      name: String(draft.name || "").trim(),
-      price:
-        draft.price === "" || draft.price === null ? null : Number(draft.price),
-      stock:
-        draft.stock === "" || draft.stock === null ? null : Number(draft.stock),
-      code: draft.code === "" || draft.code === null ? null : String(draft.code),
-    };
-
-    if (!payload.name) {
-      setErr("El nombre es requerido");
-      return;
-    }
-
-    // solo enviamos catId si corresponde
-    if (editingId === "__new__" || catTouched) {
-      payload.catId = draft.catId || null;
-    }
-
-    try {
-      if (editingId && editingId !== "__new__") {
-        await api.put(`/admin/products/${editingId}`, payload);
-        setStatusMsg("Producto actualizado.");
-      } else {
-        await api.post("/admin/products", payload);
-        setStatusMsg("Producto creado.");
-      }
-      await load();
-      onCancel();
-    } catch (e) {
-      setErr(e?.response?.data?.error || e.message);
-    }
+  const payload = {
+    name: String(draft.name || "").trim(),
+    price: draft.price === "" || draft.price === null ? null : Number(draft.price),
+    stock: draft.stock === "" || draft.stock === null ? null : Number(draft.stock),
+    code: draft.code === "" || draft.code === null ? null : String(draft.code),
   };
+
+  if (!payload.name) {
+    setErr("El nombre es requerido");
+    return;
+  }
+
+  // ✅ roles normalizados (y admin siempre incluido)
+  const rolesSel = Array.from(
+    new Set((roleVisibility || []).map((r) => String(r).toLowerCase().trim()))
+  ).filter(Boolean);
+
+  // ✅ si no eligió nada, no dejamos guardar
+  if (!rolesSel.length) {
+    setErr("Tenés que seleccionar al menos un rol (administrativo o supervisor).");
+    return;
+  }
+
+  // ✅ catId solo si corresponde
+  if (editingId === "__new__" || catTouched) {
+    payload.catId = draft.catId || null;
+  }
+
+  try {
+    if (editingId && editingId !== "__new__") {
+      // ✅ 1) guardar datos del producto
+      await api.put(`/admin/products/${editingId}`, payload);
+
+      // ✅ 2) guardar roles (usar rolesSel)
+      await api.put(`/admin/products/${editingId}/roles`, {
+        roles: rolesSel,
+      });
+    } else {
+      // ✅ crear producto
+      const { data } = await api.post("/admin/products", payload);
+
+      // ✅ guardar roles del nuevo
+      await api.put(`/admin/products/${data.id}/roles`, {
+        roles: rolesSel,
+      });
+    }
+
+    await load();
+    onCancel();
+  } catch (e) {
+    setErr(e?.response?.data?.error || e.message);
+  }
+};
+
 
   const onDelete = async (id) => {
     if (!confirm("¿Eliminar producto?")) return;
@@ -583,6 +625,28 @@ function ProductsSection() {
                 </div>
               )}
             </label>
+            <label>
+  <span>Visible para</span>
+  <div style={{ display: "flex", gap: 12 }}>
+    {["supervisor", "administrativo"].map((role) => (
+      <label key={role} style={{ display: "flex", gap: 4 }}>
+        <input
+          type="checkbox"
+          checked={roleVisibility.includes(role)}
+          onChange={(e) => {
+            if (e.target.checked) {
+              setRoleVisibility(prev => [...prev, role]);
+            } else {
+              setRoleVisibility(prev => prev.filter(r => r !== role));
+            }
+          }}
+        />
+        {role}
+      </label>
+    ))}
+  </div>
+</label>
+
           </div>
 
           {editingLoading && editingId !== "__new__" && (

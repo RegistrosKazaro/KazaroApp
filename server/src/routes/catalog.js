@@ -14,19 +14,28 @@ router.get("/categories", requireAuth, (_req, res) => {
   }
 });
 
-router.get("/products", (req, res) => {
+router.get("/products", requireAuth, (req, res) => {
   try {
     const catId = req.query.catId ?? "__all__";
     const q = req.query.q ?? "";
     const serviceId = req.query.serviceId ? String(req.query.serviceId) : null;
 
-    const rows = listProductsByCategory(catId, { q, serviceId });
+    const userRoles = (req.user?.roles || [])
+      .map(r => String(r).toLowerCase());
+
+    const rows = listProductsByCategory(catId, {
+      q,
+      serviceId,
+      roles: userRoles
+    });
+
     res.json(rows);
   } catch (e) {
     console.error("[/catalog/products]", e);
     res.status(500).json({ error: "No se pudieron cargar los productos" });
   }
 });
+
 
 router.get("/incoming-summary/:productId", (req, res) => {
   try {
