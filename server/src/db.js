@@ -591,11 +591,6 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
     .map(r => String(r).trim().toLowerCase())
     .filter(Boolean);
 
-  const joinPRV = `
-  JOIN ProductRoleVisibility prv
-    ON CAST(prv.product_id AS TEXT) = CAST(p.${prodId} AS TEXT)
-`;
-
   const incomingJoin = `
     LEFT JOIN (
       SELECT
@@ -633,8 +628,15 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
     if (!normRoles.length) {
     where.push(`1 = 0`); // si no tiene rol, no ve nada
   } else {
-    // IMPORTANT: usamos placeholders posicionales (?) porque .all(...params) es posicional
-    where.push(`prv.role IN (${normRoles.map(() => `?`).join(",")})`);
+    const rolePlaceholders = normRoles.map(() => `?`).join(",");
+    where.push(`
+      EXISTS (
+        SELECT 1
+        FROM ProductRoleVisibility prv
+        WHERE CAST(prv.product_id AS TEXT) = CAST(p.${prodId} AS TEXT)
+          AND LOWER(prv.role) IN (${rolePlaceholders})
+      )
+    `);
     params.push(...normRoles);
   }
 
@@ -645,7 +647,6 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
     SELECT ${cols}
     FROM ${products} p
     ${incomingJoin}
-    ${joinPRV}
     ${whereSQL}
     ORDER BY p.${prodName} COLLATE NOCASE
   `;
