@@ -16,7 +16,10 @@ import {
   unassignService,
   getServiceNameById,
   getEmployeeDisplayName,
-  ensureServiceProductsPivot, // para Servicio ⇄ Productos
+  ensureServiceProductsPivot,
+  registrarCambioProducto,
+  leerEstadoActualProducto,
+  ensureProductHistorialTable,
 } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendMail } from "../utils/mailer.js";
@@ -342,6 +345,11 @@ router.post("/products/import", mustBeAdmin, upload.single("file"), (req, res) =
         const hasId = idStr !== "";
         const hasCode = codeStr !== "";
 
+        // ── Leer estado actual ANTES del cambio para registrar historial ──
+        const estadoAnterior = (hasId || hasCode)
+          ? leerEstadoActualProducto(hasId ? idStr : codeStr)
+          : null;
+
         const sets = [];
         const vals = [];
 
@@ -424,6 +432,21 @@ if (C_CAT) {
 
           if (info.changes) {
             updated += info.changes;
+
+            // ── Registrar historial de cambios ──
+            const usuario = req.user?.username || req.user?.email || null;
+            if (estadoAnterior) {
+              const newStock = C_STOCK && String(stockRaw).trim() !== "" ? Math.trunc(Number(String(stockRaw).replace(",", "."))) : undefined;
+              const newPrice = C_PRICE && String(priceRaw).trim() !== "" ? Number(String(priceRaw).replace(",", ".")) : undefined;
+              const newName  = nameStr || undefined;
+              const newCode  = C_CODE && codeStr ? codeStr : undefined;
+
+              if (newStock !== undefined) registrarCambioProducto({ productId: idStr, nombre: estadoAnterior.nombre, codigo: estadoAnterior.codigo, campo: "stock",  anterior: estadoAnterior.stock,  nuevo: newStock, tipo: "excel_import", usuario });
+              if (newPrice !== undefined) registrarCambioProducto({ productId: idStr, nombre: estadoAnterior.nombre, codigo: estadoAnterior.codigo, campo: "precio", anterior: estadoAnterior.precio, nuevo: newPrice, tipo: "excel_import", usuario });
+              if (newName  !== undefined) registrarCambioProducto({ productId: idStr, nombre: estadoAnterior.nombre, codigo: estadoAnterior.codigo, campo: "nombre", anterior: estadoAnterior.nombre, nuevo: newName,  tipo: "excel_import", usuario });
+              if (newCode  !== undefined) registrarCambioProducto({ productId: idStr, nombre: estadoAnterior.nombre, codigo: estadoAnterior.codigo, campo: "codigo", anterior: estadoAnterior.codigo, nuevo: newCode,  tipo: "excel_import", usuario });
+            }
+
             continue;
           }
         } else if (C_CODE && hasCode) {
@@ -438,6 +461,19 @@ if (C_CAT) {
 
           if (info.changes) {
             updated += info.changes;
+
+            // ── Registrar historial de cambios ──
+            const usuario = req.user?.username || req.user?.email || null;
+            if (estadoAnterior) {
+              const newStock = C_STOCK && String(stockRaw).trim() !== "" ? Math.trunc(Number(String(stockRaw).replace(",", "."))) : undefined;
+              const newPrice = C_PRICE && String(priceRaw).trim() !== "" ? Number(String(priceRaw).replace(",", ".")) : undefined;
+              const newName  = nameStr || undefined;
+
+              if (newStock !== undefined) registrarCambioProducto({ productId: codeStr, nombre: estadoAnterior.nombre, codigo: estadoAnterior.codigo, campo: "stock",  anterior: estadoAnterior.stock,  nuevo: newStock, tipo: "excel_import", usuario });
+              if (newPrice !== undefined) registrarCambioProducto({ productId: codeStr, nombre: estadoAnterior.nombre, codigo: estadoAnterior.codigo, campo: "precio", anterior: estadoAnterior.precio, nuevo: newPrice, tipo: "excel_import", usuario });
+              if (newName  !== undefined) registrarCambioProducto({ productId: codeStr, nombre: estadoAnterior.nombre, codigo: estadoAnterior.codigo, campo: "nombre", anterior: estadoAnterior.nombre, nuevo: newName,  tipo: "excel_import", usuario });
+            }
+
             continue;
           }
         } else {
@@ -512,10 +548,20 @@ else if (C_CATNAME && catNameStr2) {
         if (ins.changes) {
           inserted += ins.changes;
 
-          // ✅ CLAVE: si estamos en SYNC, el nuevo id insertado debe contarse como “presente en el Excel”
-          // para que el paso de DELETE no lo borre.
+          // Historial: producto nuevo creado via Excel
+          const usuarioImp = req.user?.username || req.user?.email || null;
+          const newInsId = String(ins.lastInsertRowid);
+          if (C_STOCK && String(stockRaw).trim() !== "") {
+            const nSt = Math.trunc(Number(String(stockRaw).replace(",", ".")));
+            if (Number.isFinite(nSt) && nSt >= 0) registrarCambioProducto({ productId: newInsId, nombre: nameStr, codigo: codeStr || null, campo: "stock",  anterior: null, nuevo: nSt, tipo: "producto_creado", usuario: usuarioImp });
+          }
+          if (C_PRICE && String(priceRaw).trim() !== "") {
+            const nPr = Number(String(priceRaw).replace(",", "."));
+            if (Number.isFinite(nPr) && nPr >= 0) registrarCambioProducto({ productId: newInsId, nombre: nameStr, codigo: codeStr || null, campo: "precio", anterior: null, nuevo: nPr, tipo: "producto_creado", usuario: usuarioImp });
+          }
+          // SYNC: el nuevo id no debe borrarse
           if (allowDelete) {
-            excelIds.add(String(ins.lastInsertRowid));
+            excelIds.add(newInsId);
           }
         } else {
           skipped++;
@@ -675,6 +721,9 @@ router.put("/products/:id", mustBeAdmin, (req, res) => {
 
     const id = req.params.id;
 
+    // ── Leer estado anterior para historial ──
+    const estadoAntes = leerEstadoActualProducto(id);
+
     const sets = [];
     const vals = [];
 
@@ -723,6 +772,19 @@ router.put("/products/:id", mustBeAdmin, (req, res) => {
       .run(...vals, id);
 
     if (!info.changes) return res.status(404).json({ error: "Producto no encontrado" });
+
+    // ── Registrar cambios en historial ──
+    const usuario = req.user?.username || req.user?.email || null;
+    const tipo = req.body?.stock !== undefined && Object.keys(req.body).length === 1
+      ? "stock_edit"
+      : "manual_edit";
+
+    if (estadoAntes) {
+      if (req.body?.stock !== undefined)  registrarCambioProducto({ productId: id, nombre: estadoAntes.nombre, codigo: estadoAntes.codigo, campo: "stock",  anterior: estadoAntes.stock,  nuevo: req.body.stock  === "" ? 0 : Number(req.body.stock),  tipo, usuario });
+      if (req.body?.price !== undefined)  registrarCambioProducto({ productId: id, nombre: estadoAntes.nombre, codigo: estadoAntes.codigo, campo: "precio", anterior: estadoAntes.precio, nuevo: req.body.price  === "" ? 0 : Number(req.body.price),  tipo, usuario });
+      if (req.body?.name  !== undefined)  registrarCambioProducto({ productId: id, nombre: estadoAntes.nombre, codigo: estadoAntes.codigo, campo: "nombre", anterior: estadoAntes.nombre, nuevo: String(req.body.name).trim(), tipo, usuario });
+      if (req.body?.code  !== undefined)  registrarCambioProducto({ productId: id, nombre: estadoAntes.nombre, codigo: estadoAntes.codigo, campo: "codigo", anterior: estadoAntes.codigo, nuevo: String(req.body.code ?? ""), tipo, usuario });
+    }
 
     const updated = db
       .prepare(
@@ -1880,5 +1942,113 @@ router.put("/sp/assignments/:serviceId", mustBeAdmin, (req, res) => {
   }
 });
 
+
+/* =========================
+   Historial de cambios de productos
+   ========================= */
+
+/**
+ * GET /admin/products/history
+ * Filtros opcionales: productId, campo, tipo, from (YYYY-MM-DD), to (YYYY-MM-DD), q (nombre/codigo)
+ */
+router.get("/products/history", mustBeAdmin, (req, res) => {
+  try {
+    ensureProductHistorialTable();
+
+    const { productId, campo, tipo, from, to, q, limit = 500 } = req.query;
+
+    let sql = `SELECT * FROM ProductoHistorial WHERE 1=1`;
+    const params = [];
+
+    if (productId) {
+      sql += ` AND CAST(product_id AS TEXT) = CAST(? AS TEXT)`;
+      params.push(productId);
+    }
+    if (campo && campo !== "todos") {
+      sql += ` AND campo = ?`;
+      params.push(campo);
+    }
+    if (tipo && tipo !== "todos") {
+      sql += ` AND tipo = ?`;
+      params.push(tipo);
+    }
+    if (from) {
+      sql += ` AND fecha >= ?`;
+      params.push(String(from).trim() + " 00:00:00");
+    }
+    if (to) {
+      sql += ` AND fecha <= ?`;
+      params.push(String(to).trim() + " 23:59:59");
+    }
+    if (q && String(q).trim().length >= 2) {
+      const like = `%${String(q).trim()}%`;
+      sql += ` AND (product_name LIKE ? OR product_code LIKE ?)`;
+      params.push(like, like);
+    }
+
+    sql += ` ORDER BY fecha DESC LIMIT ?`;
+    params.push(Math.min(Number(limit) || 500, 2000));
+
+    const rows = db.prepare(sql).all(...params);
+    return res.json({ ok: true, total: rows.length, rows });
+  } catch (e) {
+    console.error("[admin] GET /products/history error:", e?.message || e);
+    return res.status(500).json({ error: "No se pudo cargar el historial" });
+  }
+});
+
+/**
+ * GET /admin/products/history/summary
+ * Resumen de variaciones por producto en un período (para trazabilidad)
+ */
+router.get("/products/history/summary", mustBeAdmin, (req, res) => {
+  try {
+    ensureProductHistorialTable();
+
+    const { from, to, campo = "todos" } = req.query;
+
+    let where = `WHERE 1=1`;
+    const params = [];
+
+    if (campo && campo !== "todos") {
+      where += ` AND campo = ?`;
+      params.push(campo);
+    }
+    if (from) {
+      where += ` AND fecha >= ?`;
+      params.push(String(from).trim() + " 00:00:00");
+    }
+    if (to) {
+      where += ` AND fecha <= ?`;
+      params.push(String(to).trim() + " 23:59:59");
+    }
+
+    const rows = db.prepare(`
+      SELECT
+        product_id,
+        MAX(product_name)                              AS nombre,
+        MAX(product_code)                              AS codigo,
+        campo,
+        COUNT(*)                                       AS total_cambios,
+        MIN(CASE WHEN valor_anterior IS NOT NULL THEN valor_anterior END) AS valor_inicial,
+        MAX(valor_nuevo)                               AS valor_final,
+        SUM(CASE WHEN diferencia > 0 THEN diferencia ELSE 0 END) AS total_aumentos,
+        SUM(CASE WHEN diferencia < 0 THEN ABS(diferencia) ELSE 0 END) AS total_bajas,
+        SUM(diferencia)                                AS variacion_neta,
+        MIN(fecha)                                     AS primer_cambio,
+        MAX(fecha)                                     AS ultimo_cambio
+      FROM ProductoHistorial
+      ${where}
+      GROUP BY product_id, campo
+      ORDER BY total_cambios DESC, nombre ASC
+      LIMIT 500
+    `).all(...params);
+
+    return res.json({ ok: true, total: rows.length, rows });
+  } catch (e) {
+    console.error("[admin] GET /products/history/summary error:", e?.message || e);
+    return res.status(500).json({ error: "No se pudo cargar el resumen" });
+  }
+});
 
 export default router;

@@ -293,6 +293,589 @@ router.get("/monthly", mustBeAdmin, (req, res) => {
   }
 });
 
+/* ======================= FORECAST (PRÓXIMO MES) ======================= */
+
+function shiftMonth(year, month, delta) {
+  let y = Number(year);
+  let m = Number(month);
+  m += delta;
+  while (m <= 0) { m += 12; y -= 1; }
+  while (m > 12) { m -= 12; y += 1; }
+  return { year: y, month: m };
+}
+
+function normalizeWeights(weights, n) {
+  const w = weights.slice(0, n);
+  const sum = w.reduce((a, b) => a + b, 0) || 1;
+  return w.map((x) => x / sum);
+}
+
+function wma(series, key, weights) {
+  const w = normalizeWeights(weights, series.length);
+  let out = 0;
+  for (let i = 0; i < series.length; i++) {
+    out += Number(series[i][key] || 0) * w[i];
+  }
+  return out;
+}
+
+function totalsForRange(start, end, serviceId) {
+  const hasService = String(serviceId ?? "").trim() !== "";
+
+  const ordersCount = hasService
+    ? (db.prepare(`
+        SELECT COUNT(*) AS c
+        FROM Pedidos
+        WHERE Fecha >= ? AND Fecha < ?
+          AND CAST(ServicioID AS TEXT) = CAST(? AS TEXT)
+      `).get(start, end, serviceId)?.c || 0)
+    : (db.prepare(`
+        SELECT COUNT(*) AS c
+        FROM Pedidos
+        WHERE Fecha >= ? AND Fecha < ?
+      `).get(start, end)?.c || 0);
+
+  const itemsCount = hasService
+    ? (db.prepare(`
+        SELECT COALESCE(SUM(i.Cantidad),0) AS c
+        FROM PedidoItems i
+        JOIN Pedidos p ON p.PedidoID = i.PedidoID
+        WHERE p.Fecha >= ? AND p.Fecha < ?
+          AND CAST(p.ServicioID AS TEXT) = CAST(? AS TEXT)
+      `).get(start, end, serviceId)?.c || 0)
+    : (db.prepare(`
+        SELECT COALESCE(SUM(i.Cantidad),0) AS c
+        FROM PedidoItems i
+        JOIN Pedidos p ON p.PedidoID = i.PedidoID
+        WHERE p.Fecha >= ? AND p.Fecha < ?
+      `).get(start, end)?.c || 0);
+
+  const amount = hasService
+    ? (db.prepare(`
+        SELECT COALESCE(SUM(Total),0) AS s
+        FROM Pedidos
+        WHERE Fecha >= ? AND Fecha < ?
+          AND CAST(ServicioID AS TEXT) = CAST(? AS TEXT)
+      `).get(start, end, serviceId)?.s || 0)
+    : (db.prepare(`
+        SELECT COALESCE(SUM(Total),0) AS s
+        FROM Pedidos
+        WHERE Fecha >= ? AND Fecha < ?
+      `).get(start, end)?.s || 0);
+
+  return {
+    ordersCount: Number(ordersCount),
+    itemsCount: Number(itemsCount),
+    amount: Number(amount),
+  };
+}
+
+router.get("/forecast", mustBeAdmin, (req, res) => {
+  try {
+    const year = Number(req.query.year);
+    const month = Number(req.query.month);
+    const serviceId = req.query.serviceId ? String(req.query.serviceId) : "";
+
+    if (!year || !month || month < 1 || month > 12) {
+      return res.status(400).json({ error: "Parámetros inválidos: year, month" });
+    }
+
+    const weights = [0.5, 0.3, 0.2];
+
+    const p1 = shiftMonth(year, month, -1);
+    const p2 = shiftMonth(year, month, -2);
+    const p3 = shiftMonth(year, month, -3);
+
+    const r1 = monthRange(p1.year, p1.month);
+    const r2 = monthRange(p2.year, p2.month);
+    const r3 = monthRange(p3.year, p3.month);
+
+    const s1 = totalsForRange(r1.start, r1.end, serviceId);
+    const s2 = totalsForRange(r2.start, r2.end, serviceId);
+    const s3 = totalsForRange(r3.start, r3.end, serviceId);
+
+    const series = [
+      { year: p1.year, month: p1.month, ...s1 },
+      { year: p2.year, month: p2.month, ...s2 },
+      { year: p3.year, month: p3.month, ...s3 },
+    ].filter(x => x.ordersCount || x.itemsCount || x.amount);
+
+    const forecast = series.length
+      ? {
+          ordersCount: wma(series, "ordersCount", weights),
+          itemsCount: wma(series, "itemsCount", weights),
+          amount: wma(series, "amount", weights),
+        }
+      : { ordersCount: 0, itemsCount: 0, amount: 0 };
+
+    return res.json({
+      ok: true,
+      target: { year, month },
+      serviceId: serviceId || null,
+      series,
+      forecast,
+      method: "WMA_3",
+      weights,
+    });
+  } catch (e) {
+    console.error("[reports] GET /forecast error:", e);
+    return res.status(500).json({ error: "No se pudo generar el forecast" });
+  }
+});
+/* ======================= INFORME POR SERVICIO ======================= */
+
+router.get("/forecast", (req, res) => {
+  try {
+    const year = Number(req.query.year);
+    const month = Number(req.query.month);
+    const serviceId = req.query.serviceId ? String(req.query.serviceId) : "";
+
+    if (!year || !month || month < 1 || month > 12) {
+      return res.status(400).json({ error: "Parámetros inválidos: year, month" });
+    }
+
+    // Pesos: mes -1, -2, -3 (más peso al reciente)
+    const weights = [0.5, 0.3, 0.2];
+
+    // Target: (year, month). Usamos 3 meses anteriores para predecir ese target.
+    const p1 = shiftMonth(year, month, -1);
+    const p2 = shiftMonth(year, month, -2);
+    const p3 = shiftMonth(year, month, -3);
+
+    const r1 = monthRange(p1.year, p1.month);
+    const r2 = monthRange(p2.year, p2.month);
+    const r3 = monthRange(p3.year, p3.month);
+
+    const s1 = totalsForRange(r1.start, r1.end, serviceId);
+    const s2 = totalsForRange(r2.start, r2.end, serviceId);
+    const s3 = totalsForRange(r3.start, r3.end, serviceId);
+
+    // Serie en orden "más reciente primero" para que coincida con weights
+    const series = [
+      { year: p1.year, month: p1.month, ...s1 },
+      { year: p2.year, month: p2.month, ...s2 },
+      { year: p3.year, month: p3.month, ...s3 },
+    ].filter(x => x.ordersCount || x.itemsCount || x.amount);
+
+    const forecast = series.length
+      ? {
+          ordersCount: wma(series, "ordersCount", weights),
+          itemsCount: wma(series, "itemsCount", weights),
+          amount: wma(series, "amount", weights),
+        }
+      : { ordersCount: 0, itemsCount: 0, amount: 0 };
+
+    return res.json({
+      ok: true,
+      target: { year, month },
+      serviceId: serviceId || null,
+      series,
+      forecast,
+      method: "WMA_3",
+      weights,
+    });
+  } catch (e) {
+    console.error("[reports] GET /forecast error:", e);
+    return res.status(500).json({ error: "No se pudo generar el forecast" });
+  }
+});
+
+/* ======================= TRAZABILIDAD BASE ======================= */
+
+function resolveProductsTableLocal() {
+  const table = "Productos";
+  const info = _tinfo(table);
+  if (!info.length) return null;
+
+  const idCol =
+    _pickCol(info, [
+      "ProductosID",
+      "ProductoID",
+      "IdProducto",
+      "product_id",
+      "producto_id",
+      "id",
+    ]) ||
+    info.find((c) => c.pk === 1)?.name ||
+    "ProductoID";
+
+  const codeCol =
+    _pickCol(info, [
+      "Codigo",
+      "Code",
+      "SKU",
+      "sku",
+      "codigo",
+    ]) || null;
+
+  const priceCol =
+    _pickCol(info, [
+      "Precio",
+      "PrecioUnitario",
+      "price",
+      "precio",
+    ]) || null;
+
+  const stockCol =
+    _pickCol(info, [
+      "Stock",
+      "Existencia",
+      "Cantidad",
+      "Disponibilidad",
+      "stock",
+    ]) || null;
+
+  // Buscar nombre real con más variantes posibles
+  let nameCol = _pickCol(info, [
+    "Nombre",
+    "Producto",
+    "ProductoNombre",
+    "NombreProducto",
+    "Descripcion",
+    "Descripción",
+    "Detalle",
+    "Denominacion",
+    "Denominación",
+    "Articulo",
+    "Artículo",
+    "Item",
+    "Insumo",
+    "name",
+  ]);
+
+  // Si no encontró una columna conocida, elegir la primera columna de texto
+  // que no sea ID, código, precio ni stock
+  if (!nameCol) {
+    const excluded = new Set([idCol, codeCol, priceCol, stockCol].filter(Boolean).map(String));
+    const textCandidate = info.find((c) => {
+      const n = String(c.name || "");
+      const t = String(c.type || "").toUpperCase();
+      if (excluded.has(n)) return false;
+      return t.includes("CHAR") || t.includes("TEXT") || t.includes("CLOB") || t === "";
+    });
+    if (textCandidate) nameCol = textCandidate.name;
+  }
+
+  // Último fallback: nunca volver al ID si existe código
+  if (!nameCol) nameCol = codeCol || idCol;
+
+  return { table, idCol, nameCol, codeCol, priceCol, stockCol };
+}
+
+function resolveEmployeesTableLocal() {
+  const table = "Empleados";
+  const info = _tinfo(table);
+  if (!info.length) return null;
+
+  const idCol =
+    _pickCol(info, [
+      "EmpleadosID",
+      "EmpleadoID",
+      "IdEmpleado",
+      "empleado_id",
+      "user_id",
+      "id",
+    ]) ||
+    info.find((c) => c.pk === 1)?.name ||
+    "EmpleadoID";
+
+  const nameCol =
+    _pickCol(info, [
+      "Nombre",
+      "nombre",
+      "username",
+      "usuario",
+      "Usuario",
+      "user",
+      "ApellidoNombre",
+      "Name",
+    ]) || idCol;
+
+  return { table, idCol, nameCol };
+}
+
+router.get("/traceability", mustBeAdmin, (req, res) => {
+  try {
+    const year = Number(req.query.year);
+    const month = Number(req.query.month);
+    const top = Math.max(1, Math.min(8, Number(req.query.top) || 8));
+    // Parámetros de filtro opcionales
+    const filterServiceId = req.query.serviceId ? String(req.query.serviceId).trim() : "";
+    const filterEmployeeId = req.query.employeeId ? String(req.query.employeeId).trim() : "";
+
+    const { start, end } = monthRange(year, month);
+
+    const prod = resolveProductsTableLocal();
+    const srv = resolveServicesTableLocal();
+    const emp = resolveEmployeesTableLocal();
+
+    /* ===================== SALIDAS DEL MES ===================== */
+    const outgoing = db.prepare(`
+      SELECT
+        i.ProductoID AS productId,
+        COALESCE(NULLIF(TRIM(i.Codigo), ''), '') AS code,
+        COALESCE(NULLIF(TRIM(i.Nombre), ''), 'Sin nombre') AS name,
+        COUNT(DISTINCT p.PedidoID) AS pedidos,
+        COALESCE(SUM(i.Cantidad), 0) AS qty,
+        COALESCE(SUM(i.Subtotal), 0) AS amount
+      FROM PedidoItems i
+      JOIN Pedidos p ON p.PedidoID = i.PedidoID
+      WHERE p.Fecha >= ? AND p.Fecha < ?
+      GROUP BY i.ProductoID, LOWER(i.Nombre), LOWER(i.Codigo)
+      ORDER BY qty DESC, amount DESC
+    `).all(start, end).map((r) => ({
+      productId: Number(r.productId || 0),
+      code: String(r.code || ""),
+      name: String(r.name || ""),
+      pedidos: Number(r.pedidos || 0),
+      qty: Number(r.qty || 0),
+      amount: Number(r.amount || 0),
+    }));
+
+    const totalOutgoing = outgoing.reduce((acc, row) => {
+      acc.qty += Number(row.qty || 0);
+      acc.amount += Number(row.amount || 0);
+      return acc;
+    }, { qty: 0, amount: 0 });
+
+    /* ===================== TOP USADOS ===================== */
+    const topUsed = [...outgoing]
+      .sort((a, b) => Number(b.qty || 0) - Number(a.qty || 0))
+      .slice(0, top);
+
+    /* ===================== TOP CAROS ===================== */
+    let topExpensive = [];
+    if (prod && prod.priceCol) {
+      topExpensive = db.prepare(`
+        SELECT
+          p.${prod.idCol} AS productId,
+          COALESCE(NULLIF(TRIM(p.${prod.nameCol}), ''), 'Sin nombre') AS name,
+          ${prod.codeCol ? `COALESCE(NULLIF(TRIM(p.${prod.codeCol}), ''), '')` : `''`} AS code,
+          COALESCE(p.${prod.priceCol}, 0) AS unitPrice,
+          ${prod.stockCol ? `COALESCE(p.${prod.stockCol}, 0)` : `0`} AS stock
+        FROM ${prod.table} p
+        ORDER BY unitPrice DESC, name ASC
+        LIMIT ?
+      `).all(top).map((r) => ({
+        productId: Number(r.productId || 0),
+        code: String(r.code || ""),
+        name: String(r.name || ""),
+        unitPrice: Number(r.unitPrice || 0),
+        stock: Number(r.stock || 0),
+        totalSpentInPeriod: (() => {
+          const out = outgoing.find(x => String(x.productId) === String(r.productId));
+          return out ? Number(out.amount || 0) : 0;
+        })(),
+        qtyOutInPeriod: (() => {
+          const out = outgoing.find(x => String(x.productId) === String(r.productId));
+          return out ? Number(out.qty || 0) : 0;
+        })(),
+      }));
+    }
+
+    /* ===================== INGRESOS DEL MES ===================== */
+    let incoming = [];
+    if (prod) {
+      incoming = db.prepare(`
+        SELECT
+          inc.product_id AS productId,
+          COALESCE(NULLIF(TRIM(p.${prod.nameCol}), ''), 'Sin nombre') AS name,
+          ${prod.codeCol ? `COALESCE(NULLIF(TRIM(p.${prod.codeCol}), ''), '')` : `''`} AS code,
+          COALESCE(SUM(inc.qty), 0) AS qty,
+          ${prod.priceCol ? `COALESCE(p.${prod.priceCol}, 0)` : `0`} AS unitPrice,
+          ${prod.stockCol ? `COALESCE(p.${prod.stockCol}, 0)` : `0`} AS stock
+        FROM IncomingStock inc
+        LEFT JOIN ${prod.table} p ON CAST(p.${prod.idCol} AS TEXT) = CAST(inc.product_id AS TEXT)
+        WHERE inc.eta >= ? AND inc.eta < ?
+        GROUP BY inc.product_id, p.${prod.nameCol}
+        ORDER BY qty DESC
+      `).all(start, end).map((r) => ({
+        productId: Number(r.productId || 0),
+        code: String(r.code || ""),
+        name: String(r.name || ""),
+        qty: Number(r.qty || 0),
+        unitPrice: Number(r.unitPrice || 0),
+        amount: Number(r.qty || 0) * Number(r.unitPrice || 0),
+        stock: Number(r.stock || 0),
+      }));
+    }
+
+    const totalIncoming = incoming.reduce((acc, row) => {
+      acc.qty += Number(row.qty || 0);
+      acc.amount += Number(row.amount || 0);
+      return acc;
+    }, { qty: 0, amount: 0 });
+
+    /* ===================== DESTINO POR SERVICIO ===================== */
+    let byService = [];
+    if (srv) {
+      byService = db.prepare(`
+        SELECT
+          CAST(p.ServicioID AS TEXT) AS serviceId,
+          ${srv.nameExpr} AS serviceName,
+          COUNT(DISTINCT p.PedidoID) AS pedidos,
+          COALESCE(SUM(i.Cantidad), 0) AS qty,
+          COALESCE(SUM(i.Subtotal), 0) AS amount
+        FROM Pedidos p
+        JOIN PedidoItems i ON i.PedidoID = p.PedidoID
+        LEFT JOIN ${srv.table} s ON CAST(s.${srv.idCol} AS TEXT) = CAST(p.ServicioID AS TEXT)
+        WHERE p.Fecha >= ? AND p.Fecha < ?
+        GROUP BY p.ServicioID
+        ORDER BY amount DESC, qty DESC
+      `).all(start, end).map((r) => ({
+        serviceId: String(r.serviceId || ""),
+        serviceName: String(r.serviceName || "—"),
+        pedidos: Number(r.pedidos || 0),
+        qty: Number(r.qty || 0),
+        amount: Number(r.amount || 0),
+        pctAmount: totalOutgoing.amount > 0 ? (Number(r.amount || 0) / totalOutgoing.amount) * 100 : 0,
+      }));
+    }
+
+    /* ===================== RANKING DE SOLICITANTES / SUPERVISORES ===================== */
+    let supervisors = [];
+    if (emp) {
+      supervisors = db.prepare(`
+        SELECT
+          CAST(p.EmpleadoID AS TEXT) AS employeeId,
+          COALESCE(NULLIF(TRIM(e.${emp.nameCol}), ''), CAST(p.EmpleadoID AS TEXT)) AS employeeName,
+          COUNT(DISTINCT p.PedidoID) AS pedidos,
+          COALESCE(SUM(i.Cantidad), 0) AS qty,
+          COALESCE(SUM(i.Subtotal), 0) AS amount
+        FROM Pedidos p
+        JOIN PedidoItems i ON i.PedidoID = p.PedidoID
+        LEFT JOIN ${emp.table} e ON CAST(e.${emp.idCol} AS TEXT) = CAST(p.EmpleadoID AS TEXT)
+        WHERE p.Fecha >= ? AND p.Fecha < ?
+        GROUP BY p.EmpleadoID
+        ORDER BY pedidos DESC, qty DESC, amount DESC
+      `).all(start, end).map((r) => ({
+        employeeId: String(r.employeeId || ""),
+        employeeName: String(r.employeeName || "—"),
+        pedidos: Number(r.pedidos || 0),
+        qty: Number(r.qty || 0),
+        amount: Number(r.amount || 0),
+      }));
+    }
+
+    /* ===================== STOCK BAJO EN TOP USADOS ===================== */
+    let stockAlerts = [];
+    if (prod && prod.stockCol) {
+      const usedIds = topUsed.map(x => x.productId).filter(Boolean);
+      if (usedIds.length) {
+        const placeholders = usedIds.map(() => "?").join(",");
+        stockAlerts = db.prepare(`
+          SELECT
+            p.${prod.idCol} AS productId,
+            COALESCE(NULLIF(TRIM(p.${prod.nameCol}), ''), 'Sin nombre') AS name,
+            ${prod.codeCol ? `COALESCE(NULLIF(TRIM(p.${prod.codeCol}), ''), '')` : `''`} AS code,
+            COALESCE(p.${prod.stockCol}, 0) AS stock,
+            ${prod.priceCol ? `COALESCE(p.${prod.priceCol}, 0)` : `0`} AS unitPrice
+          FROM ${prod.table} p
+          WHERE p.${prod.idCol} IN (${placeholders})
+          ORDER BY stock ASC, name ASC
+        `).all(...usedIds).map((r) => ({
+          productId: Number(r.productId || 0),
+          code: String(r.code || ""),
+          name: String(r.name || ""),
+          stock: Number(r.stock || 0),
+          unitPrice: Number(r.unitPrice || 0),
+        }));
+      }
+    }
+
+    /* ===================== OBSERVACIONES DE CALIDAD ===================== */
+    let observations = [];
+    try {
+      const obsInfo = _tinfo("Observaciones");
+      if (obsInfo.length) {
+        const obsProductCol = _pickCol(obsInfo, ["ProductoNombre","Producto","NombreProducto","product","producto"]) || null;
+        const obsTextCol    = _pickCol(obsInfo, ["Texto","Observacion","Observación","Descripcion","Descripción","Detalle","text","nota","Nota"]) || null;
+        const obsDateCol    = _pickCol(obsInfo, ["Fecha","Date","fecha","date"]) || null;
+        const obsTypeCol    = _pickCol(obsInfo, ["Tipo","Type","tipo","type"]) || null;
+
+        if (obsTextCol) {
+          const obsCols = [
+            obsProductCol ? `COALESCE(NULLIF(TRIM(${obsProductCol}),''),'General') AS product` : `'General' AS product`,
+            `COALESCE(NULLIF(TRIM(${obsTextCol}),''),'Sin descripción') AS text`,
+            obsDateCol ? `${obsDateCol} AS date` : `NULL AS date`,
+            obsTypeCol ? `${obsTypeCol} AS type` : `'info' AS type`,
+          ].join(", ");
+
+          const obsWhere = obsDateCol ? `WHERE ${obsDateCol} >= ? AND ${obsDateCol} < ?` : "";
+          const obsParams = obsDateCol ? [start, end] : [];
+
+          observations = db.prepare(`
+            SELECT ${obsCols}
+            FROM Observaciones
+            ${obsWhere}
+            ORDER BY ${obsDateCol ? obsDateCol + " DESC," : ""} rowid DESC
+            LIMIT 20
+          `).all(...obsParams).map(r => ({
+            product: String(r.product || "General"),
+            text: String(r.text || ""),
+            date: r.date ? String(r.date).slice(0, 10) : null,
+            type: String(r.type || "info").toLowerCase(),
+          }));
+        }
+      }
+    } catch { /* tabla no existe, ignorar */ }
+
+    /* ===================== COMPARATIVA MES ANTERIOR ===================== */
+    let prevMonth = month - 1, prevYear = year;
+    if (prevMonth <= 0) { prevMonth = 12; prevYear = year - 1; }
+    const { start: prevStart, end: prevEnd } = monthRange(prevYear, prevMonth);
+
+    const prevOutgoing = db.prepare(`
+      SELECT COALESCE(SUM(i.Cantidad),0) AS qty, COALESCE(SUM(i.Subtotal),0) AS amount
+      FROM PedidoItems i
+      JOIN Pedidos p ON p.PedidoID = i.PedidoID
+      WHERE p.Fecha >= ? AND p.Fecha < ?
+    `).get(prevStart, prevEnd) || { qty: 0, amount: 0 };
+
+    const prevIncoming = (() => {
+      if (!prod) return { qty: 0, amount: 0 };
+      try {
+        return db.prepare(`
+          SELECT COALESCE(SUM(inc.qty),0) AS qty,
+                 COALESCE(SUM(inc.qty * COALESCE(p.${prod.priceCol || '0'},0)),0) AS amount
+          FROM IncomingStock inc
+          LEFT JOIN ${prod.table} p ON CAST(p.${prod.idCol} AS TEXT) = CAST(inc.product_id AS TEXT)
+          WHERE inc.eta >= ? AND inc.eta < ?
+        `).get(prevStart, prevEnd) || { qty: 0, amount: 0 };
+      } catch { return { qty: 0, amount: 0 }; }
+    })();
+
+    return res.json({
+      ok: true,
+      period: { year, month, start, end },
+      summary: {
+        totalIncomingQty: totalIncoming.qty,
+        totalIncomingAmount: totalIncoming.amount,
+        totalOutgoingQty: totalOutgoing.qty,
+        totalOutgoingAmount: totalOutgoing.amount,
+        balanceQty: totalIncoming.qty - totalOutgoing.qty,
+        balanceAmount: totalIncoming.amount - totalOutgoing.amount,
+        // Comparativa mes anterior
+        prevOutgoingQty: Number(prevOutgoing.qty || 0),
+        prevOutgoingAmount: Number(prevOutgoing.amount || 0),
+        prevIncomingQty: Number(prevIncoming.qty || 0),
+        prevIncomingAmount: Number(prevIncoming.amount || 0),
+      },
+      incoming,
+      outgoing,
+      topUsed,
+      topExpensive,
+      byService,
+      supervisors,
+      stockAlerts,
+      observations,
+    });
+  } catch (e) {
+    console.error("[reports] GET /traceability error:", e);
+    return res.status(500).json({ error: "No se pudo construir la trazabilidad" });
+  }
+});
+
 /* ======================= INFORME POR SERVICIO ======================= */
 
 router.get("/service/:serviceId", mustBeAdmin, (req, res) => {

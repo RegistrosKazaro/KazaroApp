@@ -2148,6 +2148,296 @@ function CreateServiceSection() {
   );
 }
 
+/* ===========================================================
+ * ProductHistorialSection — Historial de cambios de productos
+ * ========================================================= */
+function ProductHistorialSection() {
+  const [rows, setRows]           = useState([]);
+  const [loading, setLoading]     = useState(false);
+  const [err, setErr]             = useState("");
+  const [vista, setVista]         = useState("detalle"); // "detalle" | "resumen"
+
+  // Filtros
+  const [q, setQ]                 = useState("");
+  const [campo, setCampo]         = useState("todos");
+  const [tipo, setTipo]           = useState("todos");
+  const [from, setFrom]           = useState(() => {
+    const d = new Date(); d.setDate(1);
+    return d.toISOString().slice(0, 10);
+  });
+  const [to, setTo]               = useState(() => new Date().toISOString().slice(0, 10));
+
+  const niceCurrency = (n) => {
+    if (n == null) return "—";
+    return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 2 }).format(Number(n));
+  };
+  const niceNum = (n) => n == null ? "—" : new Intl.NumberFormat("es-AR").format(Number(n));
+  const niceDate = (d) => {
+    if (!d) return "—";
+    return String(d).slice(0, 16).replace("T", " ");
+  };
+
+  const TIPO_LABELS = {
+    excel_import:      { label: "Excel",     color: "#2563eb", bg: "#eff6ff" },
+    manual_edit:       { label: "Manual",    color: "#7c3aed", bg: "#faf5ff" },
+    stock_edit:        { label: "Stock rápido", color: "#059669", bg: "#f0fdf4" },
+    producto_creado:   { label: "Nuevo",     color: "#d97706", bg: "#fffbeb" },
+    producto_eliminado:{ label: "Eliminado", color: "#dc2626", bg: "#fef2f2" },
+  };
+  const CAMPO_LABELS = {
+    stock:  { label: "Stock",  icon: "📦" },
+    precio: { label: "Precio", icon: "💰" },
+    nombre: { label: "Nombre", icon: "✏️"  },
+    codigo: { label: "Código", icon: "🔢" },
+  };
+
+  const load = useCallback(async () => {
+    setLoading(true); setErr("");
+    try {
+      const endpoint = vista === "resumen"
+        ? "/admin/products/history/summary"
+        : "/admin/products/history";
+
+      const params = { campo, tipo, from, to, limit: 500 };
+      if (q.trim().length >= 2) params.q = q.trim();
+
+      const { data } = await api.get(endpoint, { params });
+      setRows(data?.rows || []);
+    } catch (e) {
+      setErr(e?.response?.data?.error || e?.message || "No se pudo cargar el historial");
+    } finally {
+      setLoading(false);
+    }
+  }, [vista, campo, tipo, from, to, q]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleSearch = (e) => { e.preventDefault(); load(); };
+
+  const exportCsv = () => {
+    if (!rows.length) return;
+    const headers = vista === "resumen"
+      ? ["Producto","Código","Campo","Cambios","Valor inicial","Valor final","Aumentos","Bajas","Variación neta","Primer cambio","Último cambio"]
+      : ["Fecha","Producto","Código","Campo","Tipo","Valor anterior","Valor nuevo","Diferencia","Usuario"];
+
+    const dataRows = vista === "resumen"
+      ? rows.map(r => [r.nombre||"—", r.codigo||"—", r.campo, r.total_cambios, r.valor_inicial??0, r.valor_final??0, r.total_aumentos??0, r.total_bajas??0, r.variacion_neta??0, r.primer_cambio||"—", r.ultimo_cambio||"—"])
+      : rows.map(r => [r.fecha, r.product_name||"—", r.product_code||"—", r.campo, r.tipo, r.valor_anterior??0, r.valor_nuevo??0, r.diferencia??0, r.usuario||"—"]);
+
+    const csv = [headers, ...dataRows].map(row => row.map(c => `"${String(c).replace(/"/g,'""')}"`).join(";")).join("\n");
+    Object.assign(document.createElement("a"), {
+      href: URL.createObjectURL(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" })),
+      download: `historial_productos_${from}_${to}.csv`,
+    }).click();
+  };
+
+  // KPIs rápidos del período
+  const kpis = (() => {
+    if (vista !== "detalle" || !rows.length) return null;
+    const stockRows  = rows.filter(r => r.campo === "stock");
+    const precioRows = rows.filter(r => r.campo === "precio");
+    const tiposUniq  = new Set(rows.map(r => r.product_id)).size;
+    const totalAumentos = stockRows.filter(r => (r.diferencia||0) > 0).reduce((s,r) => s + (r.diferencia||0), 0);
+    const totalBajas    = stockRows.filter(r => (r.diferencia||0) < 0).reduce((s,r) => s + Math.abs(r.diferencia||0), 0);
+    return { total: rows.length, productos: tiposUniq, stockCambios: stockRows.length, precioCambios: precioRows.length, totalAumentos, totalBajas };
+  })();
+
+  return (
+    <section className="srv-card" aria-labelledby="historial-heading">
+      <div className="section-header">
+        <h3 id="historial-heading">Historial de cambios de productos</h3>
+        <p style={{ margin: "4px 0 0", fontSize: "0.85rem", color: "#6b7280" }}>
+          Registro automático de cada modificación de stock, precio, nombre o código. Se genera al importar un Excel, editar manualmente o actualizar el stock rápido.
+        </p>
+      </div>
+
+      {/* ── FILTROS ── */}
+      <form onSubmit={handleSearch} style={{ display:"flex", flexWrap:"wrap", gap:"0.65rem", alignItems:"flex-end", margin:"1rem 0 0.75rem", padding:"0.75rem 0.9rem", background:"#f8fafc", borderRadius:"0.6rem", border:"1px solid #e5e7eb" }}>
+
+        <label style={{ display:"flex", flexDirection:"column", gap:3, fontSize:"0.82rem", color:"#4b5563" }}>
+          <span style={{ fontWeight:600 }}>Buscar producto</span>
+          <input className="input" value={q} onChange={e => setQ(e.target.value)} placeholder="Nombre o código…" style={{ minWidth:180 }} />
+        </label>
+
+        <label style={{ display:"flex", flexDirection:"column", gap:3, fontSize:"0.82rem", color:"#4b5563" }}>
+          <span style={{ fontWeight:600 }}>Campo</span>
+          <select className="select" value={campo} onChange={e => setCampo(e.target.value)} style={{ minWidth:130 }}>
+            <option value="todos">Todos</option>
+            <option value="stock">📦 Stock</option>
+            <option value="precio">💰 Precio</option>
+            <option value="nombre">✏️ Nombre</option>
+            <option value="codigo">🔢 Código</option>
+          </select>
+        </label>
+
+        <label style={{ display:"flex", flexDirection:"column", gap:3, fontSize:"0.82rem", color:"#4b5563" }}>
+          <span style={{ fontWeight:600 }}>Tipo de cambio</span>
+          <select className="select" value={tipo} onChange={e => setTipo(e.target.value)} style={{ minWidth:150 }}>
+            <option value="todos">Todos</option>
+            <option value="excel_import">Excel import</option>
+            <option value="manual_edit">Edición manual</option>
+            <option value="stock_edit">Stock rápido</option>
+            <option value="producto_creado">Producto nuevo</option>
+          </select>
+        </label>
+
+        <label style={{ display:"flex", flexDirection:"column", gap:3, fontSize:"0.82rem", color:"#4b5563" }}>
+          <span style={{ fontWeight:600 }}>Desde</span>
+          <input type="date" className="input" value={from} onChange={e => setFrom(e.target.value)} />
+        </label>
+
+        <label style={{ display:"flex", flexDirection:"column", gap:3, fontSize:"0.82rem", color:"#4b5563" }}>
+          <span style={{ fontWeight:600 }}>Hasta</span>
+          <input type="date" className="input" value={to} onChange={e => setTo(e.target.value)} />
+        </label>
+
+        <label style={{ display:"flex", flexDirection:"column", gap:3, fontSize:"0.82rem", color:"#4b5563" }}>
+          <span style={{ fontWeight:600 }}>Vista</span>
+          <select className="select" value={vista} onChange={e => setVista(e.target.value)} style={{ minWidth:130 }}>
+            <option value="detalle">Detalle (por cambio)</option>
+            <option value="resumen">Resumen (por producto)</option>
+          </select>
+        </label>
+
+        <div style={{ display:"flex", gap:"0.4rem", alignItems:"flex-end" }}>
+          <button type="submit" className="btn primary" disabled={loading}>
+            {loading ? "Cargando…" : "Buscar"}
+          </button>
+          <button type="button" className="btn" onClick={exportCsv} disabled={!rows.length}>
+            Exportar CSV
+          </button>
+        </div>
+      </form>
+
+      {err && <div className="state error" role="alert">{err}</div>}
+
+      {/* ── KPIs rápidos ── */}
+      {kpis && !loading && (
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))", gap:"0.6rem", margin:"0 0 1rem" }}>
+          {[
+            { icon:"📝", val: kpis.total,         lbl: "Registros totales",  color:"#1d4ed8" },
+            { icon:"📦", val: kpis.productos,      lbl: "Productos distintos",color:"#7c3aed" },
+            { icon:"📊", val: kpis.stockCambios,   lbl: "Cambios de stock",   color:"#059669" },
+            { icon:"💰", val: kpis.precioCambios,  lbl: "Cambios de precio",  color:"#d97706" },
+            { icon:"▲",  val: `+${niceNum(kpis.totalAumentos)}`, lbl: "Total ingresado (stock)", color:"#22c55e" },
+            { icon:"▼",  val: `-${niceNum(kpis.totalBajas)}`,    lbl: "Total bajado (stock)",    color:"#ef4444" },
+          ].map((k, i) => (
+            <div key={i} style={{ padding:"0.6rem 0.75rem", borderRadius:"0.6rem", border:"1px solid #e5e7eb", background:"#fff", display:"flex", alignItems:"center", gap:"0.5rem" }}>
+              <span style={{ fontSize:"1.25rem" }}>{k.icon}</span>
+              <div>
+                <div style={{ fontWeight:800, fontSize:"1rem", color: k.color }}>{k.val}</div>
+                <div style={{ fontSize:"0.7rem", color:"#6b7280" }}>{k.lbl}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── TABLA DETALLE ── */}
+      {vista === "detalle" && !loading && (
+        rows.length === 0
+          ? <p style={{ color:"#6b7280", fontStyle:"italic", marginTop:"1rem" }}>Sin registros para los filtros seleccionados.</p>
+          : (
+            <div className="table-like" style={{ marginTop:0 }}>
+              <div className="t-head" style={{ display:"grid", gridTemplateColumns:"140px 1fr 80px 90px 110px 100px 100px 90px 110px" }}>
+                <div>Fecha</div>
+                <div>Producto</div>
+                <div>Código</div>
+                <div>Campo</div>
+                <div>Tipo</div>
+                <div style={{ textAlign:"right" }}>Anterior</div>
+                <div style={{ textAlign:"right" }}>Nuevo</div>
+                <div style={{ textAlign:"right" }}>Diferencia</div>
+                <div>Usuario</div>
+              </div>
+              {rows.map((r, i) => {
+                const tipoInfo = TIPO_LABELS[r.tipo] || { label: r.tipo, color:"#374151", bg:"#f3f4f6" };
+                const campoInfo = CAMPO_LABELS[r.campo] || { label: r.campo, icon:"📝" };
+                const diff = r.diferencia;
+                const isStock  = r.campo === "stock";
+                const isPrecio = r.campo === "precio";
+                const isNum = isStock || isPrecio;
+                return (
+                  <div key={r.id || i} className="t-row" style={{ display:"grid", gridTemplateColumns:"140px 1fr 80px 90px 110px 100px 100px 90px 110px", alignItems:"center" }}>
+                    <div style={{ fontSize:"0.78rem", color:"#6b7280", fontVariantNumeric:"tabular-nums" }}>{niceDate(r.fecha)}</div>
+                    <div style={{ fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={r.product_name}>{r.product_name || "—"}</div>
+                    <div style={{ fontSize:"0.78rem", color:"#9ca3af" }}>{r.product_code || "—"}</div>
+                    <div style={{ fontSize:"0.8rem" }}>{campoInfo.icon} {campoInfo.label}</div>
+                    <div>
+                      <span style={{ fontSize:"0.72rem", fontWeight:700, padding:"2px 8px", borderRadius:999, background: tipoInfo.bg, color: tipoInfo.color, border:`1px solid ${tipoInfo.color}40` }}>
+                        {tipoInfo.label}
+                      </span>
+                    </div>
+                    <div style={{ textAlign:"right", fontSize:"0.82rem", color:"#6b7280", fontVariantNumeric:"tabular-nums" }}>
+                      {r.valor_anterior == null ? "—" : isNum ? (isPrecio ? niceCurrency(r.valor_anterior) : niceNum(r.valor_anterior)) : String(r.valor_anterior)}
+                    </div>
+                    <div style={{ textAlign:"right", fontSize:"0.82rem", fontWeight:600, fontVariantNumeric:"tabular-nums" }}>
+                      {r.valor_nuevo == null ? "—" : isNum ? (isPrecio ? niceCurrency(r.valor_nuevo) : niceNum(r.valor_nuevo)) : String(r.valor_nuevo)}
+                    </div>
+                    <div style={{ textAlign:"right", fontWeight:700, fontSize:"0.82rem", color: diff == null ? "#9ca3af" : diff > 0 ? "#16a34a" : diff < 0 ? "#dc2626" : "#6b7280", fontVariantNumeric:"tabular-nums" }}>
+                      {diff == null ? "—" : diff > 0 ? `+${isNum ? (isPrecio ? niceCurrency(diff) : niceNum(diff)) : diff}` : isNum ? (isPrecio ? niceCurrency(diff) : niceNum(diff)) : diff}
+                    </div>
+                    <div style={{ fontSize:"0.75rem", color:"#6b7280", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.usuario || "—"}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )
+      )}
+
+      {/* ── TABLA RESUMEN ── */}
+      {vista === "resumen" && !loading && (
+        rows.length === 0
+          ? <p style={{ color:"#6b7280", fontStyle:"italic", marginTop:"1rem" }}>Sin datos para los filtros seleccionados.</p>
+          : (
+            <div className="table-like" style={{ marginTop:0 }}>
+              <div className="t-head" style={{ display:"grid", gridTemplateColumns:"1fr 80px 70px 70px 110px 110px 110px 110px 110px" }}>
+                <div>Producto</div>
+                <div>Código</div>
+                <div>Campo</div>
+                <div style={{ textAlign:"right" }}>Cambios</div>
+                <div style={{ textAlign:"right" }}>Valor inicial</div>
+                <div style={{ textAlign:"right" }}>Valor final</div>
+                <div style={{ textAlign:"right" }}>Total ▲</div>
+                <div style={{ textAlign:"right" }}>Total ▼</div>
+                <div style={{ textAlign:"right" }}>Variación neta</div>
+              </div>
+              {rows.map((r, i) => {
+                const campoInfo = CAMPO_LABELS[r.campo] || { label: r.campo, icon:"📝" };
+                const isPrecio = r.campo === "precio";
+                const fmt = (v) => v == null ? "—" : isPrecio ? niceCurrency(v) : niceNum(v);
+                const vnet = r.variacion_neta;
+                return (
+                  <div key={i} className="t-row" style={{ display:"grid", gridTemplateColumns:"1fr 80px 70px 70px 110px 110px 110px 110px 110px", alignItems:"center" }}>
+                    <div style={{ fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={r.nombre}>{r.nombre || "—"}</div>
+                    <div style={{ fontSize:"0.78rem", color:"#9ca3af" }}>{r.codigo || "—"}</div>
+                    <div style={{ fontSize:"0.8rem" }}>{campoInfo.icon} {campoInfo.label}</div>
+                    <div style={{ textAlign:"right", fontWeight:700, color:"#1d4ed8" }}>{r.total_cambios}</div>
+                    <div style={{ textAlign:"right", fontSize:"0.82rem", color:"#6b7280", fontVariantNumeric:"tabular-nums" }}>{fmt(r.valor_inicial)}</div>
+                    <div style={{ textAlign:"right", fontSize:"0.82rem", fontWeight:600, fontVariantNumeric:"tabular-nums" }}>{fmt(r.valor_final)}</div>
+                    <div style={{ textAlign:"right", fontSize:"0.82rem", color:"#16a34a", fontWeight:600, fontVariantNumeric:"tabular-nums" }}>{r.total_aumentos > 0 ? `+${fmt(r.total_aumentos)}` : "—"}</div>
+                    <div style={{ textAlign:"right", fontSize:"0.82rem", color:"#dc2626", fontWeight:600, fontVariantNumeric:"tabular-nums" }}>{r.total_bajas > 0 ? `-${fmt(r.total_bajas)}` : "—"}</div>
+                    <div style={{ textAlign:"right", fontWeight:700, fontSize:"0.85rem", color: vnet == null ? "#9ca3af" : vnet > 0 ? "#16a34a" : vnet < 0 ? "#dc2626" : "#6b7280", fontVariantNumeric:"tabular-nums" }}>
+                      {vnet == null ? "—" : vnet > 0 ? `+${fmt(vnet)}` : fmt(vnet)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )
+      )}
+
+      {loading && <div className="state" style={{ marginTop:"1rem" }}>Cargando historial…</div>}
+
+      {!loading && rows.length > 0 && (
+        <p style={{ fontSize:"0.78rem", color:"#9ca3af", marginTop:"0.75rem", textAlign:"right" }}>
+          {rows.length} registro{rows.length !== 1 ? "s" : ""} mostrado{rows.length !== 1 ? "s" : ""}
+        </p>
+      )}
+    </section>
+  );
+}
+
 export default function AdminPanel() {
   const nav = useNavigate();
   const { user, loading } = useAuth();
@@ -2252,6 +2542,15 @@ export default function AdminPanel() {
           Pedidos
         </button>
 
+        <button
+          className={`tab-btn ${tab === "historial" ? "is-active" : ""}`}
+          onClick={() => setTab("historial")}
+          role="tab"
+          aria-selected={tab === "historial"}
+        >
+          Historial
+        </button>
+
         <div style={{ flex: 1 }} />
       </div>
 
@@ -2263,6 +2562,7 @@ export default function AdminPanel() {
       {tab === "incomingStock" && <IncomingStockSection />}
       {tab === "massReassign" && <MassReassignServicesSection />}
       {tab === "orders" && <OrdersSection />}
+      {tab === "historial" && <ProductHistorialSection />}
     </div>
   );
 }

@@ -470,6 +470,120 @@ export function revokeVisibility(productId, roleName) {
   `).run(productId, role);
 }
 
+/* ===================== historial de cambios de productos ===================== */
+export function ensureProductHistorialTable() {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS ProductoHistorial (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id     TEXT    NOT NULL,
+        product_name   TEXT,
+        product_code   TEXT,
+        fecha          TEXT    NOT NULL,
+        tipo           TEXT    NOT NULL,
+        campo          TEXT    NOT NULL,
+        valor_anterior REAL,
+        valor_nuevo    REAL,
+        diferencia     REAL,
+        usuario        TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_ph_product ON ProductoHistorial(product_id);
+      CREATE INDEX IF NOT EXISTS idx_ph_fecha   ON ProductoHistorial(fecha);
+      CREATE INDEX IF NOT EXISTS idx_ph_campo   ON ProductoHistorial(campo);
+      CREATE INDEX IF NOT EXISTS idx_ph_tipo    ON ProductoHistorial(tipo);
+    `);
+  } catch (e) {
+    console.error("[db] ensureProductHistorialTable error:", e?.message || e);
+  }
+}
+
+/**
+ * Registra un cambio en un campo de un producto.
+ * Solo registra si el valor realmente cambió.
+ * tipo: 'excel_import' | 'manual_edit' | 'stock_edit' | 'producto_creado' | 'producto_eliminado'
+ * campo: 'stock' | 'precio' | 'nombre' | 'codigo'
+ */
+export function registrarCambioProducto({ productId, nombre, codigo, campo, anterior, nuevo, tipo, usuario }) {
+  try {
+    ensureProductHistorialTable();
+
+    // Normalizar para comparar
+    const antNum = anterior == null ? null : Number(anterior);
+    const newNum = nuevo    == null ? null : Number(nuevo);
+
+    // Para campos numéricos (stock/precio), no registrar si el valor no cambió
+    if (campo === "stock" || campo === "precio") {
+      if (antNum === newNum) return;
+      if (nuevo == null) return; // no registrar si el nuevo valor es nulo
+    }
+
+    // Para campos de texto, comparar como string
+    if (campo === "nombre" || campo === "codigo") {
+      const antStr = anterior == null ? "" : String(anterior).trim();
+      const newStr = nuevo    == null ? "" : String(nuevo).trim();
+      if (antStr === newStr) return;
+    }
+
+    const diferencia = (campo === "stock" || campo === "precio")
+      ? (newNum ?? 0) - (antNum ?? 0)
+      : null;
+
+    db.prepare(`
+      INSERT INTO ProductoHistorial
+        (product_id, product_name, product_code, fecha, tipo, campo, valor_anterior, valor_nuevo, diferencia, usuario)
+      VALUES (?, ?, ?, datetime('now','localtime'), ?, ?, ?, ?, ?, ?)
+    `).run(
+      String(productId),
+      nombre  ?? null,
+      codigo  ?? null,
+      tipo,
+      campo,
+      (campo === "stock" || campo === "precio") ? antNum : (anterior ?? null),
+      (campo === "stock" || campo === "precio") ? newNum : (nuevo    ?? null),
+      diferencia,
+      usuario ?? null
+    );
+  } catch (e) {
+    // No rompemos el flujo principal si el historial falla
+    console.error("[db] registrarCambioProducto error:", e?.message || e);
+  }
+}
+
+/**
+ * Lee el estado actual de un producto (stock y precio) para poder comparar antes de un cambio.
+ * Devuelve { stock, precio, nombre, codigo } o null si no se encuentra.
+ */
+export function leerEstadoActualProducto(id) {
+  try {
+    const sch = discoverCatalogSchema();
+    if (!sch?.ok) return null;
+
+    const { products } = sch.tables;
+    const { prodId, prodName, prodPrice, prodStock, prodCode } = sch.cols;
+
+    const row = db.prepare(`
+      SELECT
+        ${prodName}  AS nombre,
+        ${prodCode  ? prodCode  : "NULL"} AS codigo,
+        ${prodPrice ? prodPrice : "NULL"} AS precio,
+        ${prodStock ? prodStock : "NULL"} AS stock
+      FROM ${products}
+      WHERE CAST(${prodId} AS TEXT) = CAST(? AS TEXT)
+      LIMIT 1
+    `).get(id);
+
+    if (!row) return null;
+    return {
+      nombre: row.nombre ?? null,
+      codigo: row.codigo ?? null,
+      precio: row.precio != null ? Number(row.precio) : null,
+      stock:  row.stock  != null ? Number(row.stock)  : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /* ===================== stock futuro (preventa) ===================== */
 export function ensureIncomingStockTable() {
   try {
