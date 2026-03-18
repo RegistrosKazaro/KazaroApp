@@ -5,6 +5,7 @@ import {
   getBudgetByServiceId,
   getServiceNameById,
   getServiceById,
+  getEmployeeDisplayName,
 } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 
@@ -606,29 +607,41 @@ function resolveEmployeesTableLocal() {
 
   const idCol =
     _pickCol(info, [
-      "EmpleadosID",
-      "EmpleadoID",
-      "IdEmpleado",
-      "empleado_id",
-      "user_id",
-      "id",
+      "EmpleadosID", "EmpleadoID", "IdEmpleado",
+      "empleado_id", "user_id", "id",
     ]) ||
     info.find((c) => c.pk === 1)?.name ||
     "EmpleadoID";
 
-  const nameCol =
-    _pickCol(info, [
-      "Nombre",
-      "nombre",
-      "username",
-      "usuario",
-      "Usuario",
-      "user",
-      "ApellidoNombre",
-      "Name",
-    ]) || idCol;
+  const nombreCol   = _pickCol(info, ["Nombre", "nombre", "Name", "name", "FirstName"]);
+  const apellidoCol = _pickCol(info, ["Apellido", "apellido", "LastName", "Apellidos"]);
+  const usernameCol = _pickCol(info, ["username", "usuario", "Usuario", "user", "ApellidoNombre"]);
 
-  return { table, idCol, nameCol };
+  // Expresión SQL: "Apellido, Nombre" si existen ambos, sino el que haya
+  let fullNameExpr;
+  if (nombreCol && apellidoCol) {
+    fullNameExpr = `TRIM(
+      COALESCE(NULLIF(TRIM(e.${apellidoCol}),''), '') ||
+      CASE WHEN NULLIF(TRIM(e.${apellidoCol}),'') IS NOT NULL
+                AND NULLIF(TRIM(e.${nombreCol}),'')  IS NOT NULL
+           THEN ', ' ELSE '' END ||
+      COALESCE(NULLIF(TRIM(e.${nombreCol}),''), '')
+    )`;
+  } else if (apellidoCol) {
+    fullNameExpr = `TRIM(e.${apellidoCol})`;
+  } else if (nombreCol) {
+    fullNameExpr = `TRIM(e.${nombreCol})`;
+  } else if (usernameCol) {
+    fullNameExpr = `TRIM(e.${usernameCol})`;
+  } else {
+    fullNameExpr = `CAST(e.${idCol} AS TEXT)`;
+  }
+
+  // Verificar si la tabla Pedidos tiene columna Rol (guardada por orders.js)
+  const pedidosInfo = _tinfo("Pedidos");
+  const pedidosRolCol = _pickCol(pedidosInfo, ["Rol", "rol", "role", "Role"]);
+
+  return { table, idCol, fullNameExpr, pedidosRolCol };
 }
 
 router.get("/traceability", mustBeAdmin, (req, res) => {
@@ -769,10 +782,19 @@ router.get("/traceability", mustBeAdmin, (req, res) => {
     /* ===================== RANKING DE SOLICITANTES / SUPERVISORES ===================== */
     let supervisors = [];
     if (emp) {
-      supervisors = db.prepare(`
+      // Seleccionar Rol directamente de Pedidos si existe la columna
+      const rolSelect = emp.pedidosRolCol
+        ? `, MAX(p.${emp.pedidosRolCol}) AS rol`
+        : `, NULL AS rol`;
+
+      const rawSupervisors = db.prepare(`
         SELECT
           CAST(p.EmpleadoID AS TEXT) AS employeeId,
-          COALESCE(NULLIF(TRIM(e.${emp.nameCol}), ''), CAST(p.EmpleadoID AS TEXT)) AS employeeName,
+          COALESCE(
+            NULLIF(TRIM(${emp.fullNameExpr}), ''),
+            CAST(p.EmpleadoID AS TEXT)
+          ) AS employeeName
+          ${rolSelect},
           COUNT(DISTINCT p.PedidoID) AS pedidos,
           COALESCE(SUM(i.Cantidad), 0) AS qty,
           COALESCE(SUM(i.Subtotal), 0) AS amount
@@ -782,13 +804,24 @@ router.get("/traceability", mustBeAdmin, (req, res) => {
         WHERE p.Fecha >= ? AND p.Fecha < ?
         GROUP BY p.EmpleadoID
         ORDER BY pedidos DESC, qty DESC, amount DESC
-      `).all(start, end).map((r) => ({
-        employeeId: String(r.employeeId || ""),
-        employeeName: String(r.employeeName || "—"),
-        pedidos: Number(r.pedidos || 0),
-        qty: Number(r.qty || 0),
-        amount: Number(r.amount || 0),
-      }));
+      `).all(start, end);
+
+      supervisors = rawSupervisors.map((r) => {
+        // Usar getEmployeeDisplayName como fallback si el JOIN no dio nombre completo
+        const rawName = String(r.employeeName || "").trim();
+        const fallback = rawName && rawName !== String(r.employeeId)
+          ? rawName
+          : getEmployeeDisplayName(r.employeeId);
+
+        return {
+          employeeId:   String(r.employeeId || ""),
+          employeeName: fallback || rawName || "—",
+          rol:          r.rol ? String(r.rol).toLowerCase().trim() : null,
+          pedidos:      Number(r.pedidos || 0),
+          qty:          Number(r.qty || 0),
+          amount:       Number(r.amount || 0),
+        };
+      });
     }
 
     /* ===================== STOCK BAJO EN TOP USADOS ===================== */

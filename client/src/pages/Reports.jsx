@@ -907,6 +907,58 @@ export default function Reports() {
   const goToNextMonth = () => { let y = year, m = month + 1; if (m > 12) { m = 1; y++; } setYear(y); setMonth(m); };
   const handleExportPdf = () => window.print();
 
+  const [exportingImg, setExportingImg] = useState(false);
+  const [imgTarget, setImgTarget]       = useState("resumen"); // qué sección capturar
+
+  const exportImage = async (sectionId) => {
+    setExportingImg(true);
+    try {
+      // Cargar html2canvas dinámicamente (no requiere instalar nada)
+      if (!window.html2canvas) {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
+          s.onload = resolve;
+          s.onerror = () => reject(new Error("No se pudo cargar html2canvas"));
+          document.head.appendChild(s);
+        });
+      }
+
+      // Determinar el elemento a capturar
+      const el = sectionId
+        ? document.getElementById(sectionId)
+        : document.querySelector(".reports-page");
+
+      if (!el) {
+        alert("No se encontró la sección a capturar.");
+        return;
+      }
+
+      const canvas = await window.html2canvas(el, {
+        scale: 2,                    // doble resolución → nitidez alta
+        useCORS: true,
+        backgroundColor: "#ffffff",
+        logging: false,
+        removeContainer: true,
+        // Ignorar elementos no-print (botones, filtros)
+        ignoreElements: (node) =>
+          node.classList?.contains("no-print") ||
+          node.classList?.contains("rp-trace-params"),
+      });
+
+      // Descargar como PNG
+      const link = document.createElement("a");
+      link.download = `informe_${sectionId || "completo"}_${year}_${String(month).padStart(2, "0")}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    } catch (e) {
+      console.error("[exportImage]", e);
+      alert("No se pudo generar la imagen. Intentá con el PDF.");
+    } finally {
+      setExportingImg(false);
+    }
+  };
+
   const exportMonthlyCsv = () => {
     if (!monthly) return;
     const lines = [
@@ -1011,12 +1063,41 @@ export default function Reports() {
     { label: "% total", numeric: true, render: r => `${Number(r.pctAmount || 0).toFixed(1)}%` },
   ];
 
+  const ROL_BADGE = {
+    supervisor:      { label: "Supervisor",      color: "#0369a1", bg: "#e0f2fe" },
+    administrativo:  { label: "Administrativo",  color: "#7c3aed", bg: "#ede9fe" },
+    admin:           { label: "Admin",            color: "#dc2626", bg: "#fee2e2" },
+  };
+
   const colsTraceSupervisors = [
-    { label: "Solicitante", key: "employeeName" },
-    { label: "Pedidos", numeric: true, render: r => niceNumber(r.pedidos) },
-    { label: "Unidades", numeric: true, render: r => niceNumber(r.qty) },
-    { label: "Monto total", numeric: true, render: r => niceCurrency(r.amount) },
-    { label: "Prom/pedido", numeric: true, render: r => {
+    {
+      label: "Solicitante",
+      render: r => {
+        const rolKey = r.rol ? String(r.rol).toLowerCase().trim() : null;
+        const badge  = rolKey ? (ROL_BADGE[rolKey] || { label: r.rol, color: "#374151", bg: "#f3f4f6" }) : null;
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            <span style={{ fontWeight: 700, color: "#111827" }}>{r.employeeName || "—"}</span>
+            {badge && (
+              <span style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                fontSize: "0.68rem", fontWeight: 700,
+                padding: "1px 7px", borderRadius: 999,
+                background: badge.bg, color: badge.color,
+                border: `1px solid ${badge.color}40`,
+                width: "fit-content",
+              }}>
+                {rolKey === "supervisor" ? "👤" : rolKey === "admin" ? "🔑" : "🗂️"} {badge.label}
+              </span>
+            )}
+          </div>
+        );
+      }
+    },
+    { label: "Pedidos",    numeric: true, render: r => niceNumber(r.pedidos) },
+    { label: "Unidades",   numeric: true, render: r => niceNumber(r.qty) },
+    { label: "Monto total",numeric: true, render: r => niceCurrency(r.amount) },
+    { label: "Prom/pedido",numeric: true, render: r => {
       const avg = Number(r.pedidos) > 0 ? Number(r.amount) / Number(r.pedidos) : 0;
       return <span style={{ color: "#6b7280", fontSize: "0.82rem" }}>{niceCurrency(avg)}</span>;
     }},
@@ -1082,6 +1163,30 @@ export default function Reports() {
           {traceability && <button type="button" className="pill pill--ghost" onClick={exportTraceCsv}>CSV trazabilidad</button>}
           {serviceId && serviceReport && <button type="button" className="pill pill--ghost" onClick={exportServiceCsv}>CSV servicio</button>}
           <button type="button" className="pill" onClick={handleExportPdf} disabled={!hasMonthlyData}>Exportar PDF</button>
+
+          {/* ── Exportar imagen ── */}
+          <div className="rp-img-export-wrap">
+            <select
+              className="rp-img-select"
+              value={imgTarget}
+              onChange={e => setImgTarget(e.target.value)}
+              title="Elegir sección a capturar"
+            >
+              <option value="rp-section-main">KPIs + vista activa</option>
+              <option value="rp-section-kpis">Solo tarjetas KPI</option>
+              <option value="rp-section-service">Detalle servicio</option>
+              <option value="">Página completa</option>
+            </select>
+            <button
+              type="button"
+              className="pill pill--ghost"
+              onClick={() => exportImage(imgTarget || null)}
+              disabled={exportingImg || !hasMonthlyData}
+              title="Descargar PNG de alta resolución"
+            >
+              {exportingImg ? "Generando…" : "🖼️ Imagen PNG"}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1094,7 +1199,7 @@ export default function Reports() {
           {/* ============================================================
               SECCIÓN PRINCIPAL — RESUMEN MENSUAL
               ============================================================ */}
-          <section className="reports-section">
+          <section className="reports-section" id="rp-section-main">
             <header className="reports-section-header">
               <div className="reports-section-title">
                 <h2>Resumen de {monthLabel}</h2>
@@ -1115,7 +1220,7 @@ export default function Reports() {
             </header>
 
             {/* ---- 8 KPI CARDS PRINCIPALES ---- */}
-            <div className="rp-kpi-row">
+            <div className="rp-kpi-row" id="rp-section-kpis">
               <div className="reports-summary-card reports-summary-card--main">
                 <div className="reports-summary-label">Pedidos totales</div>
                 <div className="reports-summary-value">{niceNumber(monthlyTotals.ordersCount)}</div>
@@ -1763,11 +1868,44 @@ export default function Reports() {
                       <>
                         <div className="reports-insight">
                           {traceSupervisors.length > 0
-                            ? `👤 ${traceSupervisors.length} solicitantes activos en ${monthLabel}. El de mayor actividad es "${traceSupervisors[0].employeeName}" con ${niceNumber(traceSupervisors[0].pedidos)} pedidos (${niceCurrency(traceSupervisors[0].amount)}).`
+                            ? `👤 ${traceSupervisors.length} solicitantes activos en ${monthLabel}. El de mayor actividad es "${traceSupervisors[0].employeeName}"${traceSupervisors[0].rol ? ` (${traceSupervisors[0].rol})` : ""} con ${niceNumber(traceSupervisors[0].pedidos)} pedidos (${niceCurrency(traceSupervisors[0].amount)}).`
                             : "Sin datos de solicitantes para el período."}
                         </div>
+
+                        {/* Desglose por rol */}
+                        {traceSupervisors.some(r => r.rol) && (() => {
+                          const byRol = traceSupervisors.reduce((acc, r) => {
+                            const k = r.rol ? String(r.rol).toLowerCase() : "sin rol";
+                            if (!acc[k]) acc[k] = { rol: r.rol || "Sin rol", personas: 0, pedidos: 0, amount: 0 };
+                            acc[k].personas++;
+                            acc[k].pedidos += r.pedidos;
+                            acc[k].amount  += r.amount;
+                            return acc;
+                          }, {});
+                          return (
+                            <div className="rp-rol-breakdown">
+                              {Object.values(byRol).map((g, i) => {
+                                const rolKey = String(g.rol).toLowerCase();
+                                const badge = ROL_BADGE[rolKey] || { color: "#374151", bg: "#f3f4f6" };
+                                return (
+                                  <div key={i} className="rp-rol-card" style={{ borderColor: badge.color + "40", background: badge.bg }}>
+                                    <div className="rp-rol-card-title" style={{ color: badge.color }}>
+                                      {rolKey === "supervisor" ? "👤" : rolKey === "admin" ? "🔑" : "🗂️"} {g.rol}
+                                    </div>
+                                    <div className="rp-rol-card-stats">
+                                      <span><strong>{g.personas}</strong> persona{g.personas !== 1 ? "s" : ""}</span>
+                                      <span><strong>{niceNumber(g.pedidos)}</strong> pedidos</span>
+                                      <span><strong>{niceCurrency(g.amount)}</strong></span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
+
                         <div style={{ marginTop:"1rem" }}>
-                          <h3 className="reports-subtitle">Monto solicitado por supervisor</h3>
+                          <h3 className="reports-subtitle">Monto solicitado por solicitante</h3>
                           <HorizontalBarChart
                             data={traceSupervisors.map(r => ({ ...r, _label: r.employeeName }))}
                             valueKey="amount" labelKey="_label"
@@ -1775,7 +1913,7 @@ export default function Reports() {
                           />
                         </div>
                         <div style={{ marginTop:"1rem" }}>
-                          <h3 className="reports-subtitle">Pedidos por supervisor</h3>
+                          <h3 className="reports-subtitle">Pedidos por solicitante</h3>
                           <HorizontalBarChart
                             data={traceSupervisors.map(r => ({ ...r, _label: r.employeeName }))}
                             valueKey="pedidos" labelKey="_label"
@@ -1783,7 +1921,7 @@ export default function Reports() {
                           />
                         </div>
                         <div style={{ marginTop:"1.25rem" }}>
-                          <h3 className="reports-subtitle">Ranking de solicitantes / supervisores</h3>
+                          <h3 className="reports-subtitle">Ranking completo de solicitantes</h3>
                           <RankTable rows={traceSupervisors} columns={colsTraceSupervisors} emptyMsg="Sin solicitudes registradas." />
                         </div>
                       </>
@@ -1862,7 +2000,7 @@ export default function Reports() {
               SECCIÓN 2 — DETALLE POR SERVICIO
               ============================================================ */}
           {serviceId && (
-            <section className="reports-section">
+            <section className="reports-section" id="rp-section-service">
               <header className="reports-section-header">
                 <div className="reports-section-title">
                   <h2>Detalle: {serviceNameSelected}</h2>

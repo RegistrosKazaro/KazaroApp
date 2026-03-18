@@ -616,15 +616,114 @@
 @media print {
   .no-print { display: none !important; }
   .print-only { display: block !important; }
-  body { background: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .reports-page { padding: 0.7cm 1cm; background: #fff !important; }
-  .reports-section { box-shadow: none; border-color: #d1d5db; page-break-inside: avoid; }
-  .reports-summary-card--main { background: #ffffff !important; color: #000000 !important; border-color: #d1d5db !important; }
-  .reports-table-wrapper { max-height: none; overflow: visible; }
+
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    accent-color: exact !important;
+  }
+
+  body { background: #fff !important; }
+
+  .reports-page {
+    padding: 0.5cm 0.8cm;
+    background: #fff !important;
+    font-size: 0.82rem;
+  }
+
+  /* Tarjeta principal "Pedidos totales" — en lugar de gradiente azul,
+     usamos borde izquierdo grueso azul + fondo azul muy suave */
+  .reports-summary-card--main {
+    background: #e0f2fe !important;
+    color: #0c4a6e !important;
+    border: 2px solid #0369a1 !important;
+    border-left: 6px solid #0369a1 !important;
+    box-shadow: none !important;
+  }
+  .reports-summary-card--main .reports-summary-label {
+    color: #0369a1 !important;
+    opacity: 1 !important;
+    font-weight: 600 !important;
+  }
+  .reports-summary-card--main .reports-summary-value {
+    color: #0c4a6e !important;
+    font-size: 1.4rem !important;
+  }
+  .reports-summary-card--main .rp-delta-badge {
+    font-weight: 700 !important;
+  }
+
+  /* Todas las tarjetas summary */
+  .reports-summary-card {
+    border: 1px solid #d1d5db !important;
+    box-shadow: none !important;
+    background: #fff !important;
+    break-inside: avoid;
+  }
+
+  /* Tarjeta highlight (azul oscuro) */
+  .reports-summary-card.highlight {
+    background: #dbeafe !important;
+    color: #1e3a8a !important;
+    border: 2px solid #3b82f6 !important;
+    transform: none !important;
+  }
+
+  /* Secciones */
+  .reports-section {
+    box-shadow: none !important;
+    border-color: #d1d5db !important;
+    page-break-inside: avoid;
+  }
+
+  /* Tablas */
+  .reports-table-wrapper { max-height: none !important; overflow: visible !important; }
+  .reports-table thead tr { background: #f3f4f6 !important; }
+  .reports-table tbody tr:nth-child(even) td { background: #f9fafb !important; }
+  .reports-table tbody tr:hover td { background: transparent !important; }
+
+  /* Gráficos */
   .rp-daychart { height: 80px; }
-  .rp-kpi-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .rp-exec-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .rp-trace-params { display: none; }
+  .rp-kpi-row { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+  .rp-exec-grid { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+
+  /* Ocultar controles interactivos */
+  .rp-trace-params { display: none !important; }
+  .rp-view-tabs { display: none !important; }
+
+  /* Pareto section */
+  .rp-pareto-section { border-color: #fde68a !important; background: #fffbeb !important; }
+  .rp-pareto-detail-bar-cur { background: #f59e0b !important; }
+
+  /* Badges de rol */
+  .rp-rol-breakdown { break-inside: avoid; }
+
+  /* Resumen ejecutivo */
+  .rp-exec-summary { background: #eff6ff !important; border-color: #bfdbfe !important; }
+  .rp-exec-item--green  { background: #f0fdf4 !important; }
+  .rp-exec-item--blue   { background: #eff6ff !important; }
+  .rp-exec-item--red    { background: #fef2f2 !important; }
+  .rp-exec-item--yellow { background: #fffbeb !important; }
+  .rp-exec-item--purple { background: #faf5ff !important; }
+  .rp-exec-item--orange { background: #fff7ed !important; }
+  .rp-exec-item--teal   { background: #f0fdfa !important; }
+
+  /* Balance visual */
+  .rp-balance-visual { background: #f8fafc !important; }
+  .rp-balance-bar-in  { background: #86efac !important; }
+  .rp-balance-bar-out { background: #fca5a5 !important; }
+
+  /* Concentración */
+  .rp-concentration { background: #f9fafb !important; }
+
+  /* Métricas */
+  .rp-metric-card { box-shadow: none !important; border-color: #e5e7eb !important; }
+  .rp-metric-card--highlight { background: #dbeafe !important; }
+
+  /* Observaciones */
+  .rp-obs-item--warn  { background: #fffbeb !important; }
+  .rp-obs-item--error { background: #fef2f2 !important; }
+  .rp-obs-item--info  { background: #f0f9ff !important; }
 }
 
 /* =========================================================
@@ -849,4 +948,80 @@
     grid-template-columns: 34px 1fr;
   }
   .rp-pareto-detail-nums { display: none; }
+}
+
+/* =========================================================
+   Desglose por rol — sub-vista Supervisores
+   ========================================================= */
+.rp-rol-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0.75rem 0 0.5rem;
+}
+.rp-rol-card {
+  flex: 1;
+  min-width: 160px;
+  border: 1px solid var(--rp-border);
+  border-radius: var(--rp-radius-md);
+  padding: 0.65rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rp-rol-card-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.rp-rol-card-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: #374151;
+}
+.rp-rol-card-stats span {
+  background: rgba(255,255,255,0.6);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,0.06);
+}
+
+/* =========================================================
+   Exportar imagen — selector + botón
+   ========================================================= */
+.rp-img-export-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  border: 1px solid var(--rp-border);
+  border-radius: 999px;
+  overflow: hidden;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(15,23,42,0.06);
+}
+.rp-img-select {
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 0.78rem;
+  color: var(--rp-text-main);
+  padding: 0.4rem 0.3rem 0.4rem 0.65rem;
+  cursor: pointer;
+  max-width: 160px;
+}
+.rp-img-select:focus { box-shadow: none; }
+.rp-img-export-wrap .pill--ghost {
+  border: none !important;
+  border-left: 1px solid var(--rp-border) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  font-size: 0.8rem;
+}
+.rp-img-export-wrap .pill--ghost:hover:not(:disabled) {
+  background-color: #f3f4f6 !important;
+  transform: none !important;
 }
