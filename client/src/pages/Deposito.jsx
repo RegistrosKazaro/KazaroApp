@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState, useCallback } from "react";
 import { api } from "../api/client";
 import "../styles/deposito.css";
 
-/* ========= Utilidades ========= */
 function isoToday() { return new Date().toISOString().slice(0, 10); }
 function isoFirstOfMonth() {
   const d = new Date();
@@ -47,9 +46,6 @@ function calcCoverageDays(stockActual, consumosRow) {
   return Number.isFinite(coverage) && coverage > 0 ? coverage : null;
 }
 
-/* ========= Mini Charts (sin dependencias) ========= */
-
-/** Gráfico de barras horizontales para top consumidos */
 function MiniBarChart({ data, maxItems = 8 }) {
   const items = (data || []).slice(0, maxItems);
   if (!items.length) return <p style={{ color: "#9ca3af", fontSize: "0.8rem" }}>Sin datos</p>;
@@ -76,7 +72,6 @@ function MiniBarChart({ data, maxItems = 8 }) {
   );
 }
 
-/** Gráfico de distribución de stock (donut-ish usando SVG) */
 function StockDonut({ sinStock, enRiesgo, bajo, normal }) {
   const total = sinStock + enRiesgo + bajo + normal;
   if (total === 0) return null;
@@ -86,7 +81,6 @@ function StockDonut({ sinStock, enRiesgo, bajo, normal }) {
   const size = 80, cx = 40, cy = 40, r = 30, stroke = 12;
   const circ = 2 * Math.PI * r;
 
-  // Build arcs
   const segments = [
     { pct: pctS, color: "#ef4444", label: "Sin stock" },
     { pct: pctR, color: "#f97316", label: "Riesgo" },
@@ -126,7 +120,6 @@ function StockDonut({ sinStock, enRiesgo, bajo, normal }) {
   );
 }
 
-/** Sparkline SVG para tendencia por día */
 function Sparkline({ data, color = "#0ea5e9", height = 36, width = 120 }) {
   if (!data || data.length < 2) return null;
   const vals = data.map(d => Number(d.pedidos ?? d.monto ?? d.value ?? 0));
@@ -145,7 +138,6 @@ function Sparkline({ data, color = "#0ea5e9", height = 36, width = 120 }) {
   );
 }
 
-/** Gauge de cobertura (días) */
 function CoverageGauge({ days, max = 30 }) {
   if (days == null) return <span style={{ color: "#9ca3af" }}>—</span>;
   const pct = Math.min(days / max, 1);
@@ -160,7 +152,6 @@ function CoverageGauge({ days, max = 30 }) {
   );
 }
 
-/* ========= useDebounced ========= */
 const useDebounced = (value, delay = 300) => {
   const [v, setV] = useState(value);
   useEffect(() => {
@@ -170,7 +161,6 @@ const useDebounced = (value, delay = 300) => {
   return v;
 };
 
-/* ========= Panel de Pedidos ========= */
 const API_BASE_URL = (import.meta?.env && import.meta.env.VITE_API_URL) || "http://localhost:4000";
 
 function DepositoOrdersPanel({ pedidosPorDia }) {
@@ -299,7 +289,6 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
     if (pdfUrl) { URL.revokeObjectURL(pdfUrl); setPdfUrl(null); }
   };
 
-  // Stats rápidas de pedidos por tab
   const stats = useMemo(() => ({
     open: orders.filter(o => o.status === "open").length,
     preparing: orders.filter(o => o.status === "preparing").length,
@@ -424,7 +413,6 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
   );
 }
 
-/* ========= Componente principal ========= */
 export default function Deposito() {
   const [start, setStart] = useState(isoFirstOfMonth());
   const [end, setEnd] = useState(isoToday());
@@ -444,7 +432,6 @@ export default function Deposito() {
   const [sortTop, setSortTop] = useState({ field: "total", dir: "desc" });
   const [sortLow, setSortLow] = useState({ field: "stock", dir: "asc" });
 
-  // Vista activa: "overview" | "pedidos"
   const [activeView, setActiveView] = useState("overview");
 
   const threshold = useMemo(() => {
@@ -507,7 +494,6 @@ export default function Deposito() {
     }
     const bajoResto = Math.max(0, low.length - productosSinStock - productosEnRiesgo);
 
-    // Cobertura promedio
     let covSum = 0, covCount = 0;
     for (const r of low) {
       const c = calcCoverageDays(r.stock, consumos[String(r.productId)]);
@@ -515,7 +501,6 @@ export default function Deposito() {
     }
     const avgCoverage = covCount > 0 ? covSum / covCount : null;
 
-    // Top 5 consumidos para sparkline simulado (por posición)
     const top5 = top.slice(0, 5).map((r, i) => ({ pedidos: Number(r.total || 0), i }));
 
     return { totalConsumido, productosTop: top.length, productosBajo: low.length, productosSinStock, productosEnRiesgo, bajoResto, riesgoLimite, avgCoverage, top5 };

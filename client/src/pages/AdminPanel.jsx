@@ -8,9 +8,6 @@ import "../styles/a11y.css";
 
 import MassReassignServicesSection from "./MassReassignServicesSection";
 
-/* -----------------------------------------------------------
- * Utilidades
- * --------------------------------------------------------- */
 const API_BASE_URL =
   (import.meta?.env && import.meta.env.VITE_API_URL) || "http://localhost:4000";
 
@@ -31,8 +28,6 @@ const parseMoneyFlexible = (raw) => {
   if (raw == null) return NaN;
   let s = String(raw).trim().replace(/\s+/g, "");
   if (s === "") return NaN;
-
-  // deja dígitos, coma, punto y signo
   s = s.replace(/[^\d.,-]/g, "");
 
   const lastComma = s.lastIndexOf(",");
@@ -72,10 +67,6 @@ const useDebounced = (value, delay = 300) => {
   return v;
 };
 
-/* ===========================================================
- * 1) Productosconst [roleVisibility, setRoleVisibility] = useState([]);
-
- * ========================================================= */
 function ProductsSection() {
   const [rows, setRows] = useState([]);
   const [q, setQ] = useState("");
@@ -85,11 +76,9 @@ function ProductsSection() {
   const [statusMsg, setStatusMsg] = useState("");
   const [roleVisibility, setRoleVisibility] = useState([]);
 
-  // Export/Import Excel
   const [importing, setImporting] = useState(false);
   const [importFile, setImportFile] = useState(null);
 
-  // Categorías
   const [cats, setCats] = useState([]);
   const [catsErr, setCatsErr] = useState("");
   const [catFilter, setCatFilter] = useState("");
@@ -103,8 +92,7 @@ function ProductsSection() {
     return m;
   }, [cats]);
 
-  // Edición/alta
-  const [editingId, setEditingId] = useState(null); // null | "__new__" | id
+  const [editingId, setEditingId] = useState(null); 
   const [draft, setDraft] = useState({
     name: "",
     price: "",
@@ -116,8 +104,7 @@ function ProductsSection() {
   const [editingLoading, setEditingLoading] = useState(false);
   const nameRef = useRef(null);
 
-  // Edición rápida de stock
-  const [stockEdit, setStockEdit] = useState(null); // { id, value }
+  const [stockEdit, setStockEdit] = useState(null);
 
   const loadCats = useCallback(async () => {
     try {
@@ -134,9 +121,6 @@ function ProductsSection() {
     }
   }, []);
 
-  // =========================
-  // Cargar productos (load)
-  // =========================
   const load = useCallback(async () => {
     setLoading(true);
     setErr("");
@@ -147,7 +131,6 @@ function ProductsSection() {
 
       const list = Array.isArray(data) ? data : [];
 
-      // Filtro por categoría (soporta productos nuevos y viejos)
       const filteredByCategory = !catFilter
         ? list
         : list.filter((p) => {
@@ -200,7 +183,7 @@ function ProductsSection() {
   setEditingId("__new__");
   setCatTouched(false);
 
-  setRoleVisibility(["supervisor", "administrativo"]); // ✅ AGREGAR
+  setRoleVisibility(["supervisor", "administrativo"]); 
 
   setDraft({
     name: "",
@@ -231,15 +214,14 @@ const onEdit = async (row) => {
     catId: "",
   });
 
-  // default mientras carga (opcional)
   setRoleVisibility(["supervisor", "administrativo"]);
 
   setEditingLoading(true);
   try {
-    // 1) Traer datos del producto (sin roles)
+
     const { data } = await api.get(`/admin/products/${row.id}`);
 
-    // 2) Traer roles reales desde el endpoint correcto
+
     const rolesRes = await api.get(`/admin/products/${row.id}/roles`);
 
     const rawRoles = rolesRes?.data ?? [];
@@ -247,7 +229,6 @@ const onEdit = async (row) => {
       ? rawRoles.map((x) => String(x).toLowerCase().trim()).filter(Boolean)
       : [];
 
-    // Si no hay roles guardados, por defecto que sean ambos visibles
     setRoleVisibility(roles.length ? roles : ["supervisor", "administrativo"]);
 
     let catId = "";
@@ -273,7 +254,6 @@ const onEdit = async (row) => {
 
 };
 
-
   const onCancel = () => {
     setEditingId(null);
     setCatTouched(false);
@@ -298,36 +278,29 @@ const onEdit = async (row) => {
     return;
   }
 
-  // ✅ roles normalizados (y admin siempre incluido)
   const rolesSel = Array.from(
     new Set((roleVisibility || []).map((r) => String(r).toLowerCase().trim()))
   ).filter(Boolean);
 
-  // ✅ si no eligió nada, no dejamos guardar
   if (!rolesSel.length) {
     setErr("Tenés que seleccionar al menos un rol (administrativo o supervisor).");
     return;
   }
 
-  // ✅ catId solo si corresponde
   if (editingId === "__new__" || catTouched) {
     payload.catId = draft.catId || null;
   }
 
   try {
     if (editingId && editingId !== "__new__") {
-      // ✅ 1) guardar datos del producto
       await api.put(`/admin/products/${editingId}`, payload);
 
-      // ✅ 2) guardar roles (usar rolesSel)
       await api.put(`/admin/products/${editingId}/roles`, {
         roles: rolesSel,
       });
     } else {
-      // ✅ crear producto
       const { data } = await api.post("/admin/products", payload);
 
-      // ✅ guardar roles del nuevo
       await api.put(`/admin/products/${data.id}/roles`, {
         roles: rolesSel,
       });
@@ -339,7 +312,6 @@ const onEdit = async (row) => {
     setErr(e?.response?.data?.error || e.message);
   }
 };
-
 
   const onDelete = async (id) => {
     if (!confirm("¿Eliminar producto?")) return;
@@ -389,9 +361,6 @@ const onEdit = async (row) => {
     }
   };
 
-  // =========================
-  // Export / Import Excel
-  // =========================
   const downloadExcel = async () => {
     setErr("");
     setStatusMsg("");
@@ -763,9 +732,6 @@ const onEdit = async (row) => {
   );
 }
 
-/* ===========================================================
- * 2) Asignar servicios a supervisores
- * ========================================================= */
 function AssignServicesSection() {
   const [supervisors, setSupervisors] = useState([]);
   const [selectedSupervisor, setSelectedSupervisor] = useState("");
@@ -964,25 +930,20 @@ function AssignServicesSection() {
   );
 }
 
-/* ===========================================================
- * 3) Relación Servicio ↔ Productos
- * ========================================================= */
 function ServiceProductsSection() {
-  const [step, setStep] = useState("pick"); // pick | manage
+  const [step, setStep] = useState("pick"); 
   const [service, setService] = useState(null);
 
-  // Búsqueda de servicio
   const [qSrv, setQSrv] = useState("");
   const qSrvDeb = useDebounced(qSrv, 300);
   const [srvResults, setSrvResults] = useState([]);
   const [srvLoading, setSrvLoading] = useState(false);
   const [srvMsg, setSrvMsg] = useState("");
 
-  // Productos
   const [q, setQ] = useState("");
   const qDeb = useDebounced(q, 300);
-  const [allRows, setAllRows] = useState([]); // todos los productos
-  const [rows, setRows] = useState([]); // filtrados
+  const [allRows, setAllRows] = useState([]); 
+  const [rows, setRows] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [assignMsg, setAssignMsg] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1190,11 +1151,8 @@ function ServiceProductsSection() {
   );
 }
 
-/* ===========================================================
- * 4) Presupuestos por servicio
- * ========================================================= */
 function ServiceBudgetsSection() {
-  const [rows, setRows] = useState([]); // [{id, name, budget, maxPct}]
+  const [rows, setRows] = useState([]); 
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [page, setPage] = useState(1);
@@ -1360,9 +1318,6 @@ function ServiceBudgetsSection() {
   );
 }
 
-/* ===========================================================
- * 5) Ingresos de stock programados (preventa)
- * ========================================================= */
 function IncomingStockSection() {
   const [search, setSearch] = useState("");
   const searchDeb = useDebounced(search, 300);
@@ -1371,7 +1326,7 @@ function IncomingStockSection() {
   const [searchLoading, setSearchLoading] = useState(false);
 
   const [product, setProduct] = useState(null);
-  const [rows, setRows] = useState([]); // [{id, product_id, qty, eta}]
+  const [rows, setRows] = useState([]); 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
@@ -1567,9 +1522,6 @@ function IncomingStockSection() {
   );
 }
 
-/* ===========================================================
- * 6) Pedidos (admin) — SOLO cerrados + visor de remito
- * ========================================================= */
 function OrdersSection() {
   const [orders, setOrders] = useState([]);
   const [err, setErr] = useState("");
@@ -1674,7 +1626,6 @@ function OrdersSection() {
   const toBlobUrl = (blob) => URL.createObjectURL(blob);
 
   const tryLoadPdfFromPath = async (path) => {
-    // 1) axios blob
     try {
       const res = await api.get(path, {
         responseType: "blob",
@@ -1697,7 +1648,6 @@ function OrdersSection() {
       console.debug("tryLoadPdfFromPath (axios-blob) falló", path, e?.message);
     }
 
-    // 2) axios arraybuffer -> blob
     try {
       const res = await api.get(path, {
         responseType: "arraybuffer",
@@ -1722,7 +1672,6 @@ function OrdersSection() {
       console.debug("tryLoadPdfFromPath (axios-arraybuffer) falló", path, e?.message);
     }
 
-    // 3) fetch absoluto
     const abs = (API_BASE_URL?.replace(/\/$/, "") || "") + path;
     const r = await fetch(abs, {
       method: "GET",
@@ -1913,9 +1862,6 @@ function OrdersSection() {
   );
 }
 
-/* ===========================================================
- * Crear servicio
- * ========================================================= */
 function CreateServiceSection() {
   const [name, setName] = useState("");
   const [services, setServices] = useState([]);
@@ -1924,7 +1870,6 @@ function CreateServiceSection() {
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
 
-  // Excel Servicios
   const [importServiceFile, setImportServiceFile] = useState(null);
   const [importingServices, setImportingServices] = useState(false);
 
@@ -2013,7 +1958,6 @@ function CreateServiceSection() {
     setImportingServices(false);
   }
 };
-
 
   const deleteService = async (id) => {
     if (!confirm("¿Eliminar este servicio?")) return;
@@ -2148,16 +2092,12 @@ function CreateServiceSection() {
   );
 }
 
-/* ===========================================================
- * ProductHistorialSection — Historial de cambios de productos
- * ========================================================= */
 function ProductHistorialSection() {
   const [rows, setRows]           = useState([]);
   const [loading, setLoading]     = useState(false);
   const [err, setErr]             = useState("");
-  const [vista, setVista]         = useState("detalle"); // "detalle" | "resumen"
+  const [vista, setVista]         = useState("detalle"); 
 
-  // Filtros
   const [q, setQ]                 = useState("");
   const [campo, setCampo]         = useState("todos");
   const [tipo, setTipo]           = useState("todos");
@@ -2231,7 +2171,6 @@ function ProductHistorialSection() {
     }).click();
   };
 
-  // KPIs rápidos del período
   const kpis = (() => {
     if (vista !== "detalle" || !rows.length) return null;
     const stockRows  = rows.filter(r => r.campo === "stock");

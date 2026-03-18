@@ -131,7 +131,7 @@ function BudgetBar({ used, budget }) {
   );
 }
 
-function Sparkline({ data, color = "#0ea5e9", width = 100, height = 32 }) {
+function Sparkline({ data, color = "#0ea5e9", width = 100, height = 32, trendOverride }) {
   if (!data || data.length < 2) return null;
   const vals = data.map(d => Number(d.monto ?? d.pedidos ?? 0));
   const min = Math.min(...vals), max = Math.max(...vals);
@@ -141,9 +141,21 @@ function Sparkline({ data, color = "#0ea5e9", width = 100, height = 32 }) {
     const y = height - ((v - min) / range) * (height - 4) - 2;
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(" ");
-  const last = vals[vals.length - 1], prev = vals[vals.length - 2];
-  const trend = last > prev ? "▲" : last < prev ? "▼" : "—";
-  const trendColor = last > prev ? "#22c55e" : last < prev ? "#ef4444" : "#9ca3af";
+
+  // Si hay trendOverride (comparativa mes vs mes anterior), usarlo
+  // Si no, comparar primera mitad vs segunda mitad del mes (más representativo que último día vs penúltimo)
+  let trend, trendColor;
+  if (trendOverride !== undefined) {
+    trend = trendOverride > 0 ? "▲" : trendOverride < 0 ? "▼" : "—";
+    trendColor = trendOverride > 0 ? "#22c55e" : trendOverride < 0 ? "#ef4444" : "#9ca3af";
+  } else {
+    const mid = Math.floor(vals.length / 2);
+    const firstHalf  = vals.slice(0, mid).reduce((a, v) => a + v, 0);
+    const secondHalf = vals.slice(mid).reduce((a, v) => a + v, 0);
+    trend = secondHalf > firstHalf ? "▲" : secondHalf < firstHalf ? "▼" : "—";
+    trendColor = secondHalf > firstHalf ? "#22c55e" : secondHalf < firstHalf ? "#ef4444" : "#9ca3af";
+  }
+
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
       <svg width={width} height={height}>
@@ -205,11 +217,13 @@ function DeltaBadge({ current, previous, formatter }) {
   if (previous == null || previous === 0) return null;
   const delta = current - previous;
   const pct = (delta / previous) * 100;
-  const isUp = delta > 0;
-  const color = isUp ? "#00ff15" : "#ef4444";
+  const isUp   = delta > 0;
+  const isDown = delta < 0;
+  const color = isUp ? "#22c55e" : isDown ? "#ef4444" : "#9ca3af";
+  const arrow = isUp ? "▲" : isDown ? "▼" : "—";
   return (
     <span className="rp-delta-badge" style={{ color }}>
-      {isUp ? "▲" : "▼"} {Math.abs(pct).toFixed(1)}%
+      {arrow} {Math.abs(pct).toFixed(1)}%
       {formatter && <span style={{ fontSize: "0.7rem", marginLeft: 3, fontWeight: 900 }}>({formatter(Math.abs(delta))})</span>}
     </span>
   );
@@ -1105,8 +1119,22 @@ export default function Reports() {
               <div className="reports-summary-card reports-summary-card--main">
                 <div className="reports-summary-label">Pedidos totales</div>
                 <div className="reports-summary-value">{niceNumber(monthlyTotals.ordersCount)}</div>
-                {prevTotals && <DeltaBadge current={monthlyTotals.ordersCount} previous={prevTotals.ordersCount} />}
-                {byDay.length > 1 && <Sparkline data={byDay} color="rgba(255,255,255,0.85)" width={90} height={26} />}
+                {prevTotals
+                  ? <DeltaBadge current={monthlyTotals.ordersCount} previous={prevTotals.ordersCount} />
+                  : <span style={{ fontSize:"0.72rem", color:"rgba(255,255,255,0.55)", marginTop:2 }}>Sin datos mes anterior</span>
+                }
+                {byDay.length > 1 && (
+                  <Sparkline
+                    data={byDay}
+                    color="rgba(255,255,255,0.85)"
+                    width={90}
+                    height={26}
+                    trendOverride={prevTotals
+                      ? monthlyTotals.ordersCount - prevTotals.ordersCount
+                      : undefined
+                    }
+                  />
+                )}
               </div>
               <div className="reports-summary-card">
                 <div className="reports-summary-label">Monto total</div>
@@ -1133,8 +1161,13 @@ export default function Reports() {
               <div className="reports-summary-card">
                 <div className="reports-summary-label">Variabilidad diaria</div>
                 <div className="reports-summary-value">{actividadKpis.cv != null ? `${actividadKpis.cv.toFixed(0)}%` : "—"}</div>
-                <div className="reports-summary-sub">Coef. de variación (CV)</div>
-                {actividadKpis.cv != null && <StatusBadge value={actividadKpis.cv} thresholds={[40, 70]} labels={["Estable","Variable","Muy irregular"]} />}
+                <div className="reports-summary-sub" style={{ fontSize:"0.7rem", lineHeight:1.35 }}>
+                  {actividadKpis.cv != null && actividadKpis.avg != null
+                    ? `Prom: ${actividadKpis.avg.toFixed(1)} ped/día · CV mide irregularidad día a día`
+                    : "Coef. de variación (CV)"
+                  }
+                </div>
+                {actividadKpis.cv != null && <StatusBadge value={actividadKpis.cv} thresholds={[40, 70]} labels={["Demanda estable","Demanda variable","Muy irregular"]} />}
               </div>
               <div className="reports-summary-card rp-pareto-card">
                 <div className="reports-summary-label">Regla 80/20 (Pareto)</div>

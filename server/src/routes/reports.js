@@ -277,6 +277,42 @@ router.get("/monthly", mustBeAdmin, (req, res) => {
         monto: Number(r.monto || 0),
       }));
 
+    // Totales del mes anterior (para comparativa ▲▼)
+    const prevMonthRange = (() => {
+      let pm = month - 1, py = year;
+      if (pm <= 0) { pm = 12; py--; }
+      return monthRange(py, pm);
+    })();
+
+    const prev_totals = (() => {
+      try {
+        const ordersCount = db.prepare(`
+          SELECT COUNT(*) AS c FROM Pedidos
+          WHERE Fecha >= ? AND Fecha < ?
+        `).get(prevMonthRange.start, prevMonthRange.end)?.c || 0;
+
+        const itemsCount = db.prepare(`
+          SELECT COALESCE(SUM(i.Cantidad),0) AS c
+          FROM PedidoItems i
+          JOIN Pedidos p ON p.PedidoID = i.PedidoID
+          WHERE p.Fecha >= ? AND p.Fecha < ?
+        `).get(prevMonthRange.start, prevMonthRange.end)?.c || 0;
+
+        const amount = db.prepare(`
+          SELECT COALESCE(SUM(Total),0) AS s FROM Pedidos
+          WHERE Fecha >= ? AND Fecha < ?
+        `).get(prevMonthRange.start, prevMonthRange.end)?.s || 0;
+
+        return {
+          ordersCount: Number(ordersCount),
+          itemsCount:  Number(itemsCount),
+          amount:      Number(amount),
+        };
+      } catch {
+        return null;
+      }
+    })();
+
     return res.json({
       ok: true,
       period: { year, month, start, end },
@@ -284,6 +320,7 @@ router.get("/monthly", mustBeAdmin, (req, res) => {
       top_services,
       top_products,
       by_day,
+      prev_totals,
     });
   } catch (e) {
     console.error("[reports] GET /monthly error:", e);
@@ -599,9 +636,6 @@ router.get("/traceability", mustBeAdmin, (req, res) => {
     const year = Number(req.query.year);
     const month = Number(req.query.month);
     const top = Math.max(1, Math.min(8, Number(req.query.top) || 8));
-    // Parámetros de filtro opcionales
-    const filterServiceId = req.query.serviceId ? String(req.query.serviceId).trim() : "";
-    const filterEmployeeId = req.query.employeeId ? String(req.query.employeeId).trim() : "";
 
     const { start, end } = monthRange(year, month);
 
@@ -783,68 +817,6 @@ router.get("/traceability", mustBeAdmin, (req, res) => {
       }
     }
 
-    /* ===================== OBSERVACIONES DE CALIDAD ===================== */
-    let observations = [];
-    try {
-      const obsInfo = _tinfo("Observaciones");
-      if (obsInfo.length) {
-        const obsProductCol = _pickCol(obsInfo, ["ProductoNombre","Producto","NombreProducto","product","producto"]) || null;
-        const obsTextCol    = _pickCol(obsInfo, ["Texto","Observacion","Observación","Descripcion","Descripción","Detalle","text","nota","Nota"]) || null;
-        const obsDateCol    = _pickCol(obsInfo, ["Fecha","Date","fecha","date"]) || null;
-        const obsTypeCol    = _pickCol(obsInfo, ["Tipo","Type","tipo","type"]) || null;
-
-        if (obsTextCol) {
-          const obsCols = [
-            obsProductCol ? `COALESCE(NULLIF(TRIM(${obsProductCol}),''),'General') AS product` : `'General' AS product`,
-            `COALESCE(NULLIF(TRIM(${obsTextCol}),''),'Sin descripción') AS text`,
-            obsDateCol ? `${obsDateCol} AS date` : `NULL AS date`,
-            obsTypeCol ? `${obsTypeCol} AS type` : `'info' AS type`,
-          ].join(", ");
-
-          const obsWhere = obsDateCol ? `WHERE ${obsDateCol} >= ? AND ${obsDateCol} < ?` : "";
-          const obsParams = obsDateCol ? [start, end] : [];
-
-          observations = db.prepare(`
-            SELECT ${obsCols}
-            FROM Observaciones
-            ${obsWhere}
-            ORDER BY ${obsDateCol ? obsDateCol + " DESC," : ""} rowid DESC
-            LIMIT 20
-          `).all(...obsParams).map(r => ({
-            product: String(r.product || "General"),
-            text: String(r.text || ""),
-            date: r.date ? String(r.date).slice(0, 10) : null,
-            type: String(r.type || "info").toLowerCase(),
-          }));
-        }
-      }
-    } catch { /* tabla no existe, ignorar */ }
-
-    /* ===================== COMPARATIVA MES ANTERIOR ===================== */
-    let prevMonth = month - 1, prevYear = year;
-    if (prevMonth <= 0) { prevMonth = 12; prevYear = year - 1; }
-    const { start: prevStart, end: prevEnd } = monthRange(prevYear, prevMonth);
-
-    const prevOutgoing = db.prepare(`
-      SELECT COALESCE(SUM(i.Cantidad),0) AS qty, COALESCE(SUM(i.Subtotal),0) AS amount
-      FROM PedidoItems i
-      JOIN Pedidos p ON p.PedidoID = i.PedidoID
-      WHERE p.Fecha >= ? AND p.Fecha < ?
-    `).get(prevStart, prevEnd) || { qty: 0, amount: 0 };
-
-    const prevIncoming = (() => {
-      if (!prod) return { qty: 0, amount: 0 };
-      try {
-        return db.prepare(`
-          SELECT COALESCE(SUM(inc.qty),0) AS qty,
-                 COALESCE(SUM(inc.qty * COALESCE(p.${prod.priceCol || '0'},0)),0) AS amount
-          FROM IncomingStock inc
-          LEFT JOIN ${prod.table} p ON CAST(p.${prod.idCol} AS TEXT) = CAST(inc.product_id AS TEXT)
-          WHERE inc.eta >= ? AND inc.eta < ?
-        `).get(prevStart, prevEnd) || { qty: 0, amount: 0 };
-      } catch { return { qty: 0, amount: 0 }; }
-    })();
-
     return res.json({
       ok: true,
       period: { year, month, start, end },
@@ -855,11 +827,6 @@ router.get("/traceability", mustBeAdmin, (req, res) => {
         totalOutgoingAmount: totalOutgoing.amount,
         balanceQty: totalIncoming.qty - totalOutgoing.qty,
         balanceAmount: totalIncoming.amount - totalOutgoing.amount,
-        // Comparativa mes anterior
-        prevOutgoingQty: Number(prevOutgoing.qty || 0),
-        prevOutgoingAmount: Number(prevOutgoing.amount || 0),
-        prevIncomingQty: Number(prevIncoming.qty || 0),
-        prevIncomingAmount: Number(prevIncoming.amount || 0),
       },
       incoming,
       outgoing,
@@ -868,7 +835,6 @@ router.get("/traceability", mustBeAdmin, (req, res) => {
       byService,
       supervisors,
       stockAlerts,
-      observations,
     });
   } catch (e) {
     console.error("[reports] GET /traceability error:", e);

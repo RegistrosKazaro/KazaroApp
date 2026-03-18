@@ -7,7 +7,6 @@ import { env } from "./utils/env.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-/* ===================== util paths ===================== */
 function uniq(list) {
   const seen = new Set();
   const out = [];
@@ -26,7 +25,6 @@ function hasWalShm(basePath) {
   return fs.existsSync(wal) || fs.existsSync(shm);
 }
 
-// Si hay *.db-wal / *.db-shm en un directorio, devolvemos la ruta esperada del *.db
 function trySiblingDbFromWal(dir) {
   try {
     const entries = fs.readdirSync(dir).filter(f => /\.db-(wal|shm)$/i.test(f));
@@ -42,16 +40,13 @@ function resolveDbPath() {
     ? (path.isAbsolute(env.DB_PATH) ? env.DB_PATH : path.resolve(process.cwd(), env.DB_PATH))
     : null;
 
-  // 1) Si env apunta a un archivo existente, usarlo
   if (inEnv && fs.existsSync(inEnv)) return inEnv;
 
-  // 2) Si env apunta a un lugar donde hay WAL/SHM, usar la DB "hermana"
   if (inEnv) {
     const sib = trySiblingDbFromWal(path.dirname(inEnv));
     if (sib) return sib;
   }
 
-  // 3) Candidatos comunes
   const candidates = uniq([
     inEnv,
     path.resolve(process.cwd(), "Kazaro.db"),
@@ -69,19 +64,16 @@ function resolveDbPath() {
     try { if (fs.existsSync(p)) return p; } catch {}
   }
 
-  // 4) Si en server/ hay wal/shm, inferimos la DB ahí
   const serverDir = path.resolve(__dirname, "..");
   const sib = trySiblingDbFromWal(serverDir);
   if (sib) return sib;
 
-  // 5) Último recurso: cwd/Kazaro.db
   return inEnv || path.resolve(process.cwd(), "Kazaro.db");
 }
 
 const dbPath = resolveDbPath();
 export const DB_RESOLVED_PATH = dbPath;
 
-// Política: si definiste DB_PATH o si detectamos WAL/SHM, exigimos que exista el .db
 const mustExistBecauseEnv = !!env.DB_PATH;
 const mustExistBecauseWal = hasWalShm(dbPath);
 const fileMustExist = mustExistBecauseEnv || mustExistBecauseWal;
@@ -99,7 +91,6 @@ try { db.pragma("foreign_keys = ON"); } catch {}
 try { db.pragma("journal_mode = WAL"); } catch {}
 try { db.pragma("busy_timeout = 5000"); } catch {}
 
-/* ===================== util sql helpers ===================== */
 function norm(s) {
   return String(s ?? "")
     .normalize("NFD")
@@ -146,14 +137,12 @@ export function pick(info, regex, fallback = null) {
   return hit ? hit.name : fallback;
 }
 
-/* ===================== usuarios / roles ===================== */
 const empInfo = tinfo("Empleados");
 const empleadoIdCol =
   (empInfo.find(c => c.pk === 1)?.name) ||
   pickCol(empInfo, ["EmpleadosID","EmpleadoID","EmpleadoId","IdEmpleado","empleado_id","user_id","id","ID"]) ||
   "EmpleadosID";
 
-// Fallback de rol inline en Empleados (si no hay pivote)
 const empRolInlineCol = pickCol(empInfo, ["rol","Rol","role","Role"]);
 
 const reInfo = tinfo("Roles_Empleados");
@@ -180,7 +169,6 @@ export function getUserForLogin(userOrEmailInput) {
     const emailCol = pickCol(eInfo, ["email","Email","correo","Correo"]);
 
     const hashCol   = pickCol(eInfo, ["password_hash","hash","pass_hash","PasswordHash"]);
-    // 🔧 AQUÍ el cambio: agrego "password_plain" como primera opción
     const plainCol  = pickCol(eInfo, ["password_plain","password","contrasena","contraseña","clave","pass","Password"]);
     const activeCol = pickCol(eInfo, ["is_active","activo","Activo","enabled","estado"]);
 
@@ -312,7 +300,6 @@ export function userHasRole(userId, role) {
   return roles.includes(target);
 }
 
-/* ===================== catálogo productos ===================== */
 const NAME_CANDIDATES  = ["Nombre","NombreProducto","Nombre_Producto","Descripcion","Detalle","Producto","Titulo","title","name","descripcion"];
 const CODE_CANDIDATES  = ["Codigo","CodigoProducto","Codigo_Producto","SKU","sku","codigo","code","Code"];
 const PRICE_CANDIDATES = ["Precio","precio","Price","Costo","costo","importe","Valor","valor"];
@@ -440,7 +427,6 @@ export function discoverCatalogSchema() {
   };
 }
 
-/* ===================== visibilidad por rol ===================== */
 export function ensureVisibilitySchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS ProductRoleVisibility (
@@ -470,7 +456,6 @@ export function revokeVisibility(productId, roleName) {
   `).run(productId, role);
 }
 
-/* ===================== historial de cambios de productos ===================== */
 export function ensureProductHistorialTable() {
   try {
     db.exec(`
@@ -497,27 +482,18 @@ export function ensureProductHistorialTable() {
   }
 }
 
-/**
- * Registra un cambio en un campo de un producto.
- * Solo registra si el valor realmente cambió.
- * tipo: 'excel_import' | 'manual_edit' | 'stock_edit' | 'producto_creado' | 'producto_eliminado'
- * campo: 'stock' | 'precio' | 'nombre' | 'codigo'
- */
 export function registrarCambioProducto({ productId, nombre, codigo, campo, anterior, nuevo, tipo, usuario }) {
   try {
     ensureProductHistorialTable();
 
-    // Normalizar para comparar
     const antNum = anterior == null ? null : Number(anterior);
     const newNum = nuevo    == null ? null : Number(nuevo);
 
-    // Para campos numéricos (stock/precio), no registrar si el valor no cambió
     if (campo === "stock" || campo === "precio") {
       if (antNum === newNum) return;
-      if (nuevo == null) return; // no registrar si el nuevo valor es nulo
+      if (nuevo == null) return;
     }
 
-    // Para campos de texto, comparar como string
     if (campo === "nombre" || campo === "codigo") {
       const antStr = anterior == null ? "" : String(anterior).trim();
       const newStr = nuevo    == null ? "" : String(nuevo).trim();
@@ -544,15 +520,10 @@ export function registrarCambioProducto({ productId, nombre, codigo, campo, ante
       usuario ?? null
     );
   } catch (e) {
-    // No rompemos el flujo principal si el historial falla
     console.error("[db] registrarCambioProducto error:", e?.message || e);
   }
 }
 
-/**
- * Lee el estado actual de un producto (stock y precio) para poder comparar antes de un cambio.
- * Devuelve { stock, precio, nombre, codigo } o null si no se encuentra.
- */
 export function leerEstadoActualProducto(id) {
   try {
     const sch = discoverCatalogSchema();
@@ -584,7 +555,6 @@ export function leerEstadoActualProducto(id) {
   }
 }
 
-/* ===================== stock futuro (preventa) ===================== */
 export function ensureIncomingStockTable() {
   try {
     db.exec(`
@@ -623,7 +593,6 @@ export function getFutureIncomingForProduct(productId) {
   }
 }
 
-/* ===================== categorías ===================== */
 export function listCategories() {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
@@ -659,7 +628,6 @@ export function listCategories() {
   return [{ id: "__all__", name: "Todos", count: total }];
 }
 
-/* ===================== productos (SOLO Productos) ===================== */
 export function listProductsByCategory(categoryId, { q = "", serviceId = null, role = null, roles = null } = {}) {
   ensureVisibilitySchema();
   ensureIncomingStockTable();
@@ -675,7 +643,6 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
 
   const stockExpr = hasStock ? `COALESCE(p.${prodStock}, 0) AS stock` : `NULL AS stock`;
 
-  // pivot services (opcional)
   let pivot = null;
   try {
     const spTbl = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='service_products' LIMIT 1`).get();
@@ -740,7 +707,7 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
   }
 
     if (!normRoles.length) {
-    where.push(`1 = 0`); // si no tiene rol, no ve nada
+    where.push(`1 = 0`);
   } else {
     const rolePlaceholders = normRoles.map(() => `?`).join(",");
     where.push(`
@@ -753,7 +720,6 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
     `);
     params.push(...normRoles);
   }
-
 
   const whereSQL = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
@@ -800,13 +766,9 @@ export function productsMeta() {
   return { table: products, hasStock };
 }
 
-/* ===================== triggers no-op ===================== */
-// Si index.js llama a ensureStockSyncTriggers(), no fallará.
 export function ensureStockSyncTriggers() {
-  // intencionalmente vacío: no usamos tabla Stock ni UPSERTs
 }
 
-/* ===================== pedidos / servicios ===================== */
 function ensureOrdersSchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS Pedidos (
@@ -891,14 +853,11 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
     throw new Error("Datos de pedido inválidos");
   }
 
-  // Determinar el rol efectivo del pedido
   let chosenRole = normalizeRoleName(asRole);
   if (!chosenRole || !userHasRole(empleadoId, chosenRole)) {
-    // Si no enviaron asRole o no corresponde al usuario, caemos al rol por defecto
     chosenRole = normalizeRoleName(getRoleNameForEmployee(empleadoId)) || "administrativo";
   }
 
-  // Si es administrativo, no debe haber servicio asociado
   const servicioIdForInsert = (chosenRole === "administrativo") ? null : (servicioId || null);
 
   const tx = db.transaction(() => {
@@ -949,7 +908,6 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
         const available = Number(row.stock ?? 0);
 
         if (available >= cantidad) {
-          // Caso normal: alcanza stock actual → descontamos
           const upd = db.prepare(`
             UPDATE ${products}
             SET ${prodStock} = ${prodStock} - ?
@@ -967,11 +925,9 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
             );
           }
         } else {
-          // Stock insuficiente: probamos con ingreso futuro (preventa)
           const { incoming } = getFutureIncomingForProduct(pid);
 
           if (available <= 0 && incoming >= cantidad) {
-            // ✅ Aceptamos como preventa: no descontamos stock actual
           } else {
             throw new Error(
               available <= 0
@@ -981,7 +937,6 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
           }
         }
       }
-
       const subtotal = precio * cantidad;
       total += subtotal;
       insItem.run(pedidoId, pid, row.name, precio, cantidad, subtotal, row.code || "");
@@ -1015,7 +970,6 @@ export function getFullOrder(pedidoId) {
   return { ...ped, items, user, servicio };
 }
 
-/* ===================== emails ===================== */
 export function getServiceEmails(serviceId) {
   if (!serviceId) return [];
   try {
@@ -1047,7 +1001,6 @@ export function logEmail({ entityType, entityId, to, subject, status, providerId
   }
 }
 
-/* ===================== asignación servicios ===================== */
 export function ensureSupervisorPivot() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS supervisor_services (
@@ -1181,7 +1134,6 @@ export function ensureServiceProductsPivot() {
     `).get();
 
     if (!exists) {
-      // Si no existe, la creamos con el layout por defecto (ServicioID/ProductoID)
       db.exec(`
         CREATE TABLE service_products (
           ServicioID  TEXT NOT NULL,
@@ -1194,7 +1146,6 @@ export function ensureServiceProductsPivot() {
       return;
     }
 
-    // Si ya existe, detectamos columnas reales y creamos índices con esos nombres
     const det = detectSPCols();
     if (det) {
       db.exec(`CREATE INDEX IF NOT EXISTS idx_sp_serv ON service_products(${det.srv});`);
@@ -1207,7 +1158,6 @@ export function ensureServiceProductsPivot() {
   }
 }
 
-/** Devuelve sólo los IDs de producto asignados a un servicio */
 export function listProductIdsForService(servicioId) {
   ensureServiceProductsPivot();
   const rows = db.prepare(`
@@ -1219,7 +1169,6 @@ export function listProductIdsForService(servicioId) {
   return rows.map(r => String(r.id));
 }
 
-/** Reemplaza TODAS las asignaciones de un servicio por la lista dada */
 export function replaceServiceProducts(servicioId, productIds = []) {
   ensureServiceProductsPivot();
   const tx = db.transaction(() => {
@@ -1253,11 +1202,9 @@ function detectSPCols() {
   if (cols.includes("service_id") && cols.includes("product_id")) {
     return { srv: "service_id",  prod: "product_id" };
   }
-  // Si no reconoce el layout, devolvemos null para no romper el server.
   return null;
 }
 
-/* ===================== presupuestos ===================== */
 export const DEFAULT_SERVICE_PCT = 5;
 
 function ensureBudgetPctColumn() {
@@ -1339,7 +1286,6 @@ export function listServiceBudgets() {
   }
 }
 
-/* ===================== helpers UI ===================== */
 export function getEmployeeDisplayName(userId) {
   try {
     const row = db.prepare(`
