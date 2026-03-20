@@ -15,10 +15,19 @@ function niceNumber(n) { return new Intl.NumberFormat("es-AR").format(Number(n |
 function niceCurrency(n) {
   return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", minimumFractionDigits: 2 }).format(Number(n || 0));
 }
+// Parsea "YYYY-MM-DD" descomponiendo manualmente año/mes/día
+// Evita CUALQUIER problema de timezone — new Date(y, m, d) siempre es hora local
+function parseLocalDate(d) {
+  if (!d) return new Date(NaN);
+  const s = String(d).slice(0, 10); // asegurar "YYYY-MM-DD"
+  const [y, m, day] = s.split("-").map(Number);
+  if (!y || !m || !day) return new Date(NaN);
+  return new Date(y, m - 1, day); // new Date(año, mes-1, día) = siempre local, nunca UTC
+}
+
 function niceDate(d) {
   if (!d) return "";
-  const dt = new Date(d);
-  return Number.isNaN(dt.getTime()) ? String(d).slice(0, 10) : dt.toISOString().slice(0, 10);
+  return String(d).slice(0, 10); // devolver el string directamente, sin pasar por Date
 }
 
 /* ================================================================
@@ -73,7 +82,7 @@ function BarChartByDay({ data, valueKey = "pedidos" }) {
         const pct = maxVal > 0 ? (v / maxVal) * 100 : 0;
         const h = Math.max(6, pct);
         const label = (d.day && String(d.day).slice(8, 10)) || String(d.day || "");
-        const isWeekend = (() => { if (!d.day) return false; const dow = new Date(d.day).getDay(); return dow === 0 || dow === 6; })();
+        const isWeekend = (() => { if (!d.day) return false; const dow = parseLocalDate(d.day).getDay(); return dow === 0 || dow === 6; })();
         const isAboveAvg = v > avg * 1.3;
         return (
           <div key={i} className="rp-daychart-col">
@@ -269,7 +278,7 @@ function WeekdayHeatmap({ data }) {
   const countDow = [0,0,0,0,0,0,0];
   data.forEach(d => {
     if (!d.day) return;
-    const dow = new Date(d.day).getDay();
+    const dow = parseLocalDate(d.day).getDay();
     byDow[dow] += Number(d.pedidos || 0);
     countDow[dow]++;
   });
@@ -856,7 +865,7 @@ export default function Reports() {
     const cntDow = [0,0,0,0,0,0,0];
     byDay.forEach(d => {
       if (!d.day) return;
-      const dow = new Date(d.day).getDay();
+      const dow = parseLocalDate(d.day).getDay();
       byDow[dow] += Number(d.pedidos || 0);
       cntDow[dow]++;
     });
@@ -1373,7 +1382,7 @@ export default function Reports() {
                       <tbody>
                         {byDay.length === 0 && <tr><td colSpan={4} className="empty">Sin datos.</td></tr>}
                         {byDay.map(d => {
-                          const dt = new Date(d.day);
+                          const dt = parseLocalDate(d.day);
                           const dias = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
                           const dow = !Number.isNaN(dt.getTime()) ? dias[dt.getDay()] : "";
                           const isWe = dow === "Dom" || dow === "Sáb";
@@ -1528,7 +1537,7 @@ export default function Reports() {
                       <tbody>
                         {byDay.length === 0 && <tr><td colSpan={4} className="empty">Sin datos.</td></tr>}
                         {byDay.map(d => {
-                          const dt = new Date(d.day);
+                          const dt = parseLocalDate(d.day);
                           const dias = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
                           const dow = !Number.isNaN(dt.getTime()) ? dias[dt.getDay()] : "";
                           const isWe = dow === "Dom" || dow === "Sáb";
