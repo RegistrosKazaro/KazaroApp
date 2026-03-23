@@ -232,9 +232,128 @@ router.post("/create-test-users", async (req, res) => {
       INSERT INTO Roles_Empleados (EmpleadoID, RolID)
       VALUES (?, ?)
     `).run(55, 2);
+     // === Usuario 3: Franco Echenique ===
+    const hashFranco = await argon2.hash("FrancoE", { type: argon2.argon2id });
 
+    db.prepare(`
+      INSERT INTO Empleados 
+      (EmpleadosID, Nombre, Apellido, Email, password_hash, is_active, username, password_plain)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      56,
+      "Franco",
+      "Echenique",
+      "franco.echenique@kazaro.com.ar",
+      hashFranco,
+      1,
+      "FrancoE",
+      "FrancoE"
+    );
+
+    // 👉 ASIGNAR ROL (2 = administrativo)
+    db.prepare(`
+      INSERT INTO Roles_Empleados (EmpleadoID, RolID)
+      VALUES (?, ?)
+    `).run(56, 2);
+
+     // === Usuario 3: Federico de las heras ===
+    const hashFederico = await argon2.hash("FedericoD", { type: argon2.argon2id });
+
+    db.prepare(`
+      INSERT INTO Empleados 
+      (EmpleadosID, Nombre, Apellido, Email, password_hash, is_active, username, password_plain)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      57,
+      "Federico",
+      "D",
+      "federico.delasheras@kazaro.com.ar",
+      hashFederico,
+      1,
+      "FedericoD",
+      "FedericoD"
+    );
+
+    // 👉 ASIGNAR ROL (2 = administrativo)
+    db.prepare(`
+      INSERT INTO Roles_Empleados (EmpleadoID, RolID)
+      VALUES (?, ?)
+    `).run(57, 2);
+
+     // === Usuario 4: Federico de las heras ===
+    const hashNicolas = await argon2.hash("NicolasBar", { type: argon2.argon2id });
+
+    db.prepare(`
+      INSERT INTO Empleados 
+      (EmpleadosID, Nombre, Apellido, Email, password_hash, is_active, username, password_plain)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      58,
+      "Nicolas",
+      "Barcena",
+      "nicolas.barcena@kazaro.com.ar",
+      hashNicolas,
+      1,
+      "NicolasBar",
+      "NicolasBar"
+    );
+
+    // 👉 ASIGNAR ROL (2 = administrativo)
+    db.prepare(`
+      INSERT INTO Roles_Empleados (EmpleadoID, RolID)
+      VALUES (?, ?)
+    `).run(58, 2);
+
+    const hashAgustina = await argon2.hash("AgustinaL", { type: argon2.argon2id });
+
+    db.prepare(`
+      INSERT INTO Empleados 
+      (EmpleadosID, Nombre, Apellido, Email, password_hash, is_active, username, password_plain)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      59,
+      "Agustina",
+      "Leibovich",
+      "agustina.leibovich@kazaro.com.ar",
+      hashAgustina,
+      1,
+      "AgustinaL",
+      "AgustinaL"
+    );
+
+    // 👉 ASIGNAR ROL (2 = administrativo)
+    db.prepare(`
+      INSERT INTO Roles_Empleados (EmpleadoID, RolID)
+      VALUES (?, ?)
+    `).run(59, 2);
+
+const hashAgustin = await argon2.hash("AgustinB", { type: argon2.argon2id });
+
+    db.prepare(`
+      INSERT INTO Empleados 
+      (EmpleadosID, Nombre, Apellido, Email, password_hash, is_active, username, password_plain)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      59,
+      "Agustin",
+      "Brusco",
+      "agustin.brusco@kazaro.com.a",
+      hashAgustin,
+      1,
+      "AgustinB",
+      "AgustinB"
+    );
+
+    // 👉 ASIGNAR ROL (2 = administrativo)
+    db.prepare(`
+      INSERT INTO Roles_Empleados (EmpleadoID, RolID)
+      VALUES (?, ?)
+    `).run(60, 2);
 
     return res.json({ ok: true, message: "Usuarios creados con rol administrativo" });
+   
+
+    
 
   } catch (e) {
     console.error("[create-test-users]", e);
