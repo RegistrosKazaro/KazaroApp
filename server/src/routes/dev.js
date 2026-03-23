@@ -233,7 +233,7 @@ router.post("/create-test-users", async (req, res) => {
       VALUES (?, ?)
     `).run(55, 2);
      // === Usuario 3: Franco Echenique ===
-    const hashFranco = await argon2.hash("FrancoE", { type: argon2.argon2id });
+    const hashFranco = await argon2.hash("franco.echenique", { type: argon2.argon2id });
 
     db.prepare(`
       INSERT INTO Empleados 
@@ -241,13 +241,13 @@ router.post("/create-test-users", async (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       56,
-      "Franco",
-      "Echenique",
-      "franco.echenique@kazaro.com.ar",
-      hashFranco,
-      1,
-      "FrancoE",
-      "FrancoE"
+"Franco",
+"Echenique",
+"franco.echenique@kazaro.com.ar",
+hashFranco,
+1,
+"franco.echenique",
+"FrancoE"
     );
 
     // 👉 ASIGNAR ROL (2 = administrativo)
@@ -257,7 +257,7 @@ router.post("/create-test-users", async (req, res) => {
     `).run(56, 2);
 
      // === Usuario 3: Federico de las heras ===
-    const hashFederico = await argon2.hash("FedericoD", { type: argon2.argon2id });
+    const hashFederico = await argon2.hash("federico.d", { type: argon2.argon2id });
 
     db.prepare(`
       INSERT INTO Empleados 
@@ -281,7 +281,7 @@ router.post("/create-test-users", async (req, res) => {
     `).run(57, 2);
 
      // === Usuario 4: Federico de las heras ===
-    const hashNicolas = await argon2.hash("NicolasBar", { type: argon2.argon2id });
+    const hashNicolas = await argon2.hash("nicolas.barcena", { type: argon2.argon2id });
 
     db.prepare(`
       INSERT INTO Empleados 
@@ -304,7 +304,7 @@ router.post("/create-test-users", async (req, res) => {
       VALUES (?, ?)
     `).run(58, 2);
 
-    const hashAgustina = await argon2.hash("AgustinaL", { type: argon2.argon2id });
+    const hashAgustina = await argon2.hash("agustina.leibovich", { type: argon2.argon2id });
 
     db.prepare(`
       INSERT INTO Empleados 
@@ -312,13 +312,13 @@ router.post("/create-test-users", async (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       59,
-      "Agustina",
-      "Leibovich",
-      "agustina.leibovich@kazaro.com.ar",
-      hashAgustina,
-      1,
-      "AgustinaL",
-      "AgustinaL"
+"Agustina",
+"Leibovich",
+"agustina.leibovich@kazaro.com.ar",
+hashAgustina,
+1,
+"AgustinaL",
+"AgustinaL"
     );
 
     // 👉 ASIGNAR ROL (2 = administrativo)
@@ -327,21 +327,21 @@ router.post("/create-test-users", async (req, res) => {
       VALUES (?, ?)
     `).run(59, 2);
 
-const hashAgustin = await argon2.hash("AgustinB", { type: argon2.argon2id });
+const hashAgustin = await argon2.hash("agustin.brusco", { type: argon2.argon2id });
 
     db.prepare(`
       INSERT INTO Empleados 
       (EmpleadosID, Nombre, Apellido, Email, password_hash, is_active, username, password_plain)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      59,
-      "Agustin",
-      "Brusco",
-      "agustin.brusco@kazaro.com.a",
-      hashAgustin,
-      1,
-      "AgustinB",
-      "AgustinB"
+      60,
+"Agustin",
+"Brusco",
+"agustin.brusco@kazaro.com.ar",
+hashAgustin,
+1,
+"AgustinB",
+"AgustinB"
     );
 
     // 👉 ASIGNAR ROL (2 = administrativo)
