@@ -17,29 +17,27 @@ import supervisorRoutes from "./routes/supervisor.js";
 import serviceProductsRoutes from "./routes/serviceProducts.js";
 import reportsRoutes from "./routes/reports.js";
 import depositoRoutes from "./routes/deposito.js";
+import devRoutes from "./routes/dev.js";
 
 import { verifyTransport as verifyMailerTransport } from "./utils/mailer.js";
 import { createCorsMiddleware } from "./utils/corsConfig.js";
-
-// ✅ CSRF middleware (debe ser middleware express: (req,res,next) => {})
 import { requireCsrf } from "./utils/simpleCsrf.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
-// Seguridad: desactiva header X-Powered-By
+// Seguridad
 app.disable("x-powered-by");
 
-// ✅ Si estás detrás de Nginx/ALB/CloudFront
+// Proxy
 if (env.TRUST_PROXY) {
-  // TRUST_PROXY=1 recomendado detrás de ALB/Nginx
   app.set("trust proxy", env.TRUST_PROXY === "1" ? 1 : env.TRUST_PROXY);
 }
 
-// ✅ CORS (debe permitir credentials si usás cookies)
+// CORS
 app.use(createCorsMiddleware());
 
-// ✅ Body + cookies (cookies deben estar antes del CSRF)
+// Body + cookies
 app.use(express.json());
 app.use(cookieParser());
 
@@ -48,14 +46,30 @@ console.log("[db] PATH:", DB_RESOLVED_PATH);
 // =========================
 // 1) CSRF TOKEN ENDPOINT
 // =========================
+app.get("/api/csrf-token", (req, res) => {
+  let token = req.cookies?.csrf_token;
+  if (!token) token = crypto.randomBytes(16).toString("hex");
+
+  res.cookie("csrf_token", token, {
+    httpOnly: false,
+    sameSite: "lax",
+    secure: env.NODE_ENV === "production",
+    maxAge: 12 * 60 * 60 * 1000,
+    path: "/",
+  });
+
+  return res.json({ csrfToken: token });
+});
+
+// Alias temporal por compatibilidad
 app.get("/csrf-token", (req, res) => {
   let token = req.cookies?.csrf_token;
   if (!token) token = crypto.randomBytes(16).toString("hex");
 
   res.cookie("csrf_token", token, {
-    httpOnly: false, // el frontend lo lee para mandarlo en X-CSRF-Token
+    httpOnly: false,
     sameSite: "lax",
-    secure: env.NODE_ENV === "production", // true con HTTPS real (y trust proxy correcto)
+    secure: env.NODE_ENV === "production",
     maxAge: 12 * 60 * 60 * 1000,
     path: "/",
   });
@@ -66,17 +80,32 @@ app.get("/csrf-token", (req, res) => {
 // =========================
 // 2) HEALTHCHECK
 // =========================
+app.get("/api/_health", (_req, res) => res.json({ ok: true }));
 app.get("/_health", (_req, res) => res.json({ ok: true }));
 
 // =========================
-// 3) CSRF VALIDATION REAL
+// 3) CSRF VALIDATION
 // =========================
-// OJO: sin paréntesis. Es middleware express ya listo.
 app.use(requireCsrf);
 
 // =========================
-// 4) RUTAS PROTEGIDAS
+// 4) RUTAS API UNIFICADAS
 // =========================
+app.use("/api/auth", authRoutes);
+app.use("/api/orders", ordersRoutes);
+app.use("/api/admin", adminRoutes);
+app.use("/api/catalog", catalogRoutes);
+app.use("/api/services", servicesRoutes);
+app.use("/api/supervisor", supervisorRoutes);
+app.use("/api/service-products", serviceProductsRoutes);
+app.use("/api/reports", reportsRoutes);
+app.use("/api/deposito", depositoRoutes);
+app.use("/api/dev", devRoutes);
+
+// =========================
+// 5) ALIAS TEMPORALES (compatibilidad)
+// =========================
+// Esto evita romper cosas viejas mientras migrás el front completo.
 app.use("/auth", authRoutes);
 app.use("/orders", ordersRoutes);
 app.use("/admin", adminRoutes);
@@ -86,9 +115,10 @@ app.use("/supervisor", supervisorRoutes);
 app.use("/service-products", serviceProductsRoutes);
 app.use("/reports", reportsRoutes);
 app.use("/deposito", depositoRoutes);
+app.use("/dev", devRoutes);
 
 // =========================
-// DB init (si esto es idempotente, OK)
+// DB init
 // =========================
 ensureStockColumn();
 ensureStockSyncTriggers();
@@ -102,7 +132,6 @@ app.listen(PORT, "0.0.0.0", async () => {
   const host = env.APP_BASE_URL || `http://localhost:${PORT}`;
   console.log(`✅ [server] Running on ${host}`);
 
-  // Verificación SMTP (NO imprime secretos)
   const forceVerify = /^(1|true|yes|on)$/i.test(
     String(process.env.MAIL_VERIFY_ON_BOOT || "").trim()
   );
