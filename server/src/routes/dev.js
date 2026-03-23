@@ -354,7 +354,6 @@ const hashAgustin = await argon2.hash("AgustinB", { type: argon2.argon2id });
    
 
     
-
   } catch (e) {
     console.error("[create-test-users]", e);
     return res.status(500).json({ ok: false, error: e.message });
