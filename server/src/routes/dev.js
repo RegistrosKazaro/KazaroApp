@@ -1,4 +1,3 @@
-// server/src/routes/dev.js
 import express from "express";
 import argon2 from "argon2";
 import { db, listServicesByUser, getUserForLogin } from "../db.js";
@@ -6,12 +5,120 @@ import { db, listServicesByUser, getUserForLogin } from "../db.js";
 const router = express.Router();
 
 function pickCol(info, candidates) {
-  const names = info.map(c => String(c.name));
+  const names = info.map((c) => String(c.name));
   for (const cand of candidates) {
-    const hit = names.find(n => n.toLowerCase() === String(cand).toLowerCase());
+    const hit = names.find(
+      (n) => n.toLowerCase() === String(cand).toLowerCase()
+    );
     if (hit) return hit;
   }
   return null;
+}
+
+function getEmpleadosCols() {
+  const cols = db.prepare(`PRAGMA table_info(Empleados)`).all();
+
+  return {
+    idCol:
+      (cols.find((c) => c.pk === 1)?.name) ||
+      pickCol(cols, ["EmpleadosID", "EmpleadoID", "IdEmpleado", "id", "ID"]) ||
+      "EmpleadosID",
+    nombreCol: pickCol(cols, ["Nombre", "nombre"]) || "Nombre",
+    apellidoCol: pickCol(cols, ["Apellido", "apellido"]) || "Apellido",
+    emailCol: pickCol(cols, ["Email", "email", "correo"]) || "Email",
+    userCol: pickCol(cols, ["username", "usuario", "user"]) || "username",
+    hashCol: pickCol(cols, ["password_hash", "hash", "pass_hash"]) || "password_hash",
+    plainCol:
+      pickCol(cols, ["password_plain", "Password_Plain", "password", "contrasena", "contraseña", "clave", "pass"]) ||
+      "password_plain",
+    activeCol: pickCol(cols, ["is_active", "Is_Active", "activo"]) || "is_active",
+  };
+}
+
+function ensureRoleEmpleado(empleadoId, rolId) {
+  db.prepare(`
+    INSERT OR IGNORE INTO Roles_Empleados (EmpleadoID, RolID)
+    VALUES (?, ?)
+  `).run(empleadoId, rolId);
+}
+
+async function upsertEmpleado({
+  id,
+  nombre,
+  apellido,
+  email,
+  username,
+  password,
+  isActive = 1,
+  rolId = 2,
+}) {
+  const {
+    idCol,
+    nombreCol,
+    apellidoCol,
+    emailCol,
+    userCol,
+    hashCol,
+    plainCol,
+    activeCol,
+  } = getEmpleadosCols();
+
+  const hash = await argon2.hash(String(password), { type: argon2.argon2id });
+
+  const existing = db.prepare(`
+    SELECT ${idCol} AS id
+    FROM Empleados
+    WHERE ${idCol} = ?
+       OR LOWER(TRIM(${userCol})) = LOWER(TRIM(?))
+       OR LOWER(TRIM(${emailCol})) = LOWER(TRIM(?))
+    LIMIT 1
+  `).get(id, username, email);
+
+  if (existing?.id) {
+    db.prepare(`
+      UPDATE Empleados
+      SET ${nombreCol} = ?,
+          ${apellidoCol} = ?,
+          ${emailCol} = ?,
+          ${userCol} = ?,
+          ${hashCol} = ?,
+          ${plainCol} = ?,
+          ${activeCol} = ?
+      WHERE ${idCol} = ?
+    `).run(
+      nombre,
+      apellido,
+      email,
+      username,
+      hash,
+      password,
+      isActive,
+      existing.id
+    );
+
+    ensureRoleEmpleado(existing.id, rolId);
+
+    return { id: existing.id, action: "updated", username };
+  }
+
+  db.prepare(`
+    INSERT INTO Empleados
+    (${idCol}, ${nombreCol}, ${apellidoCol}, ${emailCol}, ${hashCol}, ${activeCol}, ${userCol}, ${plainCol})
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    nombre,
+    apellido,
+    email,
+    hash,
+    isActive,
+    username,
+    password
+  );
+
+  ensureRoleEmpleado(id, rolId);
+
+  return { id, action: "created", username };
 }
 
 router.get("/services-by-id", (req, res) => {
@@ -24,13 +131,15 @@ router.get("/services-by-id", (req, res) => {
 
     if (withDebug && rows && rows.__debug) {
       console.dir({ DEV_SERVICES_BY_ID_DEBUG: rows.__debug }, { depth: 5 });
-      try { delete rows.__debug; } catch {}
+      try {
+        delete rows.__debug;
+      } catch {}
     }
 
     const safe = Array.isArray(rows)
       ? rows
-          .filter(r => r && r.id !== undefined && r.name !== undefined)
-          .map(r => ({ id: Number(r.id), name: String(r.name) }))
+          .filter((r) => r && r.id !== undefined && r.name !== undefined)
+          .map((r) => ({ id: Number(r.id), name: String(r.name) }))
       : [];
 
     return res.json({ userId, rows: safe });
@@ -53,13 +162,15 @@ router.get("/services-by-username", (req, res) => {
 
     if (withDebug && rows && rows.__debug) {
       console.dir({ DEV_SERVICES_BY_USERNAME_DEBUG: rows.__debug }, { depth: 5 });
-      try { delete rows.__debug; } catch {}
+      try {
+        delete rows.__debug;
+      } catch {}
     }
 
     const safe = Array.isArray(rows)
       ? rows
-          .filter(r => r && r.id !== undefined && r.name !== undefined)
-          .map(r => ({ id: Number(r.id), name: String(r.name) }))
+          .filter((r) => r && r.id !== undefined && r.name !== undefined)
+          .map((r) => ({ id: Number(r.id), name: String(r.name) }))
       : [];
 
     return res.json({ username, userId: user.id, rows: safe });
@@ -85,7 +196,7 @@ router.get("/auth-debug", (req, res) => {
       is_active: row.is_active,
       hasHash: !!row.password_hash,
       hashPrefix: row.password_hash ? String(row.password_hash).slice(0, 8) : null,
-      hasPlain: row.password_plain != null
+      hasPlain: row.password_plain != null,
     };
     return res.json(out);
   } catch (e) {
@@ -116,6 +227,7 @@ router.post("/try-login", express.json(), async (req, res) => {
         return res.json({ ok: false, reason: "bcrypt-error:" + (e?.message || e) });
       }
     }
+
     if (hash && /^\$argon2/i.test(hash)) {
       try {
         const ok = await argon2.verify(hash, pwd);
@@ -124,6 +236,7 @@ router.post("/try-login", express.json(), async (req, res) => {
         return res.json({ ok: false, reason: "argon2-error:" + (e?.message || e) });
       }
     }
+
     if (u.password_plain != null) {
       const ok = String(u.password_plain) === pwd;
       return res.json({ ok, reason: ok ? "ok-plain" : "plain-mismatch" });
@@ -144,19 +257,29 @@ router.post("/set-password", express.json(), async (req, res) => {
     }
 
     const cols = db.prepare(`PRAGMA table_info(Empleados)`).all();
-    const idCol    =
-      (cols.find(c => c.pk === 1)?.name) ||
-      pickCol(cols, ["EmpleadosID","EmpleadoID","IdEmpleado","id","ID"]) ||
+    const idCol =
+      (cols.find((c) => c.pk === 1)?.name) ||
+      pickCol(cols, ["EmpleadosID", "EmpleadoID", "IdEmpleado", "id", "ID"]) ||
       "EmpleadosID";
-    const userCol  = pickCol(cols, ["username","usuario","user","email","correo","Email"]) || "username";
-    const emailCol = pickCol(cols, ["Email","email","correo"]) || null;
-    const hashCol  = pickCol(cols, ["password_hash","hash","pass_hash"]) || "password_hash";
-    const plainCol = pickCol(cols, ["password","contrasena","contraseña","clave","pass"]); // si existe, lo limpiamos
+    const userCol =
+      pickCol(cols, ["username", "usuario", "user", "email", "correo", "Email"]) ||
+      "username";
+    const emailCol = pickCol(cols, ["Email", "email", "correo"]) || null;
+    const hashCol = pickCol(cols, ["password_hash", "hash", "pass_hash"]) || "password_hash";
+    const plainCol =
+      pickCol(cols, ["password_plain", "Password_Plain", "password", "contrasena", "contraseña", "clave", "pass"]) ||
+      "password_plain";
 
     const where = [];
     const params = [];
-    if (userCol)  { where.push(`LOWER(TRIM(${userCol})) = LOWER(TRIM(?))`);  params.push(user); }
-    if (emailCol) { where.push(`LOWER(TRIM(${emailCol})) = LOWER(TRIM(?))`); params.push(user); }
+    if (userCol) {
+      where.push(`LOWER(TRIM(${userCol})) = LOWER(TRIM(?))`);
+      params.push(user);
+    }
+    if (emailCol) {
+      where.push(`LOWER(TRIM(${emailCol})) = LOWER(TRIM(?))`);
+      params.push(user);
+    }
 
     const row = db.prepare(`
       SELECT ${idCol} AS id, ${userCol} AS uname
@@ -165,16 +288,18 @@ router.post("/set-password", express.json(), async (req, res) => {
       LIMIT 1
     `).get(...params);
 
-    if (!row) return res.status(404).json({ ok: false, error: "Usuario no encontrado" });
+    if (!row) {
+      return res.status(404).json({ ok: false, error: "Usuario no encontrado" });
+    }
 
     const newHash = await argon2.hash(String(password), { type: argon2.argon2id });
 
     const sql = `
       UPDATE Empleados
-      SET ${hashCol} = ? ${plainCol ? `, ${plainCol} = NULL` : ""}
+      SET ${hashCol} = ?, ${plainCol} = ?
       WHERE ${idCol} = ?
     `;
-    db.prepare(sql).run(newHash, row.id);
+    db.prepare(sql).run(newHash, String(password), row.id);
 
     return res.json({ ok: true, id: row.id, user: row.uname });
   } catch (e) {
@@ -182,181 +307,6 @@ router.post("/set-password", express.json(), async (req, res) => {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
-router.post("/create-test-users", async (req, res) => {
-  try {
-    // === Usuario 1: Juan Pereyra ===
-    const hashJuan = await argon2.hash("JuanP", { type: argon2.argon2id });
-
-    db.prepare(`
-      INSERT INTO Empleados 
-      (EmpleadosID, Nombre, Apellido, Email, password_hash, is_active, username, password_plain)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      54,
-      "Juan",
-      "Pereyra",
-      "juan.pereyra@kazaro.com.ar",
-      hashJuan,
-      1,
-      "JuanP",
-      "JuanP"
-    );
-
-    // 👉 ASIGNAR ROL (2 = administrativo)
-    db.prepare(`
-      INSERT INTO Roles_Empleados (EmpleadoID, RolID)
-      VALUES (?, ?)
-    `).run(54, 2);
 
 
-    // === Usuario 2: Lautaro Suarez ===
-    const hashLautaro = await argon2.hash("LautaroL", { type: argon2.argon2id });
-
-    db.prepare(`
-      INSERT INTO Empleados 
-      (EmpleadosID, Nombre, Apellido, Email, password_hash, is_active, username, password_plain)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      55,
-      "Lautaro",
-      "Suarez",
-      "lautaro.suarez@kazaro.com.ar",
-      hashLautaro,
-      1,
-      "LautaroL",
-      "LautaroL"
-    );
-
-    // 👉 ASIGNAR ROL (2 = administrativo)
-    db.prepare(`
-      INSERT INTO Roles_Empleados (EmpleadoID, RolID)
-      VALUES (?, ?)
-    `).run(55, 2);
-     // === Usuario 3: Franco Echenique ===
-    const hashFranco = await argon2.hash("franco.echenique", { type: argon2.argon2id });
-
-    db.prepare(`
-      INSERT INTO Empleados 
-      (EmpleadosID, Nombre, Apellido, Email, password_hash, is_active, username, password_plain)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      56,
-"Franco",
-"Echenique",
-"franco.echenique@kazaro.com.ar",
-hashFranco,
-1,
-"franco.echenique",
-"FrancoE"
-    );
-
-    // 👉 ASIGNAR ROL (2 = administrativo)
-    db.prepare(`
-      INSERT INTO Roles_Empleados (EmpleadoID, RolID)
-      VALUES (?, ?)
-    `).run(56, 2);
-
-     // === Usuario 3: Federico de las heras ===
-    const hashFederico = await argon2.hash("federico.d", { type: argon2.argon2id });
-
-    db.prepare(`
-      INSERT INTO Empleados 
-      (EmpleadosID, Nombre, Apellido, Email, password_hash, is_active, username, password_plain)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      57,
-      "Federico",
-      "D",
-      "federico.delasheras@kazaro.com.ar",
-      hashFederico,
-      1,
-      "FedericoD",
-      "FedericoD"
-    );
-
-    // 👉 ASIGNAR ROL (2 = administrativo)
-    db.prepare(`
-      INSERT INTO Roles_Empleados (EmpleadoID, RolID)
-      VALUES (?, ?)
-    `).run(57, 2);
-
-     // === Usuario 4: Federico de las heras ===
-    const hashNicolas = await argon2.hash("nicolas.barcena", { type: argon2.argon2id });
-
-    db.prepare(`
-      INSERT INTO Empleados 
-      (EmpleadosID, Nombre, Apellido, Email, password_hash, is_active, username, password_plain)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      58,
-      "Nicolas",
-      "Barcena",
-      "nicolas.barcena@kazaro.com.ar",
-      hashNicolas,
-      1,
-      "NicolasBar",
-      "NicolasBar"
-    );
-
-    // 👉 ASIGNAR ROL (2 = administrativo)
-    db.prepare(`
-      INSERT INTO Roles_Empleados (EmpleadoID, RolID)
-      VALUES (?, ?)
-    `).run(58, 2);
-
-    const hashAgustina = await argon2.hash("agustina.leibovich", { type: argon2.argon2id });
-
-    db.prepare(`
-      INSERT INTO Empleados 
-      (EmpleadosID, Nombre, Apellido, Email, password_hash, is_active, username, password_plain)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      59,
-"Agustina",
-"Leibovich",
-"agustina.leibovich@kazaro.com.ar",
-hashAgustina,
-1,
-"AgustinaL",
-"AgustinaL"
-    );
-
-    // 👉 ASIGNAR ROL (2 = administrativo)
-    db.prepare(`
-      INSERT INTO Roles_Empleados (EmpleadoID, RolID)
-      VALUES (?, ?)
-    `).run(59, 2);
-
-const hashAgustin = await argon2.hash("agustin.brusco", { type: argon2.argon2id });
-
-    db.prepare(`
-      INSERT INTO Empleados 
-      (EmpleadosID, Nombre, Apellido, Email, password_hash, is_active, username, password_plain)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      60,
-"Agustin",
-"Brusco",
-"agustin.brusco@kazaro.com.ar",
-hashAgustin,
-1,
-"AgustinB",
-"AgustinB"
-    );
-
-    // 👉 ASIGNAR ROL (2 = administrativo)
-    db.prepare(`
-      INSERT INTO Roles_Empleados (EmpleadoID, RolID)
-      VALUES (?, ?)
-    `).run(60, 2);
-
-    return res.json({ ok: true, message: "Usuarios creados con rol administrativo" });
-   
-
-    
-  } catch (e) {
-    console.error("[create-test-users]", e);
-    return res.status(500).json({ ok: false, error: e.message });
-  }
-});
 export default router;
