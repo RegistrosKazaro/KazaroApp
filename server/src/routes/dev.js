@@ -182,5 +182,63 @@ router.post("/set-password", express.json(), async (req, res) => {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
+router.post("/create-test-users", async (req, res) => {
+  try {
+    // === Usuario 1: Juan Pereyra ===
+    const hashJuan = await argon2.hash("JuanP", { type: argon2.argon2id });
 
+    db.prepare(`
+      INSERT INTO Empleados 
+      (EmpleadosID, Nombre, Apellido, Email, password_hash, is_active, username, password_plain)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      54,
+      "Juan",
+      "Pereyra",
+      "juan.pereyra@kazaro.com.ar",
+      hashJuan,
+      1,
+      "JuanP",
+      "JuanP"
+    );
+
+    // 👉 ASIGNAR ROL (2 = administrativo)
+    db.prepare(`
+      INSERT INTO Roles_Empleados (EmpleadoID, RolID)
+      VALUES (?, ?)
+    `).run(54, 2);
+
+
+    // === Usuario 2: Lautaro Suarez ===
+    const hashLautaro = await argon2.hash("LautaroL", { type: argon2.argon2id });
+
+    db.prepare(`
+      INSERT INTO Empleados 
+      (EmpleadosID, Nombre, Apellido, Email, password_hash, is_active, username, password_plain)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      55,
+      "Lautaro",
+      "Suarez",
+      "lautaro.suarez@kazaro.com.ar",
+      hashLautaro,
+      1,
+      "LautaroL",
+      "LautaroL"
+    );
+
+    // 👉 ASIGNAR ROL (2 = administrativo)
+    db.prepare(`
+      INSERT INTO Roles_Empleados (EmpleadoID, RolID)
+      VALUES (?, ?)
+    `).run(55, 2);
+
+
+    return res.json({ ok: true, message: "Usuarios creados con rol administrativo" });
+
+  } catch (e) {
+    console.error("[create-test-users]", e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
 export default router;
