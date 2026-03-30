@@ -5,7 +5,7 @@ import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
 import "../styles/admin-panel.css";
 import "../styles/a11y.css";
-
+import EmployeesSection from "./EmployeesSection";
 import MassReassignServicesSection from "./MassReassignServicesSection";
 
 const API_BASE_URL =
@@ -2489,7 +2489,14 @@ export default function AdminPanel() {
         >
           Historial
         </button>
-
+        <button
+          className={`tab-btn ${tab === "employees" ? "is-active" : ""}`}
+          onClick={() => setTab("employees")}
+          role="tab"
+          aria-selected={tab === "employees"}
+        >
+          Empleados
+        </button>
         <div style={{ flex: 1 }} />
       </div>
 
@@ -2502,6 +2509,7 @@ export default function AdminPanel() {
       {tab === "massReassign" && <MassReassignServicesSection />}
       {tab === "orders" && <OrdersSection />}
       {tab === "historial" && <ProductHistorialSection />}
+      {tab === "employees" && <EmployeesSection />}
     </div>
   );
 }

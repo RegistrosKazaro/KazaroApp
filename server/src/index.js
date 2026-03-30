@@ -79,7 +79,7 @@ app.use(requireCsrf);
 // =========================
 app.use("/auth", authRoutes);
 app.use("/orders", ordersRoutes);
-app.use("/admin", adminRoutes);
+app.use("/api/admin", adminRoutes);
 app.use("/catalog", catalogRoutes);
 app.use("/services", servicesRoutes);
 app.use("/supervisor", supervisorRoutes);

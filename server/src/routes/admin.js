@@ -2,7 +2,7 @@
 import { Router } from "express";
 import XLSX from "xlsx";
 import multer from "multer";
-
+import argon2 from "argon2";
 import {
   db,
   discoverCatalogSchema,
@@ -42,6 +42,7 @@ function prodSchemaOrThrow() {
 function qid(x) {
   return `"${String(x).replace(/"/g, '""')}"`;
 }
+
 
 /* =========================
    Productos (catálogo admin)
@@ -2048,6 +2049,300 @@ router.get("/products/history/summary", mustBeAdmin, (req, res) => {
   } catch (e) {
     console.error("[admin] GET /products/history/summary error:", e?.message || e);
     return res.status(500).json({ error: "No se pudo cargar el resumen" });
+  }
+});
+
+router.put("/employees/:id", mustBeAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) {
+      return res.status(400).json({ ok: false, error: "ID inválido" });
+    }
+
+    const {
+      nombre,
+      apellido,
+      email,
+      username,
+      password,
+      rolIds,
+      isActive,
+    } = req.body ?? {};
+
+    if (!nombre?.trim() || !apellido?.trim()) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "Nombre y Apellido son obligatorios" });
+    }
+
+    if (!username?.trim()) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "El username es obligatorio" });
+    }
+
+    if (!email?.trim()) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "El email es obligatorio" });
+    }
+
+    const existing = db.prepare(`
+      SELECT EmpleadosID
+      FROM Empleados
+      WHERE (
+        LOWER(TRIM(username)) = LOWER(TRIM(?))
+        OR LOWER(TRIM(Email)) = LOWER(TRIM(?))
+      )
+      AND EmpleadosID <> ?
+      LIMIT 1
+    `).get(username.trim(), email.trim(), id);
+
+    if (existing) {
+      return res.status(409).json({
+        ok: false,
+        error: "Ya existe otro empleado con ese username o email",
+      });
+    }
+
+    const active =
+      isActive === false || isActive === "false" || isActive === 0 ? 0 : 1;
+
+    if (password?.trim()) {
+      const hash = await argon2.hash(password, { type: argon2.argon2id });
+
+      db.prepare(`
+        UPDATE Empleados
+        SET Nombre = ?,
+            Apellido = ?,
+            Email = ?,
+            username = ?,
+            password_hash = ?,
+            password_plain = NULL,
+            is_active = ?
+        WHERE EmpleadosID = ?
+      `).run(
+        nombre.trim(),
+        apellido.trim(),
+        email.trim().toLowerCase(),
+        username.trim().toLowerCase(),
+        hash,
+        active,
+        id
+      );
+    } else {
+      db.prepare(`
+        UPDATE Empleados
+        SET Nombre = ?,
+            Apellido = ?,
+            Email = ?,
+            username = ?,
+            is_active = ?
+        WHERE EmpleadosID = ?
+      `).run(
+        nombre.trim(),
+        apellido.trim(),
+        email.trim().toLowerCase(),
+        username.trim().toLowerCase(),
+        active,
+        id
+      );
+    }
+
+    db.prepare(`DELETE FROM Roles_Empleados WHERE EmpleadoID = ?`).run(id);
+
+    if (Array.isArray(rolIds) && rolIds.length > 0) {
+      const insRol = db.prepare(`
+        INSERT OR IGNORE INTO Roles_Empleados (EmpleadoID, RolID)
+        VALUES (?, ?)
+      `);
+
+      for (const rolId of rolIds) {
+        if (Number.isFinite(Number(rolId))) {
+          insRol.run(id, Number(rolId));
+        }
+      }
+    }
+
+    return res.json({ ok: true, id });
+  } catch (e) {
+    console.error("PUT /admin/employees/:id error:", e?.message || e);
+    return res
+      .status(500)
+      .json({ ok: false, error: "No se pudo actualizar el empleado" });
+  }
+});
+
+router.get("/employees", mustBeAdmin, (_req, res) => {
+  try {
+    const rows = db.prepare(`
+      SELECT
+        e.EmpleadosID   AS id,
+        TRIM(e.Nombre)  AS nombre,
+        TRIM(e.Apellido) AS apellido,
+        TRIM(e.Email)   AS email,
+        TRIM(e.username) AS username,
+        e.is_active,
+        e.password_hash,
+        e.password_plain,
+        GROUP_CONCAT(re.RolID) AS rolIds,
+        GROUP_CONCAT(r.Nombre) AS rolNombres
+      FROM Empleados e
+      LEFT JOIN Roles_Empleados re ON re.EmpleadoID = e.EmpleadosID
+      LEFT JOIN Roles r ON r.RolID = re.RolID
+      GROUP BY e.EmpleadosID
+      ORDER BY e.Apellido COLLATE NOCASE, e.Nombre COLLATE NOCASE
+    `).all();
+
+    const result = rows.map((r) => ({
+      id: r.id,
+      nombre: r.nombre ?? "",
+      apellido: r.apellido ?? "",
+      email: r.email ?? "",
+      username: r.username ?? "",
+      isActive: r.is_active !== 0 && r.is_active !== "0",
+      tieneHash: !!r.password_hash,
+      tienePlain: !!r.password_plain,
+      passwordPendiente: !r.password_hash && !!r.password_plain,
+      roles: r.rolIds
+        ? r.rolIds.split(",").map((id, i) => ({
+            id: Number(id),
+            nombre: r.rolNombres?.split(",")[i] ?? "",
+          }))
+        : [],
+    }));
+
+    return res.json({ ok: true, employees: result });
+  } catch (e) {
+    console.error("GET /admin/employees error:", e?.message || e);
+    return res.status(500).json({ ok: false, error: "Error al listar empleados" });
+  }
+});
+
+router.get("/roles", mustBeAdmin, (_req, res) => {
+  try {
+    const roles = db.prepare("SELECT RolID AS id, Nombre AS nombre FROM Roles ORDER BY RolID").all();
+    return res.json({ ok: true, roles });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: "Error al listar roles" });
+  }
+});
+
+router.post("/employees", mustBeAdmin, async (req, res) => {
+  try {
+    const { nombre, apellido, email, username, password, rolIds, isActive } = req.body ?? {};
+
+    if (!nombre?.trim() || !apellido?.trim())
+      return res.status(400).json({ ok: false, error: "Nombre y Apellido son obligatorios" });
+    if (!username?.trim())
+      return res.status(400).json({ ok: false, error: "El username es obligatorio" });
+    if (!email?.trim())
+      return res.status(400).json({ ok: false, error: "El email es obligatorio" });
+    if (!password?.trim())
+      return res.status(400).json({ ok: false, error: "La contraseña es obligatoria" });
+
+    const existing = db.prepare(
+      "SELECT EmpleadosID FROM Empleados WHERE LOWER(TRIM(username)) = LOWER(TRIM(?))"
+    ).get(username.trim());
+    if (existing)
+      return res.status(409).json({ ok: false, error: "Ya existe un empleado con ese username" });
+
+    const hash = await argon2.hash(password, { type: argon2.argon2id });
+    const active = isActive === false || isActive === "false" || isActive === 0 ? 0 : 1;
+
+    const result = db.prepare(`
+      INSERT INTO Empleados (Nombre, Apellido, Email, username, password_hash, password_plain, is_active)
+      VALUES (?, ?, ?, ?, ?, NULL, ?)
+    `).run(nombre.trim(), apellido.trim(), email.trim().toLowerCase(), username.trim().toLowerCase(), hash, active);
+
+    const newId = result.lastInsertRowid;
+
+    if (Array.isArray(rolIds) && rolIds.length > 0) {
+      const insRol = db.prepare("INSERT OR IGNORE INTO Roles_Empleados (EmpleadoID, RolID) VALUES (?, ?)");
+      for (const rolId of rolIds) {
+        const n = Number(rolId);
+        if (Number.isFinite(n) && n > 0) insRol.run(newId, n);
+      }
+    }
+
+    return res.status(201).json({ ok: true, id: Number(newId) });
+  } catch (e) {
+    console.error("POST /admin/employees error:", e?.message || e);
+    return res.status(500).json({ ok: false, error: "Error al crear empleado" });
+  }
+});
+
+router.delete("/employees/:id", mustBeAdmin, (req, res) => {
+  try {
+    const empId = Number(req.params.id);
+    if (!Number.isFinite(empId) || empId <= 0)
+      return res.status(400).json({ ok: false, error: "ID inválido" });
+    const r = db.prepare("UPDATE Empleados SET is_active = 0 WHERE EmpleadosID = ?").run(empId);
+    if (r.changes === 0)
+      return res.status(404).json({ ok: false, error: "Empleado no encontrado" });
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: "Error al desactivar empleado" });
+  }
+});
+router.get("/employees", mustBeAdmin, (_req, res) => {
+  try {
+    const rows = db.prepare(`
+      SELECT
+        e.EmpleadosID AS id,
+        e.Nombre AS nombre,
+        e.Apellido AS apellido,
+        e.Email AS email,
+        e.username AS username,
+        e.is_active,
+        e.password_hash,
+        e.password_plain,
+        GROUP_CONCAT(re.RolID) AS rolIds,
+        GROUP_CONCAT(r.Nombre) AS rolNombres
+      FROM Empleados e
+      LEFT JOIN Roles_Empleados re ON re.EmpleadoID = e.EmpleadosID
+      LEFT JOIN Roles r ON r.RolID = re.RolID
+      GROUP BY e.EmpleadosID
+      ORDER BY e.Apellido, e.Nombre
+    `).all();
+
+    const result = rows.map((r) => ({
+      id: r.id,
+      nombre: r.nombre ?? "",
+      apellido: r.apellido ?? "",
+      email: r.email ?? "",
+      username: r.username ?? "",
+      isActive: r.is_active === 1,
+      tieneHash: !!r.password_hash,
+      tienePlain: !!r.password_plain,
+      passwordPendiente: !r.password_hash && !!r.password_plain,
+      roles: r.rolIds
+        ? r.rolIds.split(",").map((id, i) => ({
+            id: Number(id),
+            nombre: r.rolNombres?.split(",")[i] ?? "",
+          }))
+        : [],
+    }));
+
+    return res.json({ employees: result });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: "Error al listar empleados" });
+  }
+});
+
+router.get("/roles", mustBeAdmin, (_req, res) => {
+  try {
+    const roles = db.prepare(`
+      SELECT RolID AS id, Nombre AS nombre
+      FROM Roles
+      ORDER BY RolID
+    `).all();
+
+    return res.json({ roles });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: "Error al listar roles" });
   }
 });
 
