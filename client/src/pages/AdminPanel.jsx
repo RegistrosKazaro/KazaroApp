@@ -125,7 +125,7 @@ function ProductsSection() {
     setLoading(true);
     setErr("");
     try {
-      const { data } = await api.get("/admin/products", {
+      const { data } = await api.get("/api/admin/products", {
         params: { q: String(qDeb || "").trim(), limit: 200 },
       });
 
@@ -219,10 +219,10 @@ const onEdit = async (row) => {
   setEditingLoading(true);
   try {
 
-    const { data } = await api.get(`/admin/products/${row.id}`);
+    const { data } = await api.get(`/api/admin/products/${row.id}`);
 
 
-    const rolesRes = await api.get(`/admin/products/${row.id}/roles`);
+    const rolesRes = await api.get(`/api/admin/products/${row.id}/roles`);
 
     const rawRoles = rolesRes?.data ?? [];
     const roles = Array.isArray(rawRoles)
@@ -293,15 +293,15 @@ const onEdit = async (row) => {
 
   try {
     if (editingId && editingId !== "__new__") {
-      await api.put(`/admin/products/${editingId}`, payload);
+      await api.put(`/api/admin/products/${editingId}`, payload);
 
-      await api.put(`/admin/products/${editingId}/roles`, {
+      await api.put(`/api/admin/products/${editingId}/roles`, {
         roles: rolesSel,
       });
     } else {
-      const { data } = await api.post("/admin/products", payload);
+      const { data } = await api.post("/api/admin/products", payload);
 
-      await api.put(`/admin/products/${data.id}/roles`, {
+      await api.put(`/api/admin/products/${data.id}/roles`, {
         roles: rolesSel,
       });
     }
@@ -316,7 +316,7 @@ const onEdit = async (row) => {
   const onDelete = async (id) => {
     if (!confirm("¿Eliminar producto?")) return;
     try {
-      await api.delete(`/admin/products/${id}`);
+      await api.delete(`/api/admin/products/${id}`);
       await load();
       setStatusMsg("Producto eliminado.");
     } catch (e) {
@@ -334,7 +334,7 @@ const onEdit = async (row) => {
     if (!stockEdit?.id) return;
 
     try {
-      await api.put(`/admin/products/${stockEdit.id}`, {
+      await api.put(`/api/admin/products/${stockEdit.id}`, {
         stock: Number(stockEdit.value),
       });
       setRows((prev) =>
@@ -366,7 +366,7 @@ const onEdit = async (row) => {
     setStatusMsg("");
 
     try {
-      const res = await api.get("/admin/products/export", {
+      const res = await api.get("/api/admin/products/export", {
         responseType: "blob",
       });
 
@@ -407,7 +407,7 @@ const onEdit = async (row) => {
 
     setImporting(true);
     try {
-      const { data } = await api.post("/admin/products/import?mode=sync", fd, {
+      const { data } = await api.post("/api/admin/products/import?mode=sync", fd, {
       headers: { "Content-Type": "multipart/form-data" },
       });
 
@@ -745,7 +745,7 @@ function AssignServicesSection() {
 
   const loadSupervisors = useCallback(async () => {
     try {
-      setSupervisors((await api.get("/admin/supervisors")).data || []);
+      setSupervisors((await api.get("/api/admin/supervisors")).data || []);
     } catch {
       setMsg("Error al listar supervisores");
     }
@@ -757,7 +757,7 @@ function AssignServicesSection() {
       return;
     }
     try {
-      const { data } = await api.get("/admin/assignments", {
+      const { data } = await api.get("/api/admin/assignments", {
         params: { EmpleadoID: selectedSupervisor },
       });
       setAssignments(Array.isArray(data) ? data : []);
@@ -774,7 +774,7 @@ function AssignServicesSection() {
         setServices([]);
         return;
       }
-      const { data } = await api.get("/admin/services", {
+      const { data } = await api.get("/api/admin/services", {
         params: { q: String(qDeb).trim(), limit: 50 },
       });
       setServices(Array.isArray(data) ? data : []);
@@ -803,7 +803,7 @@ function AssignServicesSection() {
       return;
     }
     try {
-      await api.post("/admin/assignments", {
+      await api.post("/api/admin/assignments", {
         EmpleadoID: Number(selectedSupervisor),
         ServicioID: Number(serviceId),
       });
@@ -818,7 +818,7 @@ function AssignServicesSection() {
   const onUnassign = async (assignmentRowId, serviceName) => {
     if (!confirm(`¿Quitar ${serviceName} del supervisor?`)) return;
     try {
-      await api.delete(`/admin/assignments/${assignmentRowId}`);
+      await api.delete(`/api/admin/assignments/${assignmentRowId}`);
       setMsg("Asignación eliminada");
       await loadAssignments();
       await searchServices();
@@ -957,7 +957,7 @@ function ServiceProductsSection() {
         setSrvResults([]);
         return;
       }
-      const { data } = await api.get("/admin/services", {
+      const { data } = await api.get("/api/admin/services", {
         params: { q: term, limit: 50 },
       });
       setSrvResults(Array.isArray(data) ? data : []);
@@ -972,12 +972,12 @@ function ServiceProductsSection() {
     if (!service) return;
     setAssignMsg("");
     try {
-      const { data: products } = await api.get("/admin/products", {
+      const { data: products } = await api.get("/api/admin/products", {
         params: { q: "", limit: 500 },
       });
       setAllRows(Array.isArray(products) ? products : []);
 
-      const current = await api.get(`/admin/sp/assignments/${service.id}`);
+      const current = await api.get(`/api/admin/sp/assignments/${service.id}`);
       const ids = new Set((current.data?.productIds || []).map(String));
       setSelected(ids);
     } catch {
@@ -1028,7 +1028,7 @@ function ServiceProductsSection() {
     setSaving(true);
     setAssignMsg("");
     try {
-      const res = await api.put(`/admin/sp/assignments/${service.id}`, {
+      const res = await api.put(`/api/admin/sp/assignments/${service.id}`, {
         productIds: Array.from(selected),
       });
       const added = res?.data?.added?.length || 0;
@@ -1168,7 +1168,7 @@ function ServiceBudgetsSection() {
     setLoading(true);
     setErr("");
     try {
-      const data = await api.get("/admin/service-budgets").then((r) => r.data || []);
+      const data = await api.get("/api/admin/service-budgets").then((r) => r.data || []);
       setRows(Array.isArray(data) ? data : []);
     } catch {
       setErr("Error al cargar presupuestos");
@@ -1199,7 +1199,7 @@ function ServiceBudgetsSection() {
     setSavingIds((s) => new Set(s).add(row.id));
     setErr("");
     try {
-      await api.put(`/admin/service-budgets/${row.id}`, { presupuesto, maxPct });
+      await api.put(`/api/admin/service-budgets/${row.id}`, { presupuesto, maxPct });
       setRows((prev) =>
         prev.map((it) =>
           it.id === row.id ? { ...it, budget: presupuesto, maxPct } : it
@@ -1341,7 +1341,7 @@ function IncomingStockSection() {
         setSearchResults([]);
         return;
       }
-      const { data } = await api.get("/admin/products", {
+      const { data } = await api.get("/api/admin/products", {
         params: { q: term, limit: 50 },
       });
       setSearchResults(Array.isArray(data) ? data : []);
@@ -1361,7 +1361,7 @@ function IncomingStockSection() {
     setLoading(true);
     setErr("");
     try {
-      const { data } = await api.get(`/admin/incoming-stock/${product.id}`);
+      const { data } = await api.get(`/api/admin/incoming-stock/${product.id}`);
       setRows(Array.isArray(data) ? data : []);
     } catch {
       setErr("Error al cargar ingresos");
@@ -1391,7 +1391,7 @@ function IncomingStockSection() {
       return;
     }
     try {
-      await api.post("/admin/incoming-stock", {
+      await api.post("/api/admin/incoming-stock", {
         productId: product.id,
         qty,
         eta,
@@ -1406,7 +1406,7 @@ function IncomingStockSection() {
   const onDelete = async (row) => {
     if (!confirm("¿Eliminar ingreso programado?")) return;
     try {
-      await api.delete(`/admin/incoming-stock/${row.id}`);
+      await api.delete(`/api/admin/incoming-stock/${row.id}`);
       await load();
     } catch {
       setErr("No se pudo eliminar");
@@ -1566,9 +1566,9 @@ function OrdersSection() {
       const arr = Array.isArray(data) ? data : data?.rows || [];
       setOrders(arr.filter(isClosed));
     } catch (e1) {
-      console.warn("Fallo /deposito/orders, intento /admin/orders", e1?.message);
+      console.warn("Fallo /deposito/orders, intento /api/admin/orders", e1?.message);
       try {
-        const { data } = await api.get("/admin/orders", {
+        const { data } = await api.get("/api/admin/orders", {
           params: { status: "closed" },
           withCredentials: true,
         });
@@ -1689,7 +1689,7 @@ function OrdersSection() {
 
   const fetchRemitoPdfSmart = async (orderId) => {
     const candidates = [
-      `/admin/orders/pdf/${orderId}`,
+      `/api/admin/orders/pdf/${orderId}`,
       `/orders/pdf/${orderId}`,
       `/orders/${orderId}/pdf`,
     ];
@@ -1878,7 +1878,7 @@ function CreateServiceSection() {
     setErr("");
     setMsg("");
     try {
-      const { data } = await api.get("/admin/services-all");
+      const { data } = await api.get("/api/admin/services-all");
       setServices(Array.isArray(data) ? data : []);
     } catch (e) {
       setErr(e?.response?.data?.error || "No se pudieron cargar los servicios");
@@ -1896,7 +1896,7 @@ function CreateServiceSection() {
     setErr("");
     setMsg("");
     try {
-      const res = await api.get("/admin/services/export", { responseType: "blob" });
+      const res = await api.get("/api/admin/services/export", { responseType: "blob" });
 
       const blob = new Blob([res.data], {
         type:
@@ -1937,7 +1937,7 @@ function CreateServiceSection() {
 
   setImportingServices(true);
   try {
-    const { data } = await api.post(`/admin/services/import?mode=sync`, fd, {
+    const { data } = await api.post(`/api/admin/services/import?mode=sync`, fd, {
       headers: { "Content-Type": "multipart/form-data" },
     });
 
@@ -1966,7 +1966,7 @@ function CreateServiceSection() {
     setMsg("");
 
     try {
-      await api.delete(`/admin/services/${id}`);
+      await api.delete(`/api/admin/services/${id}`);
       setMsg("Servicio eliminado.");
       await loadAll();
     } catch (e) {
@@ -1987,7 +1987,7 @@ function CreateServiceSection() {
     setErr("");
     setMsg("");
     try {
-      const { data } = await api.post("/admin/services-create", { name: clean });
+      const { data } = await api.post("/api/admin/services-create", { name: clean });
       setMsg(`Servicio creado: ${data?.service?.name || clean}`);
       setName("");
       await loadAll();
@@ -2135,8 +2135,8 @@ function ProductHistorialSection() {
     setLoading(true); setErr("");
     try {
       const endpoint = vista === "resumen"
-        ? "/admin/products/history/summary"
-        : "/admin/products/history";
+        ? "/api/admin/products/history/summary"
+        : "/api/admin/products/history";
 
       const params = { campo, tipo, from, to, limit: 500 };
       if (q.trim().length >= 2) params.q = q.trim();
