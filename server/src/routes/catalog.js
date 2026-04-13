@@ -1,9 +1,14 @@
-// server/src/routes/catalog.js
+// server/src/routes/catalog.js  ← REEMPLAZA el archivo actual
 import express from "express";
 import { requireAuth } from "../middleware/auth.js";
 import { listCategories, listProductsByCategory, db } from "../db.js";
 
 const router = express.Router();
+
+// Helper: devuelve empresa_id del usuario logueado (1 = Kazaro por defecto)
+function getEmpresaId(req) {
+  return req.user?.empresaId ?? 1;
+}
 
 router.get("/categories", requireAuth, (_req, res) => {
   try {
@@ -16,17 +21,18 @@ router.get("/categories", requireAuth, (_req, res) => {
 
 router.get("/products", requireAuth, (req, res) => {
   try {
-    const catId = req.query.catId ?? "__all__";
-    const q = req.query.q ?? "";
+    const catId     = req.query.catId ?? "__all__";
+    const q         = req.query.q ?? "";
     const serviceId = req.query.serviceId ? String(req.query.serviceId) : null;
+    const empresaId = getEmpresaId(req);
 
-    const userRoles = (req.user?.roles || [])
-      .map(r => String(r).toLowerCase());
+    const userRoles = (req.user?.roles || []).map(r => String(r).toLowerCase());
 
     const rows = listProductsByCategory(catId, {
       q,
       serviceId,
-      roles: userRoles
+      roles: userRoles,
+      empresaId,   // ← pasamos empresa para filtrar
     });
 
     res.json(rows);
@@ -36,22 +42,16 @@ router.get("/products", requireAuth, (req, res) => {
   }
 });
 
-
-router.get("/incoming-summary/:productId", (req, res) => {
+router.get("/incoming-summary/:productId", requireAuth, (req, res) => {
   try {
     const pid = String(req.params.productId || "").trim();
     if (!pid) return res.status(400).json({ error: "productId requerido" });
 
-    const row =
-      db
-        .prepare(
-          `
-          SELECT SUM(qty) AS total, MIN(eta) AS eta
-          FROM IncomingStock
-          WHERE CAST(product_id AS TEXT) = CAST(? AS TEXT)
-        `
-        )
-        .get(pid) || {};
+    const row = db.prepare(`
+      SELECT SUM(qty) AS total, MIN(eta) AS eta
+      FROM IncomingStock
+      WHERE CAST(product_id AS TEXT) = CAST(? AS TEXT)
+    `).get(pid) || {};
 
     res.json({
       productId: pid,
@@ -60,9 +60,7 @@ router.get("/incoming-summary/:productId", (req, res) => {
     });
   } catch (e) {
     console.error("[/catalog/incoming-summary/:productId]", e);
-    res
-      .status(500)
-      .json({ error: "No se pudo obtener el resumen de ingresos futuros" });
+    res.status(500).json({ error: "No se pudo obtener el resumen de ingresos futuros" });
   }
 });
 

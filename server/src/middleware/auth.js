@@ -1,16 +1,15 @@
-// server/src/middleware/auth.js
+// server/src/middleware/auth.js  ← REEMPLAZA el archivo actual
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { env } from "../utils/env.js";
 import { getUserForLogin, getUserById, getUserRoles, listServicesByUser } from "../db.js";
+import { getEmpresaIdForUser } from "../db_multiempresa_patch.js";
 
-/* ================== Password compare (argon2 / bcrypt / md5 / sha1 / plano) ================== */
 async function comparePassword(input, userRow) {
   const pass = String(input ?? "");
   const hash = String(userRow?.password_hash || "").trim();
   const plain = String(userRow?.password_plain ?? "");
 
-  // argon2
   if (hash.toLowerCase().startsWith("$argon2")) {
     try {
       const { default: argon2 } = await import("argon2");
@@ -20,7 +19,6 @@ async function comparePassword(input, userRow) {
     }
   }
 
-  // bcrypt / bcryptjs ($2a$ / $2b$ / $2y$)
   if (/^\$2[aby]\$/.test(hash)) {
     try {
       let bcrypt;
@@ -32,34 +30,30 @@ async function comparePassword(input, userRow) {
     }
   }
 
-  // MD5 heredado
   if (/^[a-f0-9]{32}$/i.test(hash)) {
     const md5 = crypto.createHash("md5").update(pass).digest("hex");
     if (md5.toLowerCase() === hash.toLowerCase()) return true;
   }
 
-  // SHA1 heredado
   if (/^[a-f0-9]{40}$/i.test(hash)) {
     const sha1 = crypto.createHash("sha1").update(pass).digest("hex");
     if (sha1.toLowerCase() === hash.toLowerCase()) return true;
   }
 
-  // plano
   if (plain) return plain === pass;
-
   return false;
 }
 
-/* ================== JWT helpers ================== */
-function signToken(userId) {
-  return jwt.sign({ uid: Number(userId) }, env.JWT_SECRET || "dev-secret", { expiresIn: "12h" });
+// empresaId es opcional; si se pasa queda en el token como claim "eid"
+export function signToken(userId, empresaId = null) {
+  const payload = { uid: Number(userId) };
+  if (empresaId != null) payload.eid = Number(empresaId);
+  return jwt.sign(payload, env.JWT_SECRET || "dev-secret", { expiresIn: "12h" });
 }
+
 function readTokenFromReq(req) {
-  // Authorization: Bearer <token>
   const bearer = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   if (bearer) return bearer;
-
-  // Cookie "token" (principal) o "sid" (compat)
   const rawCookie = req.headers.cookie || "";
   const mToken = rawCookie.match(/(?:^|;\s*)token=([^;]+)/i);
   const mSid   = rawCookie.match(/(?:^|;\s*)sid=([^;]+)/i);
@@ -68,64 +62,6 @@ function readTokenFromReq(req) {
   return null;
 }
 
-/* ================== Login handler ================== */
-export async function loginHandler(req, res) {
-  try {
-    const { user, username, email, password } = req.body || {};
-    const ident = String(user ?? username ?? email ?? "").trim();
-    const pass  = String(password ?? "");
-
-    if (!ident || !pass) return res.status(400).json({ ok: false, error: "Faltan credenciales" });
-
-    const u = getUserForLogin(ident);
-    if (!u) return res.status(401).json({ ok: false, error: "Usuario o contraseña inválidos" });
-
-    // inactivo?
-    const active = String(u.is_active ?? "1").trim();
-    if (["0", "false", "no", "inactivo", "disabled"].includes(active.toLowerCase())) {
-      return res.status(403).json({ ok: false, error: "Usuario inactivo" });
-    }
-
-    const ok = await comparePassword(pass, u);
-    if (!ok) return res.status(401).json({ ok: false, error: "Usuario o contraseña inválidos" });
-
-    const token = signToken(u.id);
-    res.cookie("token", token, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: env.NODE_ENV === "production",
-      maxAge: 12 * 60 * 60 * 1000, // 12h
-      path: "/",
-    });
-    // Compat
-    res.cookie("sid", token, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: env.NODE_ENV === "production",
-      maxAge: 12 * 60 * 60 * 1000,
-      path: "/",
-    });
-
-    const roles = getUserRoles(u.id) || [];
-    const services = listServicesByUser(u.id) || [];
-
-    return res.json({
-      ok: true,
-      user: {
-        id: Number(u.id),
-        username: u.username ?? null,
-        email: u.email ?? null,
-        roles,
-        services,
-      },
-    });
-  } catch (e) {
-    console.error("[auth] login error:", e?.message || e);
-    return res.status(500).json({ ok: false, error: "Error interno" });
-  }
-}
-
-/* ================== requireAuth ================== */
 export function requireAuth(req, res, next) {
   try {
     const raw = readTokenFromReq(req);
@@ -135,8 +71,9 @@ export function requireAuth(req, res, next) {
     const user = getUserById(payload?.uid);
     if (!user?.id) return res.status(401).json({ ok: false });
 
-    const roles = getUserRoles(user.id) || [];
+    const roles    = getUserRoles(user.id) || [];
     const services = listServicesByUser(user.id) || [];
+    const empresaId = payload?.eid ?? getEmpresaIdForUser(user.id) ?? null;
 
     req.user = {
       id: Number(user.id),
@@ -144,6 +81,7 @@ export function requireAuth(req, res, next) {
       email: user.email ?? null,
       roles,
       services,
+      empresaId,
     };
     return next();
   } catch (e) {
@@ -152,7 +90,6 @@ export function requireAuth(req, res, next) {
   }
 }
 
-/* ================== requireRole (sinónimos sin mezclar perfiles) ================== */
 function expandAllowed(allowed) {
   const arr = Array.isArray(allowed) ? allowed : [allowed];
   const set = new Set();
@@ -163,6 +100,7 @@ function expandAllowed(allowed) {
   }
   return Array.from(set);
 }
+
 export function requireRole(allowed) {
   const allow = expandAllowed(allowed);
   return (req, res, next) => {

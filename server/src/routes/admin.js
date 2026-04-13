@@ -23,6 +23,7 @@ import {
 } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendMail } from "../utils/mailer.js";
+import empresaRouter from "./admin_empresa_addon.js";
 
 const router = Router();
 const mustBeAdmin = [requireAuth, requireRole(["admin", "Admin"])];
@@ -79,42 +80,41 @@ router.get("/products", mustBeAdmin, (req, res) => {
   try {
     const sch = prodSchemaOrThrow();
     const { products } = sch.tables;
-    const {
-      prodId,
-      prodName,
-      prodPrice,
-      prodStock,
-      prodCode,
-      prodCat,
-      prodCatName,
-    } = sch.cols;
+    const { prodId, prodName, prodPrice, prodStock, prodCode, prodCat, prodCatName } = sch.cols;
 
-    const T = qid(products);
-    const C_ID = qid(prodId);
-    const C_NAME = qid(prodName);
-    const C_PRICE = prodPrice ? qid(prodPrice) : null;
-    const C_STOCK = prodStock ? qid(prodStock) : null;
-    const C_CODE = prodCode ? qid(prodCode) : null;
-    const C_CAT = prodCat ? qid(prodCat) : null;
-    const C_CATNAME = !prodCat && prodCatName ? qid(prodCatName) : null;
+    const T        = qid(products);
+    const C_ID     = qid(prodId);
+    const C_NAME   = qid(prodName);
+    const C_PRICE  = prodPrice  ? qid(prodPrice)  : null;
+    const C_STOCK  = prodStock  ? qid(prodStock)  : null;
+    const C_CODE   = prodCode   ? qid(prodCode)   : null;
+    const C_CAT    = prodCat    ? qid(prodCat)    : null;
+    const C_CATNAME= !prodCat && prodCatName ? qid(prodCatName) : null;
 
-    const q = String(req.query.q ?? "").trim();
-    const like = `%${q}%`;
+    const q         = String(req.query.q ?? "").trim();
+    const like      = `%${q}%`;
+    const empresaId = req.user?.empresaId ?? 1;
+
+    // Filtro por empresa
+    const prodCols   = db.prepare(`PRAGMA table_info(${products})`).all().map(c => c.name.toLowerCase());
+    const hasEmpresa = prodCols.includes("empresa_id");
+    const eFilter    = hasEmpresa ? `AND empresa_id = ${Number(empresaId)}` : "";
 
     const where = q
-      ? `WHERE ${C_NAME} LIKE @like
-             ${C_CODE ? `OR IFNULL(${C_CODE},'') LIKE @like` : ""}
-             OR CAST(${C_ID} AS TEXT) LIKE @like`
-      : "";
+      ? `WHERE (${C_NAME} LIKE @like
+               ${C_CODE ? `OR IFNULL(${C_CODE},'') LIKE @like` : ""}
+               OR CAST(${C_ID} AS TEXT) LIKE @like)
+               ${eFilter}`
+      : hasEmpresa ? `WHERE empresa_id = ${Number(empresaId)}` : "";
 
     const sql = `
       SELECT ${C_ID} AS id,
              ${C_NAME} AS name
-             ${C_CAT ? `, ${C_CAT} AS categoryId` : ""}
+             ${C_CAT     ? `, ${C_CAT}     AS categoryId`   : ""}
              ${C_CATNAME ? `, ${C_CATNAME} AS categoryName` : ""}
-             ${C_CODE  ? `, ${C_CODE}  AS code`  : ""}
-             ${C_PRICE ? `, ${C_PRICE} AS price` : ""}
-             ${C_STOCK ? `, ${C_STOCK} AS stock` : ""}
+             ${C_CODE    ? `, ${C_CODE}    AS code`         : ""}
+             ${C_PRICE   ? `, ${C_PRICE}   AS price`        : ""}
+             ${C_STOCK   ? `, ${C_STOCK}   AS stock`        : ""}
       FROM ${T}
       ${where}
       ORDER BY ${C_NAME} COLLATE NOCASE
@@ -632,16 +632,15 @@ router.post("/products", mustBeAdmin, (req, res) => {
   try {
     const sch = prodSchemaOrThrow();
     const { products } = sch.tables;
-    const { prodName, prodPrice, prodStock, prodCode, prodCat, prodCatName } =
-      sch.cols;
+    const { prodName, prodPrice, prodStock, prodCode, prodCat, prodCatName } = sch.cols;
 
-    const T = qid(products);
-    const C_NAME = qid(prodName);
-    const C_PRICE = prodPrice ? qid(prodPrice) : null;
-    const C_STOCK = prodStock ? qid(prodStock) : null;
-    const C_CODE = prodCode ? qid(prodCode) : null;
-    const C_CAT = prodCat ? qid(prodCat) : null;
-    const C_CATNAME = !prodCat && prodCatName ? qid(prodCatName) : null;
+    const T        = qid(products);
+    const C_NAME   = qid(prodName);
+    const C_PRICE  = prodPrice  ? qid(prodPrice)  : null;
+    const C_STOCK  = prodStock  ? qid(prodStock)  : null;
+    const C_CODE   = prodCode   ? qid(prodCode)   : null;
+    const C_CAT    = prodCat    ? qid(prodCat)    : null;
+    const C_CATNAME= !prodCat && prodCatName ? qid(prodCatName) : null;
 
     const name = String(req.body?.name ?? "").trim();
     if (!name) return res.status(400).json({ error: "name es requerido" });
@@ -650,33 +649,19 @@ router.post("/products", mustBeAdmin, (req, res) => {
     const vals = [name];
 
     if (C_PRICE && req.body?.price !== undefined) {
-      const v =
-        req.body.price === "" || req.body.price === null
-          ? null
-          : Number(req.body.price);
       cols.push(C_PRICE);
-      vals.push(v);
+      vals.push(req.body.price === "" || req.body.price === null ? null : Number(req.body.price));
     }
     if (C_STOCK && req.body?.stock !== undefined) {
-      const v =
-        req.body.stock === "" || req.body.stock === null
-          ? null
-          : Number(req.body.stock);
       cols.push(C_STOCK);
-      vals.push(v);
+      vals.push(req.body.stock === "" || req.body.stock === null ? null : Number(req.body.stock));
     }
     if (C_CODE && req.body?.code !== undefined) {
-      const v =
-        req.body.code === "" || req.body.code === null
-          ? null
-          : String(req.body.code);
       cols.push(C_CODE);
-      vals.push(v);
+      vals.push(req.body.code === "" || req.body.code === null ? null : String(req.body.code));
     }
-
     if (C_CAT) {
-      const catId =
-        req.body?.catId !== undefined ? req.body.catId : req.body?.categoryId;
+      const catId = req.body?.catId !== undefined ? req.body.catId : req.body?.categoryId;
       if (catId !== undefined) {
         cols.push(C_CAT);
         vals.push(catId === "" || catId === null ? null : catId);
@@ -686,17 +671,24 @@ router.post("/products", mustBeAdmin, (req, res) => {
       vals.push(String(req.body.categoryName ?? "").trim() || null);
     }
 
+    // Agregar empresa_id
+    const prodCols   = db.prepare(`PRAGMA table_info(${products})`).all().map(c => c.name.toLowerCase());
+    const hasEmpresa = prodCols.includes("empresa_id");
+    if (hasEmpresa) {
+      const empresaId = req.user?.empresaId ?? 1;
+      cols.push('"empresa_id"');
+      vals.push(Number(empresaId));
+    }
+
     const placeholders = cols.map(() => "?").join(", ");
-    const info = db
-      .prepare(`INSERT INTO ${T} (${cols.join(", ")}) VALUES (${placeholders})`)
-      .run(...vals);
+    const info = db.prepare(`INSERT INTO ${T} (${cols.join(", ")}) VALUES (${placeholders})`).run(...vals);
 
     res.status(201).json({ ok: true, id: info.lastInsertRowid });
-  } catch {
+  } catch (e) {
+    console.error("POST /admin/products error:", e?.message || e);
     res.status(500).json({ error: "No se pudo crear el producto" });
   }
 });
-
 router.put("/products/:id", mustBeAdmin, (req, res) => {
   try {
     const sch = prodSchemaOrThrow();
@@ -1238,71 +1230,61 @@ const SRV_NAME = "ServicioNombre";
 router.get("/services", mustBeAdmin, (req, res) => {
   try {
     ensureSupervisorPivotExclusive();
-    const q = String(req.query.q ?? "").trim();
-    const limit = Math.min(
-      Math.max(parseInt(req.query.limit ?? "25", 10) || 25, 1),
-      100
-    );
+    const q         = String(req.query.q ?? "").trim();
+    const empresaId = req.user?.empresaId ?? 1;
+    const limit     = Math.min(Math.max(parseInt(req.query.limit ?? "25", 10) || 25, 1), 100);
     if (!q) return res.json([]);
     const like = `%${q}%`;
 
-    const rows = db
-      .prepare(
-        `
-      SELECT 
-        s.${SRV_ID} AS id, 
+    const srvCols    = db.prepare("PRAGMA table_info(Servicios)").all().map(c => c.name.toLowerCase());
+    const hasEmpresa = srvCols.includes("empresa_id");
+    const eFilter    = hasEmpresa ? `AND s.empresa_id = ${Number(empresaId)}` : "";
+
+    const rows = db.prepare(`
+      SELECT
+        s.${SRV_ID} AS id,
         s.${SRV_NAME} AS name,
         EXISTS (
           SELECT 1 FROM supervisor_services a
           WHERE CAST(a.ServicioID AS TEXT) = CAST(s.${SRV_ID} AS TEXT)
         ) AS is_assigned,
         (
-          SELECT a.EmpleadoID
-          FROM supervisor_services a
-          WHERE CAST(a.ServicioID AS TEXT) = CAST(s.${SRV_ID} AS TEXT)
-          LIMIT 1
+          SELECT a.EmpleadoID FROM supervisor_services a
+          WHERE CAST(a.ServicioID AS TEXT) = CAST(s.${SRV_ID} AS TEXT) LIMIT 1
         ) AS assigned_to_id,
         (
           SELECT ${EMP_NAME_EXPR}
           FROM supervisor_services a
           JOIN Empleados e ON e.${EMP_ID} = a.EmpleadoID
-          WHERE CAST(a.ServicioID AS TEXT) = CAST(s.${SRV_ID} AS TEXT)
-          LIMIT 1
+          WHERE CAST(a.ServicioID AS TEXT) = CAST(s.${SRV_ID} AS TEXT) LIMIT 1
         ) AS assigned_to
       FROM Servicios s
       WHERE (s.${SRV_NAME} LIKE @like OR CAST(s.${SRV_ID} AS TEXT) LIKE @like)
+      ${eFilter}
       ORDER BY s.${SRV_NAME} COLLATE NOCASE
       LIMIT ${limit}
-    `
-      )
-      .all({ like });
+    `).all({ like });
 
-    const normalized = rows.map((r) => ({
-      ...r,
-      is_assigned: Number(r.is_assigned) === 1 ? 1 : 0,
-    }));
-
-    res.json(normalized);
+    res.json(rows.map((r) => ({ ...r, is_assigned: Number(r.is_assigned) === 1 ? 1 : 0 })));
   } catch (e) {
     console.error("GET /admin/services error:", e);
     res.status(500).json({ error: "Error al listar servicios" });
   }
 });
 
-router.get("/services-all", mustBeAdmin, (_req, res) => {
+router.get("/services-all", mustBeAdmin, (req, res) => {
   try {
-    const rows = db
-      .prepare(
-        `
-        SELECT 
-          s.${SRV_ID} AS id,
-          s.${SRV_NAME} AS name
-        FROM Servicios s
-        ORDER BY s.${SRV_NAME} COLLATE NOCASE
-      `
-      )
-      .all();
+    const empresaId  = req.user?.empresaId ?? 1;
+    const srvCols    = db.prepare("PRAGMA table_info(Servicios)").all().map(c => c.name.toLowerCase());
+    const hasEmpresa = srvCols.includes("empresa_id");
+    const eFilter    = hasEmpresa ? `WHERE s.empresa_id = ${Number(empresaId)}` : "";
 
+    const rows = db.prepare(`
+      SELECT s.${SRV_ID} AS id, s.${SRV_NAME} AS name
+      FROM Servicios s
+      ${eFilter}
+      ORDER BY s.${SRV_NAME} COLLATE NOCASE
+    `).all();
     return res.json(Array.isArray(rows) ? rows : []);
   } catch (e) {
     console.error("GET /admin/services-all error:", e);
@@ -1608,23 +1590,24 @@ router.post("/services-create", mustBeAdmin, (req, res) => {
   }
 });
 
-router.get("/supervisors", mustBeAdmin, (_req, res) => {
+router.get("/supervisors", mustBeAdmin, (req, res) => {
   try {
-    const rows = db
-      .prepare(
-        `
+    const empresaId  = req.user?.empresaId ?? 1;
+    const empCols    = db.prepare("PRAGMA table_info(Empleados)").all().map(c => c.name.toLowerCase());
+    const hasEmpresa = empCols.includes("empresa_id");
+    const eFilter    = hasEmpresa ? `AND e.empresa_id = ${Number(empresaId)}` : "";
+
+    const rows = db.prepare(`
       SELECT e.${EMP_ID} AS id, ${EMP_NAME_EXPR} AS username
       FROM Empleados e
       WHERE EXISTS (
-        SELECT 1
-        FROM Roles_Empleados re
+        SELECT 1 FROM Roles_Empleados re
         JOIN Roles r ON r.RolID = re.RolID
         WHERE re.EmpleadoID = e.${EMP_ID} AND lower(r.Nombre) = 'supervisor'
       )
+      ${eFilter}
       ORDER BY username COLLATE NOCASE
-    `
-      )
-      .all();
+    `).all();
     res.json(rows);
   } catch {
     res.status(500).json({ error: "Error al listar supervisores" });
@@ -1635,6 +1618,11 @@ router.get("/assignments", mustBeAdmin, (req, res) => {
   try {
     ensureSupervisorPivotExclusive();
     const EmpleadoID = req.query.EmpleadoID ? Number(req.query.EmpleadoID) : null;
+    const empresaId  = req.user?.empresaId ?? 1;
+    const srvCols    = db.prepare("PRAGMA table_info(Servicios)").all().map(c => c.name.toLowerCase());
+    const hasEmpresa = srvCols.includes("empresa_id");
+    const eFilter    = hasEmpresa ? `AND s.empresa_id = ${Number(empresaId)}` : "";
+
     const base = `
       SELECT a.rowid AS id, a.EmpleadoID, a.ServicioID,
              (${EMP_NAME_EXPR}) AS supervisor_username,
@@ -1642,17 +1630,11 @@ router.get("/assignments", mustBeAdmin, (req, res) => {
       FROM supervisor_services a
       LEFT JOIN Empleados e ON e.${EMP_ID} = a.EmpleadoID
       LEFT JOIN Servicios s ON s.${SRV_ID} = a.ServicioID
+      WHERE 1=1 ${eFilter}
     `;
     const rows = EmpleadoID
-      ? db
-          .prepare(base + ` WHERE a.EmpleadoID = ? ORDER BY s.${SRV_NAME} COLLATE NOCASE`)
-          .all(EmpleadoID)
-      : db
-          .prepare(
-            base +
-              ` ORDER BY supervisor_username COLLATE NOCASE, s.${SRV_NAME} COLLATE NOCASE`
-          )
-          .all();
+      ? db.prepare(base + ` AND a.EmpleadoID = ? ORDER BY s.${SRV_NAME} COLLATE NOCASE`).all(EmpleadoID)
+      : db.prepare(base + ` ORDER BY supervisor_username COLLATE NOCASE, s.${SRV_NAME} COLLATE NOCASE`).all();
     res.json(rows);
   } catch (e) {
     console.error("GET /admin/assignments error:", e);
@@ -1754,7 +1736,7 @@ router.delete("/assignments/:id", mustBeAdmin, (req, res) => {
 
 router.get("/service-budgets", mustBeAdmin, (_req, res) => {
   try {
-    res.json(listServiceBudgets());
+    res.json(listServiceBudgets(req.user?.empresaId ?? 1));
   } catch (e) {
     res.status(500).json({ error: "Error al listar presupuestos" });
   }
@@ -2173,8 +2155,13 @@ router.put("/employees/:id", mustBeAdmin, async (req, res) => {
   }
 });
 
-router.get("/employees", mustBeAdmin, (_req, res) => {
+router.get("/employees", mustBeAdmin, (req, res) => {
   try {
+    const empresaId = req.user?.empresaId ?? 1;
+    const empCols   = db.prepare("PRAGMA table_info(Empleados)").all().map(c => c.name.toLowerCase());
+    const hasEmpresa = empCols.includes("empresa_id");
+    const eFilter    = hasEmpresa ? `WHERE e.empresa_id = ${Number(empresaId)}` : "";
+ 
     const rows = db.prepare(`
       SELECT
         e.EmpleadosID   AS id,
@@ -2190,29 +2177,28 @@ router.get("/employees", mustBeAdmin, (_req, res) => {
       FROM Empleados e
       LEFT JOIN Roles_Empleados re ON re.EmpleadoID = e.EmpleadosID
       LEFT JOIN Roles r ON r.RolID = re.RolID
+      ${eFilter}
       GROUP BY e.EmpleadosID
       ORDER BY e.Apellido COLLATE NOCASE, e.Nombre COLLATE NOCASE
     `).all();
-
-    const result = rows.map((r) => ({
-      id: r.id,
-      nombre: r.nombre ?? "",
-      apellido: r.apellido ?? "",
-      email: r.email ?? "",
-      username: r.username ?? "",
-      isActive: r.is_active !== 0 && r.is_active !== "0",
-      tieneHash: !!r.password_hash,
-      tienePlain: !!r.password_plain,
-      passwordPendiente: !r.password_hash && !!r.password_plain,
-      roles: r.rolIds
-        ? r.rolIds.split(",").map((id, i) => ({
-            id: Number(id),
-            nombre: r.rolNombres?.split(",")[i] ?? "",
-          }))
-        : [],
-    }));
-
-    return res.json({ ok: true, employees: result });
+ 
+    return res.json({
+      ok: true,
+      employees: rows.map((r) => ({
+        id: r.id,
+        nombre: r.nombre ?? "",
+        apellido: r.apellido ?? "",
+        email: r.email ?? "",
+        username: r.username ?? "",
+        isActive: r.is_active !== 0 && r.is_active !== "0",
+        tieneHash: !!r.password_hash,
+        tienePlain: !!r.password_plain,
+        passwordPendiente: !r.password_hash && !!r.password_plain,
+        roles: r.rolIds
+          ? r.rolIds.split(",").map((id, i) => ({ id: Number(id), nombre: r.rolNombres?.split(",")[i] ?? "" }))
+          : [],
+      })),
+    });
   } catch (e) {
     console.error("GET /admin/employees error:", e?.message || e);
     return res.status(500).json({ ok: false, error: "Error al listar empleados" });
@@ -2228,49 +2214,6 @@ router.get("/roles", mustBeAdmin, (_req, res) => {
   }
 });
 
-router.post("/employees", mustBeAdmin, async (req, res) => {
-  try {
-    const { nombre, apellido, email, username, password, rolIds, isActive } = req.body ?? {};
-
-    if (!nombre?.trim() || !apellido?.trim())
-      return res.status(400).json({ ok: false, error: "Nombre y Apellido son obligatorios" });
-    if (!username?.trim())
-      return res.status(400).json({ ok: false, error: "El username es obligatorio" });
-    if (!email?.trim())
-      return res.status(400).json({ ok: false, error: "El email es obligatorio" });
-    if (!password?.trim())
-      return res.status(400).json({ ok: false, error: "La contraseña es obligatoria" });
-
-    const existing = db.prepare(
-      "SELECT EmpleadosID FROM Empleados WHERE LOWER(TRIM(username)) = LOWER(TRIM(?))"
-    ).get(username.trim());
-    if (existing)
-      return res.status(409).json({ ok: false, error: "Ya existe un empleado con ese username" });
-
-    const hash = await argon2.hash(password, { type: argon2.argon2id });
-    const active = isActive === false || isActive === "false" || isActive === 0 ? 0 : 1;
-
-    const result = db.prepare(`
-      INSERT INTO Empleados (Nombre, Apellido, Email, username, password_hash, password_plain, is_active)
-      VALUES (?, ?, ?, ?, ?, NULL, ?)
-    `).run(nombre.trim(), apellido.trim(), email.trim().toLowerCase(), username.trim().toLowerCase(), hash, active);
-
-    const newId = result.lastInsertRowid;
-
-    if (Array.isArray(rolIds) && rolIds.length > 0) {
-      const insRol = db.prepare("INSERT OR IGNORE INTO Roles_Empleados (EmpleadoID, RolID) VALUES (?, ?)");
-      for (const rolId of rolIds) {
-        const n = Number(rolId);
-        if (Number.isFinite(n) && n > 0) insRol.run(newId, n);
-      }
-    }
-
-    return res.status(201).json({ ok: true, id: Number(newId) });
-  } catch (e) {
-    console.error("POST /admin/employees error:", e?.message || e);
-    return res.status(500).json({ ok: false, error: "Error al crear empleado" });
-  }
-});
 
 router.delete("/employees/:id", mustBeAdmin, (req, res) => {
   try {
@@ -2285,65 +2228,63 @@ router.delete("/employees/:id", mustBeAdmin, (req, res) => {
     return res.status(500).json({ ok: false, error: "Error al desactivar empleado" });
   }
 });
-router.get("/employees", mustBeAdmin, (_req, res) => {
+router.post("/employees", mustBeAdmin, async (req, res) => {
   try {
-    const rows = db.prepare(`
-      SELECT
-        e.EmpleadosID AS id,
-        e.Nombre AS nombre,
-        e.Apellido AS apellido,
-        e.Email AS email,
-        e.username AS username,
-        e.is_active,
-        e.password_hash,
-        e.password_plain,
-        GROUP_CONCAT(re.RolID) AS rolIds,
-        GROUP_CONCAT(r.Nombre) AS rolNombres
-      FROM Empleados e
-      LEFT JOIN Roles_Empleados re ON re.EmpleadoID = e.EmpleadosID
-      LEFT JOIN Roles r ON r.RolID = re.RolID
-      GROUP BY e.EmpleadosID
-      ORDER BY e.Apellido, e.Nombre
-    `).all();
-
-    const result = rows.map((r) => ({
-      id: r.id,
-      nombre: r.nombre ?? "",
-      apellido: r.apellido ?? "",
-      email: r.email ?? "",
-      username: r.username ?? "",
-      isActive: r.is_active === 1,
-      tieneHash: !!r.password_hash,
-      tienePlain: !!r.password_plain,
-      passwordPendiente: !r.password_hash && !!r.password_plain,
-      roles: r.rolIds
-        ? r.rolIds.split(",").map((id, i) => ({
-            id: Number(id),
-            nombre: r.rolNombres?.split(",")[i] ?? "",
-          }))
-        : [],
-    }));
-
-    return res.json({ employees: result });
+    const { nombre, apellido, email, username, password, rolIds, isActive } = req.body ?? {};
+    const empresaId = req.user?.empresaId ?? 1;   // ← hereda empresa del admin logueado
+ 
+    if (!nombre?.trim() || !apellido?.trim())
+      return res.status(400).json({ ok: false, error: "Nombre y Apellido son obligatorios" });
+    if (!username?.trim())
+      return res.status(400).json({ ok: false, error: "El username es obligatorio" });
+    if (!email?.trim())
+      return res.status(400).json({ ok: false, error: "El email es obligatorio" });
+    if (!password?.trim())
+      return res.status(400).json({ ok: false, error: "La contraseña es obligatoria" });
+ 
+    const existing = db.prepare(
+      "SELECT EmpleadosID FROM Empleados WHERE LOWER(TRIM(username)) = LOWER(TRIM(?))"
+    ).get(username.trim());
+    if (existing)
+      return res.status(409).json({ ok: false, error: "Ya existe un empleado con ese username" });
+ 
+    const hash   = await argon2.hash(password, { type: argon2.argon2id });
+    const active = isActive === false || isActive === "false" || isActive === 0 ? 0 : 1;
+ 
+    // Verificar si la columna empresa_id existe
+    const empCols    = db.prepare("PRAGMA table_info(Empleados)").all().map(c => c.name.toLowerCase());
+    const hasEmpresa = empCols.includes("empresa_id");
+ 
+    let result;
+    if (hasEmpresa) {
+      result = db.prepare(`
+        INSERT INTO Empleados (Nombre, Apellido, Email, username, password_hash, password_plain, is_active, empresa_id)
+        VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+      `).run(nombre.trim(), apellido.trim(), email.trim().toLowerCase(), username.trim().toLowerCase(), hash, active, empresaId);
+    } else {
+      result = db.prepare(`
+        INSERT INTO Empleados (Nombre, Apellido, Email, username, password_hash, password_plain, is_active)
+        VALUES (?, ?, ?, ?, ?, NULL, ?)
+      `).run(nombre.trim(), apellido.trim(), email.trim().toLowerCase(), username.trim().toLowerCase(), hash, active);
+    }
+ 
+    const newId = result.lastInsertRowid;
+ 
+    if (Array.isArray(rolIds) && rolIds.length > 0) {
+      const insRol = db.prepare("INSERT OR IGNORE INTO Roles_Empleados (EmpleadoID, RolID) VALUES (?, ?)");
+      for (const rolId of rolIds) {
+        const n = Number(rolId);
+        if (Number.isFinite(n) && n > 0) insRol.run(newId, n);
+      }
+    }
+ 
+    return res.status(201).json({ ok: true, id: Number(newId) });
   } catch (e) {
-    console.error(e);
-    return res.status(500).json({ error: "Error al listar empleados" });
+    console.error("POST /admin/employees error:", e?.message || e);
+    return res.status(500).json({ ok: false, error: "Error al crear empleado" });
   }
 });
 
-router.get("/roles", mustBeAdmin, (_req, res) => {
-  try {
-    const roles = db.prepare(`
-      SELECT RolID AS id, Nombre AS nombre
-      FROM Roles
-      ORDER BY RolID
-    `).all();
 
-    return res.json({ roles });
-  } catch (e) {
-    console.error(e);
-    return res.status(500).json({ error: "Error al listar roles" });
-  }
-});
-
+router.use("/empresa", empresaRouter);
 export default router;

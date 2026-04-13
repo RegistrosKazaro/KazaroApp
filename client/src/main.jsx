@@ -4,6 +4,7 @@ import { BrowserRouter } from "react-router-dom";
 import App from "./App.jsx";
 
 import AuthProvider from "./context/AuthProvider.jsx";
+import EmpresaProvider from "./context/EmpresaProvider.jsx";
 import CartProvider from "./context/CartProvider.jsx";
 
 import "./styles/global.css";
@@ -20,14 +21,16 @@ export function Boot({ children }) {
 
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <BrowserRouter>
-      <AuthProvider>
+      <BrowserRouter>
+      <EmpresaProvider>
+        <AuthProvider>
         <CartProvider>
           <Boot>
             <App />
           </Boot>
         </CartProvider>
       </AuthProvider>
+      </EmpresaProvider>
     </BrowserRouter>
   </React.StrictMode>
 );
