@@ -2,9 +2,11 @@ import axios from "axios";
 
 // Define la base URL de la API.  En desarrollo se usa http://localhost:4000 por defecto.
 // Si en producción sirves tu API bajo un prefijo (/api), puedes establecer VITE_API_URL accordingly.
-const BASE_URL =
-  (import.meta?.env && import.meta.env.VITE_API_URL) ||
-  "http://localhost:4000";
+const BASE_URL = (() => {
+  const url = (import.meta?.env && import.meta.env.VITE_API_URL) || "http://localhost:4000";
+  // Eliminar /api del final si existe, para evitar duplicación
+  return url.replace(/\/api\/?$/, "");
+})();
 
 export const api = axios.create({
   baseURL: BASE_URL,
