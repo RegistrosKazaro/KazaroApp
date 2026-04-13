@@ -21,15 +21,13 @@ jobs:
           script: |
             set -euo pipefail
             export NVM_DIR="$HOME/.nvm"
-            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+            source "$NVM_DIR/nvm.sh" || true
             cd /home/ec2-user/apps/KazaroApp
             git fetch origin
             git reset --hard origin/main
-            cd server
-            npm ci
+            cd server && npm ci
             pm2 restart kazaro-server --update-env
-            cd ../client
-            npm ci
+            cd ../client && npm ci
             VITE_API_URL=/api npm run build
             sudo rsync -a --delete dist/ /var/www/insumos/
             sudo chown -R nginx:nginx /var/www/insumos
