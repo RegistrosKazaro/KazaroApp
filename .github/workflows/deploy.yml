@@ -20,4 +20,7 @@ jobs:
           command_timeout: 15m
           script: |
             set -euo pipefail
+            cd /home/ec2-user/apps/KazaroApp
+            git fetch origin
+            git reset --hard origin/main
             bash /home/ec2-user/apps/KazaroApp/redeploy.sh
