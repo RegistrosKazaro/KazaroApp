@@ -28,12 +28,6 @@ BRANCH="main"
 cd "$APP_DIR"
 
 # ========================
-# Migraciones DB
-# ========================
-echo "==> Migraciones DB"
-sqlite3 "$APP_DIR/server/Kazaro.db" "DROP INDEX IF EXISTS ux_product_code; CREATE UNIQUE INDEX IF NOT EXISTS ux_product_code ON Productos(Code, empresa_id) WHERE Code IS NOT NULL AND Code != '';" || true
-
-# ========================
 # Git (deploy seguro: deja el repo EXACTO como origin/main)
 # ========================
 echo "==> Git fetch + reset"

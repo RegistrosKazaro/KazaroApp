@@ -20,5 +20,4 @@ jobs:
           command_timeout: 15m
           script: |
             set -euo pipefail
-            cat /etc/nginx/conf.d/insumos.kazaro.com.ar.conf || true
             bash /home/ec2-user/apps/KazaroApp/redeploy.sh
