@@ -4,7 +4,7 @@ import axios from "axios";
 // Si en producción sirves tu API bajo un prefijo (/api), puedes establecer VITE_API_URL accordingly.
 const BASE_URL =
   (import.meta?.env && import.meta.env.VITE_API_URL) ||
-  "http://localhost:4000";
+  (import.meta?.env?.PROD ? "" : "http://localhost:4000");
 
 export const api = axios.create({
   baseURL: BASE_URL,
