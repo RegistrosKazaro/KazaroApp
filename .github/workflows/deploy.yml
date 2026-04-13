@@ -20,7 +20,18 @@ jobs:
           command_timeout: 15m
           script: |
             set -euo pipefail
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
             cd /home/ec2-user/apps/KazaroApp
             git fetch origin
             git reset --hard origin/main
-            bash /home/ec2-user/apps/KazaroApp/redeploy.sh
+            cd server
+            npm ci
+            pm2 restart kazaro-server --update-env
+            cd ../client
+            npm ci
+            VITE_API_URL=/api npm run build
+            sudo rsync -a --delete dist/ /var/www/insumos/
+            sudo chown -R nginx:nginx /var/www/insumos
+            sudo chmod -R 755 /var/www/insumos
+            sudo nginx -t && sudo systemctl reload nginx || true
