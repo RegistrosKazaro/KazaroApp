@@ -18,45 +18,53 @@ const money = (n) => {
     return `$ ${v.toFixed(2)}`;
   }
 };
-const baseDateOptions = {
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false, // 24 hs
-};
 
-const fmtDateTime = (s) => {
-  if (!s) return nowLocal(); 
+// ─── ZONA HORARIA ────────────────────────────────────────────
+// Siempre interpreta los strings de la DB como hora de Argentina (UTC-3).
+// SQLite guarda con datetime('now','localtime') pero en servidores Linux
+// "localtime" puede ser UTC. Esta función normaliza sin importar eso.
+const AR_OFFSET_MS = -3 * 60 * 60 * 1000; // UTC-3 fijo (Argentina no tiene DST)
 
+function sqlToArDate(s) {
+  if (!s) return new Date(Date.now() + AR_OFFSET_MS);
   try {
-    
-    const [datePart, timePart = "00:00:00"] = String(s).trim().split(" ");
+    // "YYYY-MM-DD HH:MM:SS" o "YYYY-MM-DDTHH:MM:SS"
+    const clean = String(s).trim().replace("T", " ");
+    const [datePart, timePart = "00:00:00"] = clean.split(" ");
     const [Y, M, D] = datePart.split("-").map(Number);
     const [h = 0, m = 0, sec = 0] = timePart.split(":").map(Number);
-    const utcMs = Date.UTC(Y, M - 1, D, h, m, sec);
-    const dLocal = new Date(utcMs);
-    return dLocal.toLocaleString("es-AR", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    // Construimos el instante como si fuera UTC-3 directamente
+    return new Date(Date.UTC(Y, M - 1, D, h + 3, m, sec)); // +3 para convertir AR→UTC
   } catch {
-    return String(s || "");
+    return new Date(Date.now() + AR_OFFSET_MS);
   }
-};
+}
 
-const nowLocal = () =>
-  new Date().toLocaleString("es-AR", {
+function fmtDateTime(s) {
+  const d = sqlToArDate(s);
+  return d.toLocaleString("es-AR", {
+    timeZone: "America/Argentina/Buenos_Aires",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    hour12: false,
   });
+}
+
+function nowLocal() {
+  return new Date().toLocaleString("es-AR", {
+    timeZone: "America/Argentina/Buenos_Aires",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+// ─────────────────────────────────────────────────────────────
 
 function fitText(doc, text, width) {
   const ell = "…";
@@ -67,9 +75,9 @@ function fitText(doc, text, width) {
 }
 
 function resolveServiceName(serviceId, hintedName) {
-  if (hintedName) return hintedName;
+  if (hintedName && String(hintedName).trim()) return String(hintedName).trim();
 
-  if (serviceId != null) {
+  if (serviceId != null && String(serviceId).trim() !== "") {
     const byDb = getServiceNameById(serviceId);
     if (byDb) return byDb;
   }
@@ -84,22 +92,11 @@ function resolveServiceName(serviceId, hintedName) {
       const idCol =
         info.find((c) => c.pk === 1)?.name ||
         pick([
-          "ServiciosID",
-          "ServicioID",
-          "IdServicio",
-          "service_id",
-          "servicio_id",
-          "ID",
-          "id",
+          "ServiciosID","ServicioID","IdServicio","service_id","servicio_id","ID","id",
         ]);
       const nameCol =
         pick([
-          "ServicioNombre",
-          "Nombre",
-          "Descripcion",
-          "Detalle",
-          "NombreServicio",
-          "Servicio",
+          "ServicioNombre","Nombre","Descripcion","Detalle","NombreServicio","Servicio",
         ]) || idCol;
       if (idCol && nameCol && serviceId != null) {
         const r = db
@@ -110,149 +107,63 @@ function resolveServiceName(serviceId, hintedName) {
         if (r?.n) return String(r.n);
       }
     }
-  } catch {
-  }
-  return serviceId != null ? String(serviceId) : "—";
+  } catch {}
+  return serviceId != null && String(serviceId).trim() !== "" ? String(serviceId) : "—";
 }
 
 /* ================= Layout ================= */
-const M = 36; 
-const BRAND_COLOR = "#2563EB"; 
+const M = 36;
+const BRAND_COLOR = "#2563EB";
 const LIGHT_GRAY = "#F3F4F6";
 const BORDER_GRAY = "#E5E7EB";
 const TEXT_MUTED = "#6B7280";
 
-/* ====== HEADER: más corporativo ====== */
 function drawHeader(doc, nro, fecha, total) {
   const contentW = doc.page.width - M * 2;
-  doc
-    .save()
-    .rect(0, 0, doc.page.width, 70)
-    .fill("#F9FAFB")
-    .restore();
+  doc.save().rect(0, 0, doc.page.width, 70).fill("#F9FAFB").restore();
+
+  doc.fillColor(BRAND_COLOR).font("Helvetica-Bold").fontSize(26).text("KAZARO", M, M - 4);
 
   doc
-    .fillColor(BRAND_COLOR)
-    .font("Helvetica-Bold")
-    .fontSize(26)
-    .text("KAZARO", M, M - 4);
-
-  doc
-    .font("Helvetica")
-    .fontSize(9)
-    .fillColor("#374151")
+    .font("Helvetica").fontSize(9).fillColor("#374151")
     .text("Kazaro SRL", M, M + 24)
-    .text("Depósito y Distribución", M, M + 36)
-    .text("Email: info@kazaro.com.ar", M, M + 48);
+    .text("Depósito y Distribución", M, M + 36);
+    
   const RIGHT_W = 260;
   const xR = doc.page.width - M - RIGHT_W;
 
-  doc
-    .save()
-    .roundedRect(xR, M - 8, RIGHT_W, 64, 8)
-    .lineWidth(1)
-    .strokeColor(BRAND_COLOR)
-    .stroke()
-    .restore();
+  doc.save().roundedRect(xR, M - 8, RIGHT_W, 64, 8).lineWidth(1).strokeColor(BRAND_COLOR).stroke().restore();
 
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(16)
-    .fillColor(BRAND_COLOR)
-    .text("REMITO", xR + 12, M, {
-      width: RIGHT_W - 24,
-      align: "left",
-      lineBreak: false,
-    });
-
-  doc
-    .font("Helvetica")
-    .fontSize(10)
-    .fillColor("#111827")
-    .text(`N.º ${nro}`, xR + 12, M + 22, {
-      width: RIGHT_W - 24,
-      align: "left",
-      lineBreak: false,
-    });
-
-  doc
-    .font("Helvetica")
-    .fontSize(9)
-    .fillColor(TEXT_MUTED)
-    .text(fecha || "", xR + 12, M + 38, {
-      width: RIGHT_W - 24,
-      align: "left",
-      lineBreak: false,
-    });
+  doc.font("Helvetica-Bold").fontSize(16).fillColor(BRAND_COLOR)
+    .text("REMITO", xR + 12, M, { width: RIGHT_W - 24, align: "left", lineBreak: false });
+  doc.font("Helvetica").fontSize(10).fillColor("#111827")
+    .text(`N.º ${nro}`, xR + 12, M + 22, { width: RIGHT_W - 24, align: "left", lineBreak: false });
+  doc.font("Helvetica").fontSize(9).fillColor(TEXT_MUTED)
+    .text(fecha || "", xR + 12, M + 38, { width: RIGHT_W - 24, align: "left", lineBreak: false });
 
   const totalBadgeW = 130;
   const totalBadgeX = xR + RIGHT_W - totalBadgeW - 10;
   const totalBadgeY = M + 10;
 
-  doc
-    .save()
-    .roundedRect(totalBadgeX, totalBadgeY, totalBadgeW, 32, 6)
-    .fill(BRAND_COLOR)
-    .restore();
-
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(9)
-    .fillColor("#E5E7EB")
-    .text("TOTAL", totalBadgeX + 10, totalBadgeY + 6, {
-      width: totalBadgeW - 20,
-      align: "left",
-      lineBreak: false,
-    });
-
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(13)
-    .fillColor("#FFFFFF")
-    .text(money(total), totalBadgeX + 10, totalBadgeY + 16, {
-      width: totalBadgeW - 20,
-      align: "right",
-      lineBreak: false,
-    });
+  doc.save().roundedRect(totalBadgeX, totalBadgeY, totalBadgeW, 32, 6).fill(BRAND_COLOR).restore();
+  doc.font("Helvetica-Bold").fontSize(9).fillColor("#E5E7EB")
+    .text("TOTAL", totalBadgeX + 10, totalBadgeY + 6, { width: totalBadgeW - 20, align: "left", lineBreak: false });
+  doc.font("Helvetica-Bold").fontSize(13).fillColor("#FFFFFF")
+    .text(money(total), totalBadgeX + 10, totalBadgeY + 16, { width: totalBadgeW - 20, align: "right", lineBreak: false });
 
   const y = M + 60;
-  doc
-    .moveTo(M, y)
-    .lineTo(M + contentW, y)
-    .strokeColor(BORDER_GRAY)
-    .lineWidth(1)
-    .stroke();
-
+  doc.moveTo(M, y).lineTo(M + contentW, y).strokeColor(BORDER_GRAY).lineWidth(1).stroke();
   return y + 12;
 }
 
-/* ====== BLOQUE DE METADATOS (empleado, rol, etc.) ====== */
 function labeledValueBlock(doc, label, value, x, y, width) {
-  doc
-    .font("Helvetica")
-    .fontSize(8)
-    .fillColor(TEXT_MUTED)
-    .text(label.toUpperCase(), x, y, {
-      width,
-      lineBreak: false,
-    });
-
+  doc.font("Helvetica").fontSize(8).fillColor(TEXT_MUTED)
+    .text(label.toUpperCase(), x, y, { width, lineBreak: false });
   const y2 = y + 10;
-
   doc.font("Helvetica").fontSize(11).fillColor("#111827");
-  const h = doc.heightOfString(String(value ?? "—"), {
-    width,
-    align: "left",
-  });
-
+  const h = doc.heightOfString(String(value ?? "—"), { width, align: "left" });
   doc.text(String(value ?? "—"), x, y2, { width, align: "left" });
-  doc
-    .moveTo(x, y2 + h + 2)
-    .lineTo(x + width, y2 + h + 2)
-    .strokeColor("#E5E7EB")
-    .lineWidth(0.5)
-    .stroke();
-
+  doc.moveTo(x, y2 + h + 2).lineTo(x + width, y2 + h + 2).strokeColor("#E5E7EB").lineWidth(0.5).stroke();
   return y2 + h + 8;
 }
 
@@ -263,55 +174,32 @@ function drawMeta(doc, y, { empleado, rol, fecha, servicio }) {
   const leftX = M;
   const rightX = M + COL_W + GAP;
 
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(11)
-    .fillColor("#111827")
-    .text("Datos del pedido", M, y - 4);
-
+  doc.font("Helvetica-Bold").fontSize(11).fillColor("#111827").text("Datos del pedido", M, y - 4);
   y += 14;
 
   const yL1 = labeledValueBlock(doc, "Empleado", empleado, leftX, y, COL_W);
   const yL2 = labeledValueBlock(doc, "Rol", rol || "—", leftX, yL1, COL_W);
   const yR1 = labeledValueBlock(doc, "Fecha de generación", fecha || "—", rightX, y, COL_W);
+  // FIX: siempre mostrar bloque Servicio, incluso si está vacío, para no perder espacio
   const yR2 = servicio
     ? labeledValueBlock(doc, "Servicio asociado", servicio, rightX, yR1, COL_W)
     : yR1;
   const yOut = Math.max(yL2, yR2) + 4;
 
-  doc
-    .moveTo(M, yOut)
-    .lineTo(M + contentW, yOut)
-    .strokeColor(BORDER_GRAY)
-    .lineWidth(1)
-    .stroke();
-
+  doc.moveTo(M, yOut).lineTo(M + contentW, yOut).strokeColor(BORDER_GRAY).lineWidth(1).stroke();
   return yOut + 10;
 }
 
-/* ====== TABLA DE ÍTEMS ====== */
 function drawItemsTable(doc, y, rows, total) {
   const contentW = doc.page.width - M * 2;
-  const W_CODE = 90;
-  const W_QTY = 60;
-  const W_PRICE = 80;
-  const W_SUB = 90;
+  const W_CODE = 90, W_QTY = 60, W_PRICE = 80, W_SUB = 90;
   const W_DESC = contentW - (W_CODE + W_QTY + W_PRICE + W_SUB);
-  const headerH = 24;
-  const rowH = 22;
+  const headerH = 24, rowH = 22;
 
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(11)
-    .fillColor("#111827")
-    .text("Detalle de ítems", M, y);
+  doc.font("Helvetica-Bold").fontSize(11).fillColor("#111827").text("Detalle de ítems", M, y);
   y += 14;
 
-  doc
-    .save()
-    .roundedRect(M, y - 2, contentW, headerH, 4)
-    .fill("#EFF6FF")
-    .restore();
+  doc.save().roundedRect(M, y - 2, contentW, headerH, 4).fill("#EFF6FF").restore();
 
   const labels = [
     { text: "Código", w: W_CODE, a: "left" },
@@ -323,13 +211,8 @@ function drawItemsTable(doc, y, rows, total) {
 
   let x = M;
   doc.font("Helvetica-Bold").fontSize(9).fillColor("#1F2933");
-
   for (const col of labels) {
-    doc.text(col.text, x + 6, y + 5, {
-      width: col.w - 12,
-      align: col.a,
-      lineBreak: false,
-    });
+    doc.text(col.text, x + 6, y + 5, { width: col.w - 12, align: col.a, lineBreak: false });
     x += col.w;
   }
   y += headerH;
@@ -337,169 +220,76 @@ function drawItemsTable(doc, y, rows, total) {
   const bottomReserve = 120;
   const maxY = doc.page.height - bottomReserve;
   const maxRows = Math.max(0, Math.floor((maxY - y - rowH) / rowH));
-
   const data = rows.slice(0, maxRows);
   const leftover = rows.length - data.length;
 
   for (let i = 0; i < data.length; i++) {
     const it = data[i];
-    const isStriped = i % 2 === 1;
-
-    if (isStriped) {
-      doc
-        .save()
-        .rect(M, y - 1, contentW, rowH)
-        .fill(LIGHT_GRAY)
-        .restore();
+    if (i % 2 === 1) {
+      doc.save().rect(M, y - 1, contentW, rowH).fill(LIGHT_GRAY).restore();
     }
-
     let xx = M;
-
     const cols = [
       { v: String(it.code || "—"), w: W_CODE, a: "left" },
       { v: String(it.name || ""), w: W_DESC, a: "left", clip: true },
       { v: String(it.qty ?? 0), w: W_QTY, a: "right" },
       { v: money(it.price), w: W_PRICE, a: "right" },
-      {
-        v: money(it.subtotal ?? (+it.price || 0) * (+it.qty || 0)),
-        w: W_SUB,
-        a: "right",
-      },
+      { v: money(it.subtotal ?? (+it.price || 0) * (+it.qty || 0)), w: W_SUB, a: "right" },
     ];
-
     doc.font("Helvetica").fontSize(9).fillColor("#111827");
     for (const c of cols) {
       const w = c.w - 12;
       const text = c.clip ? fitText(doc, c.v, w) : c.v;
-      doc.text(text, xx + 6, y + 4, {
-        width: w,
-        align: c.a,
-        lineBreak: false,
-      });
+      doc.text(text, xx + 6, y + 4, { width: w, align: c.a, lineBreak: false });
       xx += c.w;
     }
-
-    doc
-      .moveTo(M, y + rowH - 2)
-      .lineTo(M + contentW, y + rowH - 2)
-      .strokeColor("#E5E7EB")
-      .lineWidth(0.4)
-      .stroke();
-
+    doc.moveTo(M, y + rowH - 2).lineTo(M + contentW, y + rowH - 2).strokeColor("#E5E7EB").lineWidth(0.4).stroke();
     y += rowH;
   }
 
   if (leftover > 0) {
-    doc
-      .font("Helvetica")
-      .fontSize(8)
-      .fillColor(TEXT_MUTED)
+    doc.font("Helvetica").fontSize(8).fillColor(TEXT_MUTED)
       .text(`(${leftover} ítems no mostrados en este remito)`, M, y + 2);
     y += 16;
   }
 
-  doc
-    .save()
-    .roundedRect(M, y + 4, contentW, rowH, 4)
-    .fill("#F9FAFB")
-    .restore();
+  doc.save().roundedRect(M, y + 4, contentW, rowH, 4).fill("#F9FAFB").restore();
 
   const xTotalLabel = M + W_CODE + W_DESC + W_QTY - 6;
   const wTotalLabel = W_PRICE + 6;
   const xTotalAmt = xTotalLabel + wTotalLabel;
   const wTotalAmt = W_SUB;
 
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(10)
-    .fillColor("#111827")
-    .text("TOTAL", xTotalLabel, y + 8, {
-      width: wTotalLabel,
-      align: "right",
-      lineBreak: false,
-    });
-
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(11)
-    .fillColor(BRAND_COLOR)
-    .text(money(total), xTotalAmt, y + 7, {
-      width: wTotalAmt,
-      align: "right",
-      lineBreak: false,
-    });
+  doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827")
+    .text("TOTAL", xTotalLabel, y + 8, { width: wTotalLabel, align: "right", lineBreak: false });
+  doc.font("Helvetica-Bold").fontSize(11).fillColor(BRAND_COLOR)
+    .text(money(total), xTotalAmt, y + 7, { width: wTotalAmt, align: "right", lineBreak: false });
 
   return y + rowH + 14;
 }
 
-/* ====== NOTA ====== */
 function drawNote(doc, y, nota) {
   if (!nota) return y;
-
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(10)
-    .fillColor("#111827")
-    .text("Observaciones", M, y);
-
+  doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827").text("Observaciones", M, y);
   y += 12;
-
-  doc
-    .save()
-    .roundedRect(
-      M,
-      y - 4,
-      doc.page.width - M * 2,
-      60,
-      6
-    )
-    .strokeColor("#E5E7EB")
-    .lineWidth(0.8)
-    .stroke()
-    .restore();
-
-  doc
-    .font("Helvetica")
-    .fontSize(9)
-    .fillColor("#374151")
-    .text(String(nota || ""), M + 8, y, {
-      width: doc.page.width - (M + 8) * 2,
-    });
-
+  doc.save().roundedRect(M, y - 4, doc.page.width - M * 2, 60, 6).strokeColor("#E5E7EB").lineWidth(0.8).stroke().restore();
+  doc.font("Helvetica").fontSize(9).fillColor("#374151")
+    .text(String(nota || ""), M + 8, y, { width: doc.page.width - (M + 8) * 2 });
   return y + 68;
 }
 
-/* ====== FOOTER ====== */
 function drawFooter(doc) {
   const y = doc.page.height - M + 2;
-
-  doc
-    .moveTo(M, y)
-    .lineTo(doc.page.width - M, y)
-    .strokeColor(BORDER_GRAY)
-    .lineWidth(0.5)
-    .stroke();
-
-  doc
-    .font("Helvetica")
-    .fontSize(8)
-    .fillColor(TEXT_MUTED)
+  doc.moveTo(M, y).lineTo(doc.page.width - M, y).strokeColor(BORDER_GRAY).lineWidth(0.5).stroke();
+  doc.font("Helvetica").fontSize(8).fillColor(TEXT_MUTED)
     .text(
       `Generado por Kazaro — ${nowLocal()}  |  Este documento es válido sin firma ni sello.`,
-      M,
-      y + 6,
-      {
-        width: doc.page.width - M * 2,
-        align: "center",
-      }
+      M, y + 6, { width: doc.page.width - M * 2, align: "center" }
     );
 }
 
-/* ================= Generador principal ================= */
-export async function generateRemitoPDF({
-  pedido,
-  outDir = path.resolve(process.cwd(), "tmp"),
-}) {
+/* ─── Helper interno para armar el objeto pedido normalizado ─── */
+function normalizePedido(pedido) {
   const cab = pedido?.cab ? pedido.cab : pedido;
   const itemsRaw = pedido?.items || [];
   const pedidoId = cab?.PedidoID ?? cab?.id ?? 0;
@@ -508,15 +298,16 @@ export async function generateRemitoPDF({
   const empleado = getEmployeeDisplayName(cab?.EmpleadoID);
   const rol = String(cab?.Rol || "");
   const isSupervisorOrder = rol.toLowerCase().includes("super");
-  const baseServicioNombre =
-    cab?.ServicioID != null
-      ? resolveServiceName(
-          cab.ServicioID,
-          pedido?.servicio?.name || cab?.servicio?.name
-        )
-      : null;
-    const servicioNombre =
-    isSupervisorOrder && cab?.ServicioID ? baseServicioNombre : null;
+
+  // FIX: resolver nombre de servicio de forma robusta
+  // Primero usa el hint que viene en el objeto, luego consulta la DB
+  const servicioId = cab?.ServicioID ?? cab?.servicio?.id ?? null;
+  const hintedName = pedido?.servicio?.name || cab?.servicio?.name || null;
+
+  let servicioNombre = null;
+  if (isSupervisorOrder && servicioId != null && String(servicioId).trim() !== "") {
+    servicioNombre = resolveServiceName(servicioId, hintedName);
+  }
 
   const fecha = fmtDateTime(cab?.Fecha);
 
@@ -527,13 +318,18 @@ export async function generateRemitoPDF({
     price: Number(it.precio ?? it.price ?? 0),
     subtotal: Number(
       it.subtotal ??
-        Number(it.precio ?? it.price ?? 0) *
-          Number(it.cantidad ?? it.qty ?? 0)
+        Number(it.precio ?? it.price ?? 0) * Number(it.cantidad ?? it.qty ?? 0)
     ),
   }));
-  const total = Number(
-    cab?.Total ?? items.reduce((s, r) => s + (r.subtotal || 0), 0)
-  );
+
+  const total = Number(cab?.Total ?? items.reduce((s, r) => s + (r.subtotal || 0), 0));
+
+  return { nro, pedidoId, empleado, rol, fecha, servicioNombre, items, total, nota: cab?.Nota };
+}
+
+/* ================= Generador principal ================= */
+export async function generateRemitoPDF({ pedido, outDir = path.resolve(process.cwd(), "tmp") }) {
+  const { nro, empleado, rol, fecha, servicioNombre, items, total, nota } = normalizePedido(pedido);
 
   fs.mkdirSync(outDir, { recursive: true });
   const outPath = path.join(outDir, `Remito-${nro}.pdf`);
@@ -547,14 +343,9 @@ export async function generateRemitoPDF({
   doc.pipe(stream);
 
   let y = drawHeader(doc, nro, fecha, total);
-  y = drawMeta(doc, y, {
-    empleado,
-    rol,
-    fecha,
-    servicio: servicioNombre,
-  });
+  y = drawMeta(doc, y, { empleado, rol, fecha, servicio: servicioNombre });
   y = drawItemsTable(doc, y, items, total);
-  y = drawNote(doc, y + 4, cab?.Nota);
+  y = drawNote(doc, y + 4, nota);
   drawFooter(doc);
 
   doc.end();
@@ -566,40 +357,9 @@ export async function generateRemitoPDF({
 }
 
 export async function generateRemitoPDFBuffer({ pedido }) {
-  const cab = pedido?.cab ? pedido.cab : pedido;
-  const itemsRaw = pedido?.items || [];
-  const pedidoId = cab?.PedidoID ?? cab?.id ?? 0;
-  const nro = pad7(pedidoId);
+  const { nro, empleado, rol, fecha, servicioNombre, items, total, nota } = normalizePedido(pedido);
 
-  const empleado = getEmployeeDisplayName(cab?.EmpleadoID);
-  const rol = String(cab?.Rol || "");
-  const isSupervisorOrder = rol.toLowerCase().includes("super");
-  const baseServicioNombre =
-    cab?.ServicioID != null
-      ? resolveServiceName(
-          cab.ServicioID,
-          pedido?.servicio?.name || cab?.servicio?.name
-        )
-      : null;
-  const servicioNombre =
-    isSupervisorOrder && cab?.ServicioID ? baseServicioNombre : null;
-
-  const fecha = fmtDateTime(cab?.Fecha);
-
-  const items = itemsRaw.map((it) => ({
-    code: it.codigo ?? it.code ?? "",
-    name: it.nombre ?? it.name ?? "",
-    qty: Number(it.cantidad ?? it.qty ?? 0),
-    price: Number(it.precio ?? it.price ?? 0),
-    subtotal: Number(
-      it.subtotal ??
-        Number(it.precio ?? it.price ?? 0) *
-          Number(it.cantidad ?? it.qty ?? 0)
-    ),
-  }));
-  const total = items.reduce((a, b) => a + Number(b.subtotal || 0), 0);
-
-  const doc = new PDFDocument({ size: "A4", margin: 36 });
+  const doc = new PDFDocument({ size: "A4", margin: M });
   const chunks = [];
   const passthrough = new PassThrough();
 
@@ -612,14 +372,9 @@ export async function generateRemitoPDFBuffer({ pedido }) {
   });
 
   let y = drawHeader(doc, nro, fecha, total);
-  y = drawMeta(doc, y, {
-    empleado,
-    rol,
-    fecha,
-    servicio: servicioNombre,
-  });
+  y = drawMeta(doc, y, { empleado, rol, fecha, servicio: servicioNombre });
   y = drawItemsTable(doc, y, items, total);
-  y = drawNote(doc, y + 4, cab?.Nota);
+  y = drawNote(doc, y + 4, nota);
   drawFooter(doc);
 
   doc.end();

@@ -1,59 +1,32 @@
+// server/src/routes/orders.js
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.js";
 import {
-  createOrder,
-  getFullOrder,
-  getEmployeeDisplayName,
-  getServiceById,
-  getServiceEmails,
-  getServiceNameById,
-  getBudgetSettingsByServiceId,
-  DEFAULT_SERVICE_PCT,
-  getUserRoles,
-  listServicesByUser,
-  getUserById,
-  db,
+  createOrder, getFullOrder, getEmployeeDisplayName,
+  getServiceById, getServiceEmails, getServiceNameById,
+  getBudgetSettingsByServiceId, DEFAULT_SERVICE_PCT,
+  getUserRoles, listServicesByUser, getUserById, db,
 } from "../db.js";
 import { generateRemitoPDFBuffer } from "../utils/remitoPdf.js";
 import { sendMail } from "../utils/mailer.js";
 
 const router = Router();
-
-/* ===== Helpers ===== */
 const pad7 = (n) => String(n ?? "").padStart(7, "0");
 
-const money = (v) => {
-  const n = Number(v || 0);
-  try {
-    return new Intl.NumberFormat("es-AR", {
-      style: "currency",
-      currency: "ARS",
-    }).format(n);
-  } catch {
-    return `$ ${n.toFixed(2)}`;
-  }
-};
-
-// Convierte fecha SQLite local a ISO válido (FIX Invalid Date)
 function sqlLocalToISO(sqlTs) {
   if (!sqlTs) return new Date().toISOString();
   try {
-    const base = String(sqlTs).replace(" ", "T");
-    const d = new Date(base + "-03:00"); // Argentina
+    const clean = String(sqlTs).replace(" ", "T");
+    const d = new Date(clean + "-03:00");
     if (Number.isNaN(d.getTime())) return new Date().toISOString();
     return d.toISOString();
-  } catch {
-    return new Date().toISOString();
-  }
+  } catch { return new Date().toISOString(); }
 }
 
 function primaryRole(userId) {
-  const roles = (getUserRoles(userId) || []).map((r) =>
-    String(r).toLowerCase()
-  );
+  const roles = (getUserRoles(userId) || []).map((r) => String(r).toLowerCase());
   if (roles.includes("supervisor")) return "supervisor";
-  if (roles.includes("administrativo") || roles.includes("admin"))
-    return "administrativo";
+  if (roles.includes("administrativo") || roles.includes("admin")) return "administrativo";
   return roles[0] || "administrativo";
 }
 
@@ -71,35 +44,36 @@ function resolveServiceName(servicioId, hintedName) {
   return getServiceNameById(sid) || getServiceById(sid)?.name || "—";
 }
 
-/* ===== Rutas ===== */
+function resolveEmpresaNombre(empresaId) {
+  if (!empresaId) return "Kazaro";
+  try {
+    const row = db.prepare(`SELECT nombre FROM Empresas WHERE id = ? LIMIT 1`).get(empresaId);
+    return row?.nombre ?? "Kazaro";
+  } catch {
+    return "Kazaro";
+  }
+}
 
 router.post("/", requireAuth, async (req, res) => {
   try {
-    const empleadoId = req.user.id;
-
-    const asRoleClient = normalizeRoleName(
-      req.body?.asRole ?? req.body?.rol
-    );
-    const rolEfectivo = asRoleClient || primaryRole(empleadoId);
+    const empleadoId    = req.user.id;
+    const empresaId     = req.user.empresaId ?? null;
+    const empresaNombre = resolveEmpresaNombre(empresaId);
+    const asRoleClient  = normalizeRoleName(req.body?.asRole ?? req.body?.rol);
+    const rolEfectivo   = asRoleClient || primaryRole(empleadoId);
 
     let { servicioId = null, nota = "", items } = req.body || {};
 
-    if (!Array.isArray(items) || items.length === 0) {
+    if (!Array.isArray(items) || items.length === 0)
       return res.status(400).json({ error: "Faltan items" });
-    }
 
     if (rolEfectivo === "supervisor") {
       if (!servicioId) {
         const mios = listServicesByUser(empleadoId);
-        if (Array.isArray(mios) && mios.length === 1) {
-          servicioId = mios[0].id;
-        }
+        if (Array.isArray(mios) && mios.length === 1) servicioId = mios[0].id;
       }
-      if (!servicioId) {
-        return res.status(400).json({
-          error: "servicioId es requerido para pedidos de supervisor",
-        });
-      }
+      if (!servicioId)
+        return res.status(400).json({ error: "servicioId es requerido para pedidos de supervisor" });
     } else {
       servicioId = null;
     }
@@ -108,134 +82,94 @@ router.post("/", requireAuth, async (req, res) => {
     let maxTotalAllowed = null;
 
     if (rolEfectivo === "supervisor" && servicioId) {
-      budgetSettings =
-        getBudgetSettingsByServiceId(servicioId) || budgetSettings;
+      budgetSettings = getBudgetSettingsByServiceId(servicioId) || budgetSettings;
       if (budgetSettings?.budget > 0) {
         const pct = Number(budgetSettings.maxPct ?? DEFAULT_SERVICE_PCT);
-        if (Number.isFinite(pct) && pct > 0) {
+        if (Number.isFinite(pct) && pct > 0)
           maxTotalAllowed = (budgetSettings.budget * pct) / 100;
-        }
       }
     }
 
     let pedidoId;
     try {
-      pedidoId = createOrder({
-        empleadoId,
-        servicioId,
-        nota,
-        items,
-        maxTotalAllowed,
-      });
+      pedidoId = createOrder({ empleadoId, servicioId, nota, items, maxTotalAllowed });
     } catch (err) {
       if (err?.message === "ORDER_OVER_LIMIT") {
         const pct = Number(budgetSettings.maxPct ?? DEFAULT_SERVICE_PCT);
-        return res.status(400).json({
-          error: `El pedido excede el ${pct}% del presupuesto del servicio`,
-        });
+        return res.status(400).json({ error: `El pedido excede el ${pct}% del presupuesto del servicio` });
       }
       throw err;
     }
 
-    db.prepare(`UPDATE Pedidos SET Rol = ? WHERE PedidoID = ?`).run(
-      rolEfectivo,
-      Number(pedidoId)
-    );
+    const pedidosInfo   = db.prepare("PRAGMA table_info(Pedidos)").all();
+    const hasEmpresaCol = pedidosInfo.some((c) => c.name === "empresa_id");
+    if (hasEmpresaCol && empresaId)
+      db.prepare("UPDATE Pedidos SET Rol = ?, empresa_id = ? WHERE PedidoID = ?").run(rolEfectivo, empresaId, Number(pedidoId));
+    else
+      db.prepare("UPDATE Pedidos SET Rol = ? WHERE PedidoID = ?").run(rolEfectivo, Number(pedidoId));
 
     const pedido = getFullOrder(pedidoId);
-    if (!pedido)
-      return res.status(500).json({ error: "No se pudo recuperar el pedido" });
+    if (!pedido) return res.status(500).json({ error: "No se pudo recuperar el pedido" });
 
-    const nro = pad7(pedidoId);
-    const empleadoNombre =
-      getEmployeeDisplayName(empleadoId) || `Empleado ${empleadoId}`;
-    const usuario = pedido.user || getUserById(empleadoId);
-    const rol = rolEfectivo;
+    const nro            = pad7(pedidoId);
+    const empleadoNombre = getEmployeeDisplayName(empleadoId) || `Empleado ${empleadoId}`;
+    const usuario        = pedido.user || getUserById(empleadoId);
+    const rol            = rolEfectivo;
 
-    const sid =
-      rol === "supervisor"
-        ? String(pedido.ServicioID ?? servicioId ?? "").trim()
-        : "";
+    const sidResolved = rol === "supervisor"
+      ? String(pedido.ServicioID ?? servicioId ?? "").trim()
+      : "";
+    const serviceName = sidResolved ? resolveServiceName(sidResolved, pedido?.servicio?.name) : "";
 
-    const serviceName =
-      rol === "supervisor"
-        ? resolveServiceName(sid, pedido?.servicio?.name)
-        : "";
+    const total          = Number(pedido.Total || 0);
+    const notaFinal      = String(nota || pedido.Nota || "—");
+    const servicioParaPdf = rol === "supervisor" && sidResolved
+      ? { id: sidResolved, name: serviceName || sidResolved }
+      : null;
 
-    const total = Number(pedido.Total || 0);
-    const notaFinal = String(nota || pedido.Nota || "—");
-
-    /* ===== PDF ===== */
     const pedidoParaPdf = {
       ...pedido,
-      rol,
-      servicio:
-        rol === "supervisor"
-          ? { id: sid || null, name: serviceName }
-          : null,
+      ServicioID: sidResolved || null,
+      Rol: rol,
+      empresaNombre,
+      servicio: servicioParaPdf,
     };
 
-    let buffer = null;
-    let filename = `remito_${nro}.pdf`;
-
+    let buffer = null, filename = `remito_${nro}.pdf`;
     try {
       const out = await generateRemitoPDFBuffer({ pedido: pedidoParaPdf });
       buffer = out.buffer;
       filename = out.filename || filename;
-    } catch (e) {
-      console.warn("[orders] No se pudo generar PDF:", e?.message);
-    }
+    } catch (e) { console.warn("[orders] No se pudo generar PDF:", e?.message); }
 
-    /* ===== MAIL ===== */
     let mailStatus = { sent: false, skipped: true };
-
     try {
-      const toArr =
-        rol === "supervisor" && sid ? getServiceEmails(sid) || [] : [];
-
+      const toArr = rol === "supervisor" && sidResolved ? getServiceEmails(sidResolved) || [] : [];
       const info = await sendMail({
         to: toArr.length ? toArr.join(",") : undefined,
         subject: `NUEVO PEDIDO DE INSUMOS #${nro}`,
         text: `Pedido #${nro} generado.`,
-        attachments: buffer
-          ? [
-              {
-                filename,
-                content: buffer,
-                contentType: "application/pdf",
-              },
-            ]
-          : undefined,
+        attachments: buffer ? [{ filename, content: buffer, contentType: "application/pdf" }] : undefined,
         displayAsUser: true,
         userName: empleadoNombre,
         userEmail: usuario?.email || null,
+        empresaId,
+        empresaNombre,
       });
-
       mailStatus = { sent: true, messageId: info?.messageId };
-    } catch (e) {
-      mailStatus = { sent: false, error: e?.message };
-    }
-
-    /* ===== RESPUESTA FINAL (FIX) ===== */
-    const pdfUrl = `/orders/pdf/${pedidoId}`;
-
-    const remito = {
-      numero: nro,
-      fecha: sqlLocalToISO(pedido.Fecha),
-      empleado: empleadoNombre,
-      total,
-      nota: notaFinal,
-      pdfUrl,
-      servicio:
-        rol === "supervisor"
-          ? { id: sid || null, name: serviceName }
-          : null,
-    };
+    } catch (e) { mailStatus = { sent: false, error: e?.message }; }
 
     return res.status(201).json({
-      ok: true,
-      pedidoId,
-      remito,
+      ok: true, pedidoId,
+      remito: {
+        numero: nro,
+        fecha: sqlLocalToISO(pedido.Fecha),
+        empleado: empleadoNombre,
+        total,
+        nota: notaFinal,
+        pdfUrl: `/orders/pdf/${pedidoId}`,
+        servicio: servicioParaPdf,
+      },
       rol: rolEfectivo,
       mail: mailStatus,
     });
@@ -246,36 +180,42 @@ router.post("/", requireAuth, async (req, res) => {
 });
 
 router.get("/pdf/:id", requireAuth, async (req, res) => {
-  const id = Number(req.params.id);
+  const id     = Number(req.params.id);
   const pedido = getFullOrder(id);
   if (!pedido) return res.status(404).end();
 
   try {
-    const rol = String(pedido.Rol || "").toLowerCase();
-    const sid =
-      rol === "supervisor" ? String(pedido.ServicioID ?? "").trim() : "";
+    const rol          = String(pedido.Rol || "").toLowerCase();
+    const isSupervisor = rol.includes("super");
 
-    const serviceName =
-      rol === "supervisor"
-        ? resolveServiceName(sid, pedido?.servicio?.name)
-        : "";
+    let sidFromDb = null, empresaIdDb = null;
+    try {
+      const row = db.prepare("SELECT ServicioID, empresa_id FROM Pedidos WHERE PedidoID = ? LIMIT 1").get(id);
+      sidFromDb    = row?.ServicioID ?? null;
+      empresaIdDb  = row?.empresa_id ?? null;
+    } catch {}
+
+    const sidResolved    = isSupervisor && sidFromDb != null ? String(sidFromDb).trim() : "";
+    const serviceName    = sidResolved ? resolveServiceName(sidResolved, pedido?.servicio?.name) : "";
+    const empresaNombre  = resolveEmpresaNombre(empresaIdDb);
+    const servicioParaPdf = isSupervisor && sidResolved
+      ? { id: sidResolved, name: serviceName || sidResolved }
+      : null;
 
     const pedidoParaPdf = {
       ...pedido,
-      rol,
-      servicio:
-        rol === "supervisor"
-          ? { id: sid || null, name: serviceName }
-          : null,
+      ServicioID: sidResolved || null,
+      Rol: rol,
+      empresaNombre,
+      servicio: servicioParaPdf,
     };
 
-    const { filename, buffer } =
-      await generateRemitoPDFBuffer({ pedido: pedidoParaPdf });
-
+    const { filename, buffer } = await generateRemitoPDFBuffer({ pedido: pedidoParaPdf });
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
     return res.send(buffer);
   } catch (e) {
+    console.error("[orders] GET /pdf/:id error:", e);
     return res.status(500).json({ error: "No se pudo generar el PDF" });
   }
 });
