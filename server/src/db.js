@@ -504,14 +504,20 @@ export function registrarCambioProducto({ productId, nombre, codigo, campo, ante
       ? (newNum ?? 0) - (antNum ?? 0)
       : null;
 
+    const nowArgentina = () => {
+      const ar = new Date(Date.now() - 3 * 60 * 60 * 1000);
+      return ar.toISOString().replace("T", " ").slice(0, 19);
+    };
+
     db.prepare(`
       INSERT INTO ProductoHistorial
         (product_id, product_name, product_code, fecha, tipo, campo, valor_anterior, valor_nuevo, diferencia, usuario)
-      VALUES (?, ?, ?, datetime('now','localtime'), ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       String(productId),
       nombre  ?? null,
       codigo  ?? null,
+      nowArgentina(),
       tipo,
       campo,
       (campo === "stock" || campo === "precio") ? antNum : (anterior ?? null),
@@ -593,29 +599,46 @@ export function getFutureIncomingForProduct(productId) {
   }
 }
 
-export function listCategories() {
+export function listCategories(empresaId = null) {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
   const { products, categories } = sch.tables;
   const { prodCat, prodCatName, catId, catName } = sch.cols;
 
   if (categories && prodCat && catId && catName) {
+    // Verificar si Categorias tiene empresa_id
+    const catInfo = tinfo(categories);
+    const hasEmpresaCat = catInfo.some(c => c.name === "empresa_id");
+    const eCatFilter = (hasEmpresaCat && empresaId != null)
+      ? `WHERE c.empresa_id = ${Number(empresaId)}`
+      : "";
+
     return db.prepare(`
       SELECT c.${catId} AS id, c.${catName} AS name, COUNT(p.${prodCat}) AS count
       FROM ${categories} c
       LEFT JOIN ${products} p ON p.${prodCat} = c.${catId}
+      ${eCatFilter}
       GROUP BY c.${catId}, c.${catName}
       ORDER BY c.${catName} COLLATE NOCASE
     `).all();
   }
+
   if (!categories && prodCatName) {
+    const prodInfo = tinfo(products);
+    const hasEmpresa = prodInfo.some(c => c.name === "empresa_id");
+    const eFilter = (hasEmpresa && empresaId != null)
+      ? `AND empresa_id = ${Number(empresaId)}`
+      : "";
+
     return db.prepare(`
       SELECT ${prodCatName} AS id, ${prodCatName} AS name, COUNT(*) AS count
       FROM ${products}
+      WHERE 1=1 ${eFilter}
       GROUP BY ${prodCatName}
       ORDER BY ${prodCatName} COLLATE NOCASE
     `).all();
   }
+
   if (prodCat) {
     return db.prepare(`
       SELECT ${prodCat} AS id, 'Categoría ' || ${prodCat} AS name, COUNT(*) AS count
@@ -624,11 +647,11 @@ export function listCategories() {
       ORDER BY ${prodCat}
     `).all();
   }
+
   const total = db.prepare(`SELECT COUNT(*) AS c FROM ${products}`).get()?.c ?? 0;
   return [{ id: "__all__", name: "Todos", count: total }];
 }
-
-export function listProductsByCategory(categoryId, { q = "", serviceId = null, role = null, roles = null } = {}) {
+export function listProductsByCategory(categoryId, { q = "", serviceId = null, role = null, roles = null, empresaId = null } = {}) {
   ensureVisibilitySchema();
   ensureIncomingStockTable();
 
@@ -685,7 +708,10 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
 
   const where = [];
   const params = [];
-
+   const prodInfoEmp = tinfo(products);
+  if (prodInfoEmp.some(c => c.name === "empresa_id") && empresaId != null) {
+    where.push(`p.empresa_id = ${Number(empresaId)}`);
+  }
   if (prodCat && categoryId !== "__all__") { where.push(`p.${prodCat} = ?`); params.push(categoryId); }
   else if (!prodCat && prodCatName && categoryId !== "__all__") { where.push(`p.${prodCatName} = ?`); params.push(categoryId); }
 
@@ -705,7 +731,12 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
     `);
     params.push(String(serviceId));
   }
-
+  // Filtro de empresas 
+  const prodInfo = tinfo(products);
+  const prodHasEmpresa = prodInfo.some(c => c.name === "empresa_id");
+  if (prodHasEmpresa && empresaId != null) {
+    where.push(`p.empresa_id = ${Number(empresaId)}`);
+  }
     if (!normRoles.length) {
     where.push(`1 = 0`);
   } else {
@@ -1101,9 +1132,14 @@ export function unassignService({ id, EmpleadoID, ServicioID }) {
   }
   return false;
 }
-export function listServicesByUser(userId) {
+export function listServicesByUser(userId, empresaId = null) {
   ensureSupervisorPivotExclusive();
   const spec = resolveServicesTable();
+  const srvInfo = tinfo("Servicios");
+  const hasEmpresa = srvInfo.some(c => c.name === "empresa_id");
+  const empresaFilter = (hasEmpresa && empresaId != null)
+    ? `AND s.empresa_id = ${Number(empresaId)}`
+    : "";
   const rows = db.prepare(`
     SELECT s.${spec.idCol} AS sid,
            ${spec.nameExpr} AS sname
@@ -1111,21 +1147,26 @@ export function listServicesByUser(userId) {
     JOIN ${spec.table} s
       ON CAST(s.${spec.idCol} AS TEXT) = CAST(a.ServicioID AS TEXT)
     WHERE CAST(a.EmpleadoID AS TEXT) = CAST(? AS TEXT)
+    ${empresaFilter}
     ORDER BY sname COLLATE NOCASE
   `).all(userId);
   return rows.map(r => ({ id: Number(r.sid), name: String(r.sname) }));
 }
 export function getAssignedServices(userId) { return listServicesByUser(userId); }
 export function getServiceNameById(servicioId) {
-  const spec = resolveServicesTable();
-  if (!spec) return null;
-  const row = db.prepare(`
-    SELECT ${spec.nameExpr} AS name
-    FROM ${spec.table} s
-    WHERE CAST(s.${spec.idCol} AS TEXT) = CAST(? AS TEXT)
-    LIMIT 1
-  `).get(servicioId);
-  return row?.name || null;
+  if (servicioId == null || String(servicioId).trim() === "") return null;
+  try {
+    const row = db.prepare(`
+      SELECT ServicioNombre AS name
+      FROM Servicios
+      WHERE CAST(ServiciosID AS TEXT) = CAST(? AS TEXT)
+      LIMIT 1
+    `).get(servicioId);
+    return row?.name ? String(row.name).trim() : null;
+  } catch (e) {
+    console.error("[db] getServiceNameById error:", e?.message || e);
+    return null;
+  }
 }
 export function ensureServiceProductsPivot() {
   try {
@@ -1267,9 +1308,14 @@ export function setBudgetForService(servicioId, presupuesto, maxPct = DEFAULT_SE
   }
   return getBudgetSettingsByServiceId(servicioId);
 }
-export function listServiceBudgets() {
+export function listServiceBudgets(empresaId = null) {
   ensureServiceBudgetTable();
   const spec = resolveServicesTable();
+  const srvInfo = tinfo("Servicios");
+  const hasEmpresa = srvInfo.some(c => c.name === "empresa_id");
+  const empresaFilter = (hasEmpresa && empresaId != null)
+    ? `AND s.empresa_id = ${Number(empresaId)}`
+    : "";
   try {
     return db.prepare(`
       SELECT s.${spec.idCol} AS id,
@@ -1279,13 +1325,13 @@ export function listServiceBudgets() {
       FROM ${spec.table} s
       LEFT JOIN service_budget b
         ON CAST(b.ServicioID AS TEXT) = CAST(s.${spec.idCol} AS TEXT)
+      WHERE 1=1 ${empresaFilter}
       ORDER BY name COLLATE NOCASE
     `).all();
   } catch {
     return [];
   }
 }
-
 export function getEmployeeDisplayName(userId) {
   try {
     const row = db.prepare(`
@@ -1304,29 +1350,46 @@ export function getEmployeeDisplayName(userId) {
   }
 }
 
-export function adminListCategoriesForSelect() {
+export function adminListCategoriesForSelect(empresaId = null) {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
 
   const { products, categories } = sch.tables;
-  const { prodCatName, catId, catName } = sch.cols;
+  const { prodCatName, catId, catName, prodCat } = sch.cols;
+  console.log("[adminListCategories] categories:", categories, "empresaId:", empresaId);
 
   if (categories && catId && catName) {
+    // Verificar si Categorias tiene empresa_id
+    const catInfo = tinfo(categories);
+    const hasEmpresaCat = catInfo.some(c => c.name === "empresa_id");
+    const eCatFilter = (hasEmpresaCat && empresaId != null)
+      ? `WHERE empresa_id = ${Number(empresaId)}`
+      : "";
+
     return db.prepare(`
       SELECT ${catId} AS id, ${catName} AS name
       FROM ${categories}
+      ${eCatFilter}
       ORDER BY ${catName} COLLATE NOCASE
     `).all();
   }
+
   if (prodCatName) {
+    const prodInfo2 = tinfo(products);
+    const hasEmpresa = prodInfo2.some(c => c.name === "empresa_id");
+    const eFilter = (hasEmpresa && empresaId != null)
+      ? `AND p.empresa_id = ${Number(empresaId)}`
+      : "";
+
     return db.prepare(`
       SELECT TRIM(${prodCatName}) AS name, TRIM(${prodCatName}) AS id
-      FROM ${products}
-      WHERE TRIM(IFNULL(${prodCatName}, '')) <> ''
+      FROM ${products} p
+      WHERE TRIM(IFNULL(${prodCatName}, '')) <> '' ${eFilter}
       GROUP BY TRIM(${prodCatName})
       ORDER BY TRIM(${prodCatName}) COLLATE NOCASE
     `).all();
   }
+
   return [];
 }
 export function adminGetProductById(id) {
@@ -1377,6 +1440,13 @@ export function adminCreateProduct(fields = {}) {
     cols.push(prodCat); vals.push("?"); args.push(fields.categoryId);
   } else if (!prodCat && prodCatName && fields.categoryName != null) {
     cols.push(prodCatName); vals.push("?"); args.push(String(fields.categoryName).trim());
+  }
+
+  // Agregar empresa_id si la columna existe y se pasó el valor
+  const prodInfo = tinfo(products);
+  const hasEmpresa = prodInfo.some(c => c.name === "empresa_id");
+  if (hasEmpresa && fields.empresaId != null) {
+    cols.push("empresa_id"); vals.push("?"); args.push(Number(fields.empresaId));
   }
 
   const sql = `INSERT INTO ${products} (${cols.join(",")}) VALUES (${vals.join(",")})`;
