@@ -65,9 +65,9 @@ router.get("/products/_schema", mustBeAdmin, (_req, res) => {
   }
 });
 
-router.get("/product-categories", mustBeAdmin, (_req, res) => {
+router.get("/product-categories", mustBeAdmin, (req, res) => {
   try {
-    res.json(adminListCategoriesForSelect());
+    res.json(adminListCategoriesForSelect(req.user?.empresaId ?? 1));
   } catch {
     res.status(500).json({ error: "No se pudieron cargar las categorías" });
   }
@@ -1562,27 +1562,30 @@ router.delete("/services/:id", mustBeAdmin, (req, res) => {
 
 router.post("/services-create", mustBeAdmin, (req, res) => {
   try {
-    const name = String(req.body?.name ?? "").trim();
+    const name      = String(req.body?.name ?? "").trim();
+    const empresaId = req.user?.empresaId ?? 1;
+
     if (!name) return res.status(400).json({ error: "El nombre es obligatorio" });
 
-    const exists = db
-      .prepare(
-        `
-        SELECT 1
-        FROM Servicios
-        WHERE lower(trim(${SRV_NAME})) = lower(trim(?))
-        LIMIT 1
-      `
-      )
-      .get(name);
+    const srvCols    = db.prepare("PRAGMA table_info(Servicios)").all().map(c => c.name.toLowerCase());
+    const hasEmpresa = srvCols.includes("empresa_id");
+
+    const exists = hasEmpresa
+      ? db.prepare(`SELECT 1 FROM Servicios WHERE lower(trim(${SRV_NAME})) = lower(trim(?)) AND empresa_id = ? LIMIT 1`).get(name, empresaId)
+      : db.prepare(`SELECT 1 FROM Servicios WHERE lower(trim(${SRV_NAME})) = lower(trim(?)) LIMIT 1`).get(name);
 
     if (exists) {
       return res.status(409).json({ error: "Ya existe un servicio con ese nombre" });
     }
 
-    const info = db.prepare(`INSERT INTO Servicios (${SRV_NAME}) VALUES (?)`).run(name);
-    const id = Number(info.lastInsertRowid);
+    let info;
+    if (hasEmpresa) {
+      info = db.prepare(`INSERT INTO Servicios (${SRV_NAME}, empresa_id) VALUES (?, ?)`).run(name, empresaId);
+    } else {
+      info = db.prepare(`INSERT INTO Servicios (${SRV_NAME}) VALUES (?)`).run(name);
+    }
 
+    const id = Number(info.lastInsertRowid);
     return res.status(201).json({ ok: true, service: { id, name } });
   } catch (e) {
     console.error("POST /admin/services-create error:", e);
@@ -1734,10 +1737,11 @@ router.delete("/assignments/:id", mustBeAdmin, (req, res) => {
    Presupuestos por servicio
    ========================= */
 
-router.get("/service-budgets", mustBeAdmin, (_req, res) => {
+router.get("/service-budgets", mustBeAdmin, (req, res) => {
   try {
     res.json(listServiceBudgets(req.user?.empresaId ?? 1));
   } catch (e) {
+    console.error("[admin] GET /service-budgets error:", e?.message || e);
     res.status(500).json({ error: "Error al listar presupuestos" });
   }
 });
@@ -2242,11 +2246,14 @@ router.post("/employees", mustBeAdmin, async (req, res) => {
     if (!password?.trim())
       return res.status(400).json({ ok: false, error: "La contraseña es obligatoria" });
  
-    const existing = db.prepare(
-      "SELECT EmpleadosID FROM Empleados WHERE LOWER(TRIM(username)) = LOWER(TRIM(?))"
-    ).get(username.trim());
-    if (existing)
-      return res.status(409).json({ ok: false, error: "Ya existe un empleado con ese username" });
+    const empresaIdCheck = req.user?.empresaId ?? 1;
+    const empColsCheck   = db.prepare("PRAGMA table_info(Empleados)").all().map(c => c.name.toLowerCase());
+    const hasEmpCheck    = empColsCheck.includes("empresa_id");
+    const existing = hasEmpCheck
+      ? db.prepare("SELECT EmpleadosID FROM Empleados WHERE LOWER(TRIM(username)) = LOWER(TRIM(?)) AND empresa_id = ?").get(username.trim(), empresaIdCheck)
+      : db.prepare("SELECT EmpleadosID FROM Empleados WHERE LOWER(TRIM(username)) = LOWER(TRIM(?))").get(username.trim());
+      if (existing)
+        return res.status(409).json({ ok: false, error: "Ya existe un empleado con ese username" });
  
     const hash   = await argon2.hash(password, { type: argon2.argon2id });
     const active = isActive === false || isActive === "false" || isActive === 0 ? 0 : 1;

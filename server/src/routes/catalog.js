@@ -10,9 +10,9 @@ function getEmpresaId(req) {
   return req.user?.empresaId ?? 1;
 }
 
-router.get("/categories", requireAuth, (_req, res) => {
+router.get("/categories", requireAuth, (req, res) => {
   try {
-    res.json(listCategories());
+    res.json(listCategories(req.user?.empresaId ?? 1));
   } catch (e) {
     console.error("[/catalog/categories]", e);
     res.status(500).json({ error: "No se pudieron cargar las categorías" });
