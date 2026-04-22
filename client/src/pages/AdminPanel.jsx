@@ -82,6 +82,9 @@ function ProductsSection() {
   const [cats, setCats] = useState([]);
   const [catsErr, setCatsErr] = useState("");
   const [catFilter, setCatFilter] = useState("");
+  const [newCatName, setNewCatName] = useState("");
+  const [creatingCat, setCreatingCat] = useState(false);
+  const [deletingCat, setDeletingCat] = useState(false);
 
   const catIdByName = useMemo(() => {
     const m = new Map();
@@ -432,6 +435,76 @@ const onEdit = async (row) => {
     }
   };
 
+  const onCreateCategory = async () => {
+    const name = String(newCatName || "").trim();
+
+    if (!name) {
+      setCatsErr("Escribí un nombre para la categoría.");
+      return;
+    }
+
+    setCreatingCat(true);
+    setCatsErr("");
+    setStatusMsg("");
+
+    try {
+      const { data } = await api.post("/api/admin/product-categories", { name });
+      const created = data?.category ?? null;
+
+      await loadCats();
+
+      if (created?.id != null) {
+        setDraft((d) => ({ ...d, catId: String(created.id) }));
+        setCatTouched(true);
+      }
+
+      setNewCatName("");
+      setStatusMsg(
+        created?.created === false
+          ? "La categoría ya existía y quedó seleccionada."
+          : "Categoría creada."
+      );
+    } catch (e) {
+      setCatsErr(
+        e?.response?.data?.error || e?.message || "No se pudo crear la categoría"
+      );
+    } finally {
+      setCreatingCat(false);
+    }
+  };
+
+  const onDeleteCategory = async () => {
+    const categoryId = String(draft.catId || "").trim();
+
+    if (!categoryId) {
+      setCatsErr("Seleccioná una categoría para eliminar.");
+      return;
+    }
+
+    const selected = cats.find((c) => String(c.id) === categoryId);
+    const label = selected?.name || `#${categoryId}`;
+
+    if (!confirm(`¿Eliminar la categoría "${label}"?`)) return;
+
+    setDeletingCat(true);
+    setCatsErr("");
+    setStatusMsg("");
+
+    try {
+      await api.delete(`/api/admin/product-categories/${categoryId}`);
+      await loadCats();
+      setDraft((d) => ({ ...d, catId: "" }));
+      setCatTouched(true);
+      setStatusMsg("Categoría eliminada.");
+    } catch (e) {
+      setCatsErr(
+        e?.response?.data?.error || e?.message || "No se pudo eliminar la categoría"
+      );
+    } finally {
+      setDeletingCat(false);
+    }
+  };
+
   return (
     <section className="srv-card" aria-labelledby="products-heading">
       <div className="section-header">
@@ -593,6 +666,40 @@ const onEdit = async (row) => {
                   {catsErr}
                 </div>
               )}
+            </label>
+            <label>
+              <span>Nueva categoria</span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  className="input"
+                  value={newCatName}
+                  onChange={(e) => setNewCatName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      onCreateCategory();
+                    }
+                  }}
+                  placeholder="Ej: Limpieza"
+                />
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={onCreateCategory}
+                  disabled={creatingCat}
+                >
+                  {creatingCat ? "Creando..." : "Crear"}
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={onDeleteCategory}
+                  disabled={deletingCat || !draft.catId}
+                  title={!draft.catId ? "Seleccioná una categoría" : ""}
+                >
+                  {deletingCat ? "Eliminando..." : "Eliminar"}
+                </button>
+              </div>
             </label>
             <label>
   <span>Visible para</span>
