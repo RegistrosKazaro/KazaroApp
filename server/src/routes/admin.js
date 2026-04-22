@@ -6,6 +6,8 @@ import argon2 from "argon2";
 import {
   db,
   discoverCatalogSchema,
+  adminCreateCategory,
+  adminDeleteCategory,
   adminListCategoriesForSelect,
   adminGetProductById,
   listServiceBudgets,
@@ -69,6 +71,24 @@ router.get("/product-categories", mustBeAdmin, (_req, res) => {
     res.json(adminListCategoriesForSelect());
   } catch {
     res.status(500).json({ error: "No se pudieron cargar las categorías" });
+  }
+});
+
+router.post("/product-categories", mustBeAdmin, (req, res) => {
+  try {
+    const created = adminCreateCategory(req.body?.name ?? "");
+    res.status(created.created ? 201 : 200).json({ ok: true, category: created });
+  } catch (e) {
+    res.status(400).json({ error: e?.message || "No se pudo crear la categoría" });
+  }
+});
+
+router.delete("/product-categories/:id", mustBeAdmin, (req, res) => {
+  try {
+    const deleted = adminDeleteCategory(req.params.id);
+    res.json({ ok: true, category: deleted });
+  } catch (e) {
+    res.status(400).json({ error: e?.message || "No se pudo eliminar la categoría" });
   }
 });
 

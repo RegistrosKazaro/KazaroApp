@@ -1495,6 +1495,132 @@ export function adminListCategoriesForSelect(empresaId = null) {
 
   return [];
 }
+
+export function adminCreateCategory(name, empresaId = null) {
+  const sch = discoverCatalogSchema();
+  if (!sch.ok) throw new Error(sch.reason);
+
+  const { categories } = sch.tables;
+  const { catId, catName } = sch.cols;
+
+  if (!categories || !catId || !catName) {
+    throw new Error("La base actual no tiene una tabla de categorias editable.");
+  }
+
+  const cleanName = String(name ?? "").trim();
+  if (!cleanName) throw new Error("El nombre de la categoria es requerido.");
+
+  const catInfo = tinfo(categories);
+  const hasEmpresa = catInfo.some((c) => c.name === "empresa_id");
+
+  const existing = hasEmpresa && empresaId != null
+    ? db.prepare(`
+        SELECT ${catId} AS id, ${catName} AS name
+        FROM ${categories}
+        WHERE lower(trim(${catName})) = lower(trim(?))
+          AND empresa_id = ?
+        LIMIT 1
+      `).get(cleanName, Number(empresaId))
+    : db.prepare(`
+        SELECT ${catId} AS id, ${catName} AS name
+        FROM ${categories}
+        WHERE lower(trim(${catName})) = lower(trim(?))
+        LIMIT 1
+      `).get(cleanName);
+
+  if (existing) return { ...existing, created: false };
+
+  const cols = [catName];
+  const vals = ["?"];
+  const args = [cleanName];
+
+  if (hasEmpresa && empresaId != null) {
+    cols.push("empresa_id");
+    vals.push("?");
+    args.push(Number(empresaId));
+  }
+
+  const info = db
+    .prepare(`INSERT INTO ${categories} (${cols.join(", ")}) VALUES (${vals.join(", ")})`)
+    .run(...args);
+
+  const inserted = db.prepare(`
+    SELECT ${catId} AS id, ${catName} AS name
+    FROM ${categories}
+    WHERE CAST(${catId} AS TEXT) = CAST(? AS TEXT)
+    LIMIT 1
+  `).get(info.lastInsertRowid);
+
+  return {
+    id: inserted?.id ?? info.lastInsertRowid,
+    name: inserted?.name ?? cleanName,
+    created: true,
+  };
+}
+
+export function adminDeleteCategory(categoryId, empresaId = null) {
+  const sch = discoverCatalogSchema();
+  if (!sch.ok) throw new Error(sch.reason);
+
+  const { products, categories } = sch.tables;
+  const { prodCat, catId, catName } = sch.cols;
+
+  if (!categories || !catId || !catName) {
+    throw new Error("La base actual no tiene una tabla de categorias editable.");
+  }
+
+  const id = String(categoryId ?? "").trim();
+  if (!id) throw new Error("La categoria es requerida.");
+
+  const catInfo = tinfo(categories);
+  const hasEmpresa = catInfo.some((c) => c.name === "empresa_id");
+
+  const existing = hasEmpresa && empresaId != null
+    ? db.prepare(`
+        SELECT ${catId} AS id, ${catName} AS name
+        FROM ${categories}
+        WHERE CAST(${catId} AS TEXT) = CAST(? AS TEXT)
+          AND empresa_id = ?
+        LIMIT 1
+      `).get(id, Number(empresaId))
+    : db.prepare(`
+        SELECT ${catId} AS id, ${catName} AS name
+        FROM ${categories}
+        WHERE CAST(${catId} AS TEXT) = CAST(? AS TEXT)
+        LIMIT 1
+      `).get(id);
+
+  if (!existing) throw new Error("Categoría no encontrada.");
+
+  if (prodCat) {
+    const inUse = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM ${products}
+      WHERE CAST(${prodCat} AS TEXT) = CAST(? AS TEXT)
+    `).get(id);
+
+    const usedCount = Number(inUse?.count || 0);
+    if (usedCount > 0) {
+      throw new Error(`No se puede eliminar la categoría porque ${usedCount} producto(s) la están usando.`);
+    }
+  }
+
+  const info = hasEmpresa && empresaId != null
+    ? db.prepare(`
+        DELETE FROM ${categories}
+        WHERE CAST(${catId} AS TEXT) = CAST(? AS TEXT)
+          AND empresa_id = ?
+      `).run(id, Number(empresaId))
+    : db.prepare(`
+        DELETE FROM ${categories}
+        WHERE CAST(${catId} AS TEXT) = CAST(? AS TEXT)
+      `).run(id);
+
+  if (!info.changes) throw new Error("No se pudo eliminar la categoría.");
+
+  return { id: existing.id, name: existing.name, deleted: true };
+}
+
 export function adminGetProductById(id) {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
