@@ -7,8 +7,12 @@ import {
   getBudgetSettingsByServiceId, DEFAULT_SERVICE_PCT,
   getUserRoles, listServicesByUser, getUserById, db,
 } from "../db.js";
+import { getWarehouseForChildService } from "../warehouses.js";
 import { generateRemitoPDFBuffer } from "../utils/remitoPdf.js";
 import { sendMail } from "../utils/mailer.js";
+
+// Mail que recibe copia de TODOS los pedidos de servicios hijos de un depósito.
+const DEPOSITO_CC_EMAIL = "gustavo.bacur@kazaro.com.ar";
 
 const router = Router();
 const pad7 = (n) => String(n ?? "").padStart(7, "0");
@@ -145,8 +149,25 @@ router.post("/", requireAuth, async (req, res) => {
     let mailStatus = { sent: false, skipped: true };
     try {
       const toArr = rol === "supervisor" && sidResolved ? getServiceEmails(sidResolved) || [] : [];
+
+      // Si el servicio del pedido es hijo de un depósito (ej: TADICOR, VIAL TRUCK, etc),
+      // agregar a Gustavo en CC. Para cualquier otro servicio, ccArr queda vacío
+      // y el mail sale exactamente igual que antes.
+      let ccArr = [];
+      try {
+        if (rol === "supervisor" && sidResolved) {
+          const warehouse = getWarehouseForChildService(sidResolved);
+          if (warehouse) {
+            ccArr = [DEPOSITO_CC_EMAIL];
+          }
+        }
+      } catch (e) {
+        console.warn("[orders] warehouse CC check skipped:", e?.message || e);
+      }
+
       const info = await sendMail({
         to: toArr.length ? toArr.join(",") : undefined,
+        cc: ccArr.length ? ccArr.join(",") : undefined,
         subject: `NUEVO PEDIDO DE INSUMOS #${nro}`,
         text: `Pedido #${nro} generado.`,
         attachments: buffer ? [{ filename, content: buffer, contentType: "application/pdf" }] : undefined,

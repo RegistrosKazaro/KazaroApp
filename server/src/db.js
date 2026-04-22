@@ -880,9 +880,26 @@ export function getServiceById(serviceId) {
   }
 }
 
-export function createOrder({ empleadoId, servicioId, nota, items, asRole = null, maxTotalAllowed = null }) {  if (!empleadoId || !Array.isArray(items) || items.length === 0) {
+export function createOrder({ empleadoId, servicioId, nota, items, asRole = null, maxTotalAllowed = null }) {
+  if (!empleadoId || !Array.isArray(items) || items.length === 0) {
     throw new Error("Datos de pedido inválidos");
   }
+
+  // Importamos warehouses acá adentro (no arriba del archivo) para evitar
+  // problemas de carga: en el arranque, db.js termina de exportar todo
+  // y recién después warehouses.js lo puede importar.
+  let getWarehouseForChildService, getWarehouseForLinkedService,
+      warehouseDecrementStock, warehouseIncrementStock, getWarehouseStock;
+  try {
+    const wh = globalThis.__warehousesModule;
+    if (wh) {
+      getWarehouseForChildService  = wh.getWarehouseForChildService;
+      getWarehouseForLinkedService = wh.getWarehouseForLinkedService;
+      warehouseDecrementStock      = wh.warehouseDecrementStock;
+      warehouseIncrementStock      = wh.warehouseIncrementStock;
+      getWarehouseStock            = wh.getWarehouseStock;
+    }
+  } catch {}
 
   let chosenRole = normalizeRoleName(asRole);
   if (!chosenRole || !userHasRole(empleadoId, chosenRole)) {
@@ -890,6 +907,17 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
   }
 
   const servicioIdForInsert = (chosenRole === "administrativo") ? null : (servicioId || null);
+
+  // Determinar qué tipo de pedido es:
+  //   childWarehouse  = un servicio hijo pide al depósito (OUT)
+  //   linkedWarehouse = el depósito mismo se repone del stock general (IN)
+  //   null            = flujo normal, descontar del stock general
+  const childWarehouse = (servicioIdForInsert && getWarehouseForChildService)
+    ? getWarehouseForChildService(servicioIdForInsert)
+    : null;
+  const linkedWarehouse = (!childWarehouse && servicioIdForInsert && getWarehouseForLinkedService)
+    ? getWarehouseForLinkedService(servicioIdForInsert)
+    : null;
 
   const tx = db.transaction(() => {
     let total = 0;
@@ -935,7 +963,79 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
 
       const precio = row.price != null ? Number(row.price) : 0;
 
-      if (hasStock) {
+      // ═══════════════════════════════════════════════════════════
+      // CASO A: servicio hijo → sacar del DEPÓSITO (no del general)
+      // ═══════════════════════════════════════════════════════════
+      if (childWarehouse && warehouseDecrementStock && getWarehouseStock) {
+        const avail = getWarehouseStock(childWarehouse.id, pid);
+        if (avail < cantidad) {
+          throw new Error(
+            avail <= 0
+              ? `Sin stock en ${childWarehouse.name}: ${row.name}`
+              : `Stock insuficiente en ${childWarehouse.name}: ${row.name} (máx ${avail})`
+          );
+        }
+        warehouseDecrementStock({
+          warehouseId: childWarehouse.id,
+          productId:   pid,
+          qty:         cantidad,
+          serviceId:   servicioIdForInsert,
+          pedidoId,
+          name:        row.name,
+          code:        row.code || null,
+          price:       precio,
+        });
+      }
+
+      // ═══════════════════════════════════════════════════════════
+      // CASO B: depósito reponiendo → descontar general + sumar al depósito
+      // ═══════════════════════════════════════════════════════════
+      else if (linkedWarehouse && warehouseIncrementStock) {
+        if (hasStock) {
+          const available = Number(row.stock ?? 0);
+          if (available >= cantidad) {
+            const upd = db.prepare(`
+              UPDATE ${products}
+              SET ${prodStock} = ${prodStock} - ?
+              WHERE ${prodId} = ? AND COALESCE(${prodStock},0) >= ?
+            `).run(cantidad, pid, cantidad);
+            if (upd.changes !== 1) {
+              const again = db.prepare(
+                `SELECT COALESCE(${prodStock},0) AS stock FROM ${products} WHERE ${prodId} = ? LIMIT 1`
+              ).get(pid)?.stock ?? 0;
+              throw new Error(
+                again <= 0
+                  ? `Sin stock: ${row.name}`
+                  : `Stock insuficiente: ${row.name} (máx ${again})`
+              );
+            }
+          } else {
+            const { incoming } = getFutureIncomingForProduct(pid);
+            if (!(available <= 0 && incoming >= cantidad)) {
+              throw new Error(
+                available <= 0
+                  ? `Sin stock: ${row.name}`
+                  : `Stock insuficiente: ${row.name} (máx ${available})`
+              );
+            }
+          }
+        }
+        warehouseIncrementStock({
+          warehouseId: linkedWarehouse.id,
+          productId:   pid,
+          qty:         cantidad,
+          serviceId:   servicioIdForInsert,
+          pedidoId,
+          name:        row.name,
+          code:        row.code || null,
+          price:       precio,
+        });
+      }
+
+      // ═══════════════════════════════════════════════════════════
+      // CASO C: flujo normal (código original, sin cambios)
+      // ═══════════════════════════════════════════════════════════
+      else if (hasStock) {
         const available = Number(row.stock ?? 0);
 
         if (available >= cantidad) {
@@ -959,6 +1059,7 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
           const { incoming } = getFutureIncomingForProduct(pid);
 
           if (available <= 0 && incoming >= cantidad) {
+            // permitido contra ingreso futuro (comportamiento original)
           } else {
             throw new Error(
               available <= 0
@@ -968,15 +1069,17 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
           }
         }
       }
+
       const subtotal = precio * cantidad;
       total += subtotal;
       insItem.run(pedidoId, pid, row.name, precio, cantidad, subtotal, row.code || "");
     }
+
     if (Number.isFinite(maxTotalAllowed) && total > maxTotalAllowed) {
       const err = new Error("ORDER_OVER_LIMIT");
       err.code = "ORDER_OVER_LIMIT";
       throw err;
-    }    
+    }
     db.prepare(`UPDATE Pedidos SET Total = ? WHERE PedidoID = ?`).run(total, pedidoId);
     return pedidoId;
   });
@@ -1513,3 +1616,17 @@ export function adminUpdateProduct(id, fields = {}) {
   return db.prepare(sql).get(id, id);
   
 }
+
+import("./warehouses.js")
+  .then((mod) => {
+    globalThis.__warehousesModule = mod;
+    try {
+      mod.ensureWarehouseSeed();
+      console.log("[db] warehouses inicializado");
+    } catch (e) {
+      console.error("[db] warehouse seed error:", e?.message || e);
+    }
+  })
+  .catch((e) => {
+    console.error("[db] no se pudo cargar warehouses.js:", e?.message || e);
+  });

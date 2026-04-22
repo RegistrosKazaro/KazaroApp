@@ -2,6 +2,10 @@
 import express from "express";
 import { requireAuth } from "../middleware/auth.js";
 import { listCategories, listProductsByCategory, db } from "../db.js";
+import {
+  getWarehouseForChildService,
+  getWarehouseStockMap,
+} from "../warehouses.js";
 
 const router = express.Router();
 
@@ -28,6 +32,31 @@ router.get("/products", requireAuth, (req, res) => {
       serviceId,
       roles: userRoles
     });
+
+    // Si el serviceId corresponde a un servicio HIJO de un depósito,
+    // reemplazamos el campo "stock" de cada producto por el stock del depósito.
+    // Así la tarjeta en Products.jsx se desactiva automáticamente
+    // cuando el depósito no tiene (muestra "Sin stock" igual que siempre).
+    if (serviceId) {
+      try {
+        const warehouse = getWarehouseForChildService(serviceId);
+        if (warehouse) {
+          const stockMap = getWarehouseStockMap(warehouse.id);
+          for (const r of rows) {
+            const pid = String(r.id);
+            const whStock = stockMap.has(pid) ? stockMap.get(pid) : 0;
+            r.stock = whStock;
+            // Ocultamos los ingresos futuros porque son del stock general,
+            // no del depósito.
+            r.incoming = 0;
+            r.nextEta = null;
+          }
+        }
+      } catch (e) {
+        // Si warehouses no está inicializado, seguimos con el stock general.
+        console.warn("[/catalog/products] warehouse check skipped:", e?.message || e);
+      }
+    }
 
     res.json(rows);
   } catch (e) {

@@ -1222,6 +1222,8 @@ export default function Reports() {
                   ["dias", "📆 Por día"],
                   ["anual", "📈 Anual"],
                   ["trazabilidad", "🧭 Trazabilidad"],
+                  ["deposito", "🏭 Depósito Mendoza"],
+                  ["deposito_uniformes", "👕 Depósito Uniformes"],
                 ].map(([k, l]) => (
                   <button key={k} type="button" className={`pill${monthlyView === k ? "" : " pill--ghost"}`} onClick={() => setMonthlyView(k)}>{l}</button>
                 ))}
@@ -2003,6 +2005,20 @@ export default function Reports() {
                 )}
               </div>
             )}
+
+            {/* ============================================================
+                VISTA: DEPÓSITO MENDOZA
+                ============================================================ */}
+            {monthlyView === "deposito" && (
+              <WarehousePanel year={year} month={month} warehouseName="DEPOSITO MENDOZA" />
+            )}
+
+            {/* ============================================================
+                VISTA: DEPÓSITO UNIFORMES
+                ============================================================ */}
+            {monthlyView === "deposito_uniformes" && (
+              <WarehousePanel year={year} month={month} warehouseName="DEPOSITO UNIFORMES" />
+            )}
           </section>
 
           {/* ============================================================
@@ -2102,5 +2118,237 @@ export default function Reports() {
         </>
       )}
     </section>
+  );
+}
+/* =====================================================================
+   PESTAÑA "DEPÓSITO"
+   Muestra movimientos de un depósito específico en el mes seleccionado.
+   Recibe warehouseName para decidir cuál depósito mostrar.
+   ===================================================================== */
+
+function WarehousePanel({ year, month, warehouseName }) {
+  const [selectedId, setSelectedId] = useState(null);
+  const [notFound, setNotFound] = useState(false);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  // Buscar el depósito por nombre (case-insensitive, sin acentos)
+  useEffect(() => {
+    let cancelled = false;
+    setSelectedId(null);
+    setNotFound(false);
+    setData(null);
+    (async () => {
+      try {
+        const { data } = await api.get("/reports/warehouses");
+        if (cancelled) return;
+        const list = Array.isArray(data) ? data : [];
+
+        const normalize = (s) => String(s || "")
+          .normalize("NFD")
+          .replace(/\p{Diacritic}/gu, "")
+          .toUpperCase()
+          .trim();
+        const wanted = normalize(warehouseName);
+
+        const found = list.find(w => normalize(w.name) === wanted);
+        if (found) {
+          setSelectedId(found.id);
+        } else {
+          setNotFound(true);
+        }
+      // eslint-disable-next-line no-unused-vars
+      } catch (e) {
+        if (!cancelled) setError("No se pudieron cargar los depósitos");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [warehouseName]);
+
+  // Cargar el reporte del depósito seleccionado
+  useEffect(() => {
+    if (!selectedId) return;
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    api.get(`/reports/warehouse/${selectedId}`, { params: { year, month } })
+      .then(({ data }) => { if (!cancelled) setData(data); })
+      .catch(() => { if (!cancelled) setError("No se pudo cargar el informe del depósito"); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedId, year, month]);
+
+  if (notFound) {
+    return (
+      <div className="state" style={{ marginTop: 16 }}>
+        El depósito "{warehouseName}" todavía no está creado. Creá el depósito desde el panel para ver su reporte.
+      </div>
+    );
+  }
+  if (loading) return <div className="state" style={{ marginTop: 16 }}>Cargando depósito…</div>;
+  if (error) return <div className="state error" style={{ marginTop: 16 }}>{error}</div>;
+  if (!data) return <div className="state" style={{ marginTop: 16 }}>Sin datos.</div>;
+
+  const monthTxt = `${monthNameEs(month)} ${year}`;
+  const t = data.totals || {};
+  const tIn = data.totals_in || {};
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <header className="reports-section-header">
+        <div className="reports-section-title">
+          <h2>{data.warehouse?.name || "Depósito"}</h2>
+          {data.child_services?.length > 0 && (
+            <div style={{ fontSize: "0.85rem", opacity: 0.75, marginTop: 4 }}>
+              Servicios asociados: {data.child_services.map(c => c.serviceName).join(" · ")}
+            </div>
+          )}
+        </div>
+      </header>
+
+      <div className="rp-kpi-row" style={{ marginTop: 12 }}>
+        <div className="reports-summary-card reports-summary-card--main">
+          <div className="reports-summary-label">Salidas del mes</div>
+          <div className="reports-summary-value">{niceNumber(t.ordersCount)}</div>
+          <div className="reports-summary-sub">pedidos despachados</div>
+        </div>
+        <div className="reports-summary-card">
+          <div className="reports-summary-label">Unidades despachadas</div>
+          <div className="reports-summary-value">{niceNumber(t.itemsCount)}</div>
+        </div>
+        <div className="reports-summary-card">
+          <div className="reports-summary-label">Monto de salidas</div>
+          <div className="reports-summary-value">{niceCurrency(t.amount)}</div>
+        </div>
+        <div className="reports-summary-card">
+          <div className="reports-summary-label">Ingresos al depósito</div>
+          <div className="reports-summary-value">{niceNumber(tIn.itemsCount)}</div>
+          <div className="reports-summary-sub">{niceCurrency(tIn.amount)}</div>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 20 }}>
+        <h3 className="reports-subtitle">Consumo por servicio — {monthTxt}</h3>
+        {data.by_service?.length ? (
+          <div className="reports-table-wrapper">
+            <table className="reports-table">
+              <thead>
+                <tr>
+                  <th>Servicio</th>
+                  <th className="numeric">Pedidos</th>
+                  <th className="numeric">Unidades</th>
+                  <th className="numeric">Monto</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.by_service.map((r, i) => (
+                  <tr key={i}>
+                    <td>{r.serviceName}</td>
+                    <td className="numeric">{niceNumber(r.pedidos)}</td>
+                    <td className="numeric">{niceNumber(r.qty)}</td>
+                    <td className="numeric">{niceCurrency(r.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="state">Sin movimientos de servicios en el mes.</div>
+        )}
+      </div>
+
+      <div style={{ marginTop: 20 }}>
+        <h3 className="reports-subtitle">Top insumos despachados — {monthTxt}</h3>
+        {data.top_products?.length ? (
+          <div className="reports-table-wrapper">
+            <table className="reports-table">
+              <thead>
+                <tr>
+                  <th>Código</th>
+                  <th>Insumo</th>
+                  <th className="numeric">Cant.</th>
+                  <th className="numeric">Pedidos</th>
+                  <th className="numeric">Monto</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.top_products.map((r, i) => (
+                  <tr key={i}>
+                    <td>{r.code}</td>
+                    <td>{r.name}</td>
+                    <td className="numeric">{niceNumber(r.qty)}</td>
+                    <td className="numeric">{niceNumber(r.pedidos)}</td>
+                    <td className="numeric">{niceCurrency(r.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="state">Sin salidas en el mes.</div>
+        )}
+      </div>
+
+      <div style={{ marginTop: 20 }}>
+        <h3 className="reports-subtitle">Pedidos del mes</h3>
+        {data.orders?.length ? (
+          <div className="reports-table-wrapper">
+            <table className="reports-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Fecha</th>
+                  <th>Servicio</th>
+                  <th className="numeric">Unid.</th>
+                  <th className="numeric">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.orders.map(o => (
+                  <tr key={o.id}>
+                    <td>#{o.id}</td>
+                    <td>{niceDate(o.fecha)}</td>
+                    <td>{o.serviceName}</td>
+                    <td className="numeric">{niceNumber(o.qty)}</td>
+                    <td className="numeric">{niceCurrency(o.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="state">Sin pedidos en el mes.</div>
+        )}
+      </div>
+
+      <div style={{ marginTop: 20 }}>
+        <h3 className="reports-subtitle">Stock actual en depósito</h3>
+        {data.current_stock?.length ? (
+          <div className="reports-table-wrapper">
+            <table className="reports-table">
+              <thead>
+                <tr>
+                  <th>Código</th>
+                  <th>Insumo</th>
+                  <th className="numeric">Stock actual</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.current_stock.map((r, i) => (
+                  <tr key={i}>
+                    <td>{r.code}</td>
+                    <td>{r.name}</td>
+                    <td className="numeric">{niceNumber(r.stock)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="state">Sin stock registrado en el depósito.</div>
+        )}
+      </div>
+    </div>
   );
 }

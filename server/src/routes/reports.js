@@ -8,6 +8,11 @@ import {
   getEmployeeDisplayName,
 } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import {
+  listWarehouses,
+  getWarehouseById,
+  listWarehouseChildServices,
+} from "../warehouses.js";
 
 const router = Router();
 const mustBeAdmin = [requireAuth, requireRole(["admin", "Admin"])];
@@ -1033,6 +1038,222 @@ router.get("/service/:serviceId", mustBeAdmin, (req, res) => {
     console.error("[reports] GET /service/:serviceId error:", e);
     return res.status(500).json({
       error: "No se pudo construir el informe del servicio",
+    });
+  }
+});
+
+
+/* ======================= DEPÓSITOS (WAREHOUSES) ======================= */
+
+router.get("/warehouses", mustBeAdmin, (_req, res) => {
+  try {
+    const rows = listWarehouses();
+    return res.json(rows.map(w => ({
+      id: w.id,
+      name: w.name,
+      linkedServiceId: w.linkedServiceId || null,
+    })));
+  } catch (e) {
+    console.error("[reports] GET /warehouses error:", e);
+    return res.status(500).json({ error: "No se pudieron cargar los depósitos" });
+  }
+});
+
+router.get("/warehouse/:id", mustBeAdmin, (req, res) => {
+  const warehouseId = Number(req.params.id);
+  if (!Number.isFinite(warehouseId)) {
+    return res.status(400).json({ error: "id de depósito inválido" });
+  }
+
+  const warehouse = getWarehouseById(warehouseId);
+  if (!warehouse) {
+    return res.status(404).json({ error: "Depósito no encontrado" });
+  }
+
+  const { year, month, start, end } = (() => {
+    const r = monthRange(req.query.year, req.query.month);
+    const startQ = req.query.start
+      ? String(req.query.start).trim() + " 00:00:00"
+      : r.start;
+    const endQ = req.query.end
+      ? String(req.query.end).trim() + " 23:59:59"
+      : r.end;
+    return { ...r, start: startQ, end: endQ };
+  })();
+
+  try {
+    const totalsOut = db.prepare(`
+      SELECT
+        COUNT(DISTINCT pedido_id) AS ordersCount,
+        COALESCE(SUM(qty), 0)     AS itemsCount,
+        COALESCE(SUM(subtotal),0) AS amount
+      FROM warehouse_movements
+      WHERE warehouse_id = ?
+        AND type = 'OUT'
+        AND created_at >= ? AND created_at < ?
+    `).get(warehouseId, start, end) || { ordersCount: 0, itemsCount: 0, amount: 0 };
+
+    const totalsIn = db.prepare(`
+      SELECT
+        COUNT(DISTINCT pedido_id) AS ordersCount,
+        COALESCE(SUM(qty), 0)     AS itemsCount,
+        COALESCE(SUM(subtotal),0) AS amount
+      FROM warehouse_movements
+      WHERE warehouse_id = ?
+        AND type = 'IN'
+        AND created_at >= ? AND created_at < ?
+    `).get(warehouseId, start, end) || { ordersCount: 0, itemsCount: 0, amount: 0 };
+
+    const top_products = db.prepare(`
+      SELECT
+        product_id                  AS productId,
+        COALESCE(MAX(code), '')     AS code,
+        COALESCE(MAX(name), '')     AS name,
+        COUNT(DISTINCT pedido_id)   AS pedidos,
+        COALESCE(SUM(qty), 0)       AS qty,
+        COALESCE(SUM(subtotal), 0)  AS amount
+      FROM warehouse_movements
+      WHERE warehouse_id = ?
+        AND type = 'OUT'
+        AND created_at >= ? AND created_at < ?
+      GROUP BY product_id, LOWER(COALESCE(name,'')), LOWER(COALESCE(code,''))
+      ORDER BY amount DESC, qty DESC
+      LIMIT 15
+    `).all(warehouseId, start, end).map(r => ({
+      productId: r.productId,
+      code: String(r.code || ""),
+      name: String(r.name || ""),
+      pedidos: Number(r.pedidos || 0),
+      qty: Number(r.qty || 0),
+      amount: Number(r.amount || 0),
+    }));
+
+    const by_service_raw = db.prepare(`
+      SELECT
+        CAST(service_id AS TEXT)   AS serviceId,
+        COUNT(DISTINCT pedido_id)  AS pedidos,
+        COALESCE(SUM(qty), 0)      AS qty,
+        COALESCE(SUM(subtotal), 0) AS amount
+      FROM warehouse_movements
+      WHERE warehouse_id = ?
+        AND type = 'OUT'
+        AND created_at >= ? AND created_at < ?
+        AND service_id IS NOT NULL
+      GROUP BY service_id
+      ORDER BY amount DESC
+    `).all(warehouseId, start, end);
+
+    const by_service = by_service_raw.map(r => ({
+      serviceId: r.serviceId,
+      serviceName: resolveServiceName(r.serviceId),
+      pedidos: Number(r.pedidos || 0),
+      qty: Number(r.qty || 0),
+      amount: Number(r.amount || 0),
+    }));
+
+    const by_day = db.prepare(`
+      SELECT
+        SUBSTR(created_at, 1, 10)  AS day,
+        COUNT(DISTINCT pedido_id)  AS pedidos,
+        COALESCE(SUM(subtotal), 0) AS monto,
+        COALESCE(SUM(qty), 0)      AS qty
+      FROM warehouse_movements
+      WHERE warehouse_id = ?
+        AND type = 'OUT'
+        AND created_at >= ? AND created_at < ?
+      GROUP BY day
+      ORDER BY day
+    `).all(warehouseId, start, end).map(r => ({
+      day: r.day,
+      pedidos: Number(r.pedidos || 0),
+      monto: Number(r.monto || 0),
+      qty: Number(r.qty || 0),
+    }));
+
+    const orders = db.prepare(`
+      SELECT
+        m.pedido_id                    AS id,
+        MIN(m.created_at)              AS fecha,
+        CAST(MAX(m.service_id) AS TEXT) AS serviceId,
+        COALESCE(SUM(m.subtotal), 0)   AS total,
+        COALESCE(SUM(m.qty), 0)        AS qty
+      FROM warehouse_movements m
+      WHERE m.warehouse_id = ?
+        AND m.type = 'OUT'
+        AND m.created_at >= ? AND m.created_at < ?
+        AND m.pedido_id IS NOT NULL
+      GROUP BY m.pedido_id
+      ORDER BY fecha DESC
+    `).all(warehouseId, start, end).map(r => ({
+      id: Number(r.id),
+      fecha: r.fecha,
+      serviceId: r.serviceId,
+      serviceName: resolveServiceName(r.serviceId),
+      total: Number(r.total || 0),
+      qty: Number(r.qty || 0),
+    }));
+
+    const current_stock = db.prepare(`
+      SELECT
+        ws.product_id                AS productId,
+        COALESCE(ws.qty, 0)          AS qty,
+        (
+          SELECT m2.name FROM warehouse_movements m2
+          WHERE m2.warehouse_id = ws.warehouse_id
+            AND CAST(m2.product_id AS TEXT) = CAST(ws.product_id AS TEXT)
+          ORDER BY m2.id DESC LIMIT 1
+        ) AS name,
+        (
+          SELECT m2.code FROM warehouse_movements m2
+          WHERE m2.warehouse_id = ws.warehouse_id
+            AND CAST(m2.product_id AS TEXT) = CAST(ws.product_id AS TEXT)
+          ORDER BY m2.id DESC LIMIT 1
+        ) AS code
+      FROM warehouse_stock ws
+      WHERE ws.warehouse_id = ?
+      ORDER BY qty DESC
+    `).all(warehouseId).map(r => ({
+      productId: r.productId,
+      name: String(r.name || ""),
+      code: String(r.code || ""),
+      stock: Number(r.qty || 0),
+    }));
+
+    const child_service_ids = listWarehouseChildServices(warehouseId);
+    const child_services = child_service_ids.map(sid => ({
+      serviceId: sid,
+      serviceName: resolveServiceName(sid),
+    }));
+
+    return res.json({
+      ok: true,
+      period: { year, month, start, end },
+      warehouse: {
+        id: warehouse.id,
+        name: warehouse.name,
+        linkedServiceId: warehouse.linkedServiceId || null,
+      },
+      child_services,
+      totals: {
+        ordersCount: Number(totalsOut.ordersCount || 0),
+        itemsCount:  Number(totalsOut.itemsCount  || 0),
+        amount:      Number(totalsOut.amount      || 0),
+      },
+      totals_in: {
+        ordersCount: Number(totalsIn.ordersCount || 0),
+        itemsCount:  Number(totalsIn.itemsCount  || 0),
+        amount:      Number(totalsIn.amount      || 0),
+      },
+      top_products,
+      by_service,
+      by_day,
+      orders,
+      current_stock,
+    });
+  } catch (e) {
+    console.error("[reports] GET /warehouse/:id error:", e);
+    return res.status(500).json({
+      error: "No se pudo construir el informe del depósito",
     });
   }
 });
