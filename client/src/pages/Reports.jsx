@@ -2014,10 +2014,10 @@ export default function Reports() {
             )}
 
             {/* ============================================================
-                VISTA: DEPÓSITO UNIFORMES
+                VISTA: DEPÓSITO UNIFORMES (basado en categoría Uniformes)
                 ============================================================ */}
             {monthlyView === "deposito_uniformes" && (
-              <WarehousePanel year={year} month={month} warehouseName="DEPOSITO UNIFORMES" />
+              <CategoryPanel year={year} month={month} categoryName="Uniformes" />
             )}
           </section>
 
@@ -2347,6 +2347,200 @@ function WarehousePanel({ year, month, warehouseName }) {
           </div>
         ) : (
           <div className="state">Sin stock registrado en el depósito.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* =====================================================================
+   PESTAÑA "DEPÓSITO UNIFORMES" (basado en categoría de productos)
+   No requiere un warehouse creado. Muestra los pedidos del mes que
+   contengan al menos un producto de la categoría "Uniformes".
+   ===================================================================== */
+
+function CategoryPanel({ year, month, categoryName }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    setData(null);
+
+    api.get(`/reports/category/by-name/${encodeURIComponent(categoryName)}`, {
+      params: { year, month },
+    })
+      .then(({ data }) => { if (!cancelled) setData(data); })
+      .catch((e) => {
+        if (cancelled) return;
+        const status = e?.response?.status;
+        if (status === 404) {
+          setError(`La categoría "${categoryName}" no existe en la base de datos.`);
+        } else {
+          setError("No se pudo cargar el informe de la categoría.");
+        }
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [categoryName, year, month]);
+
+  if (loading) return <div className="state" style={{ marginTop: 16 }}>Cargando {categoryName}…</div>;
+  if (error) return <div className="state error" style={{ marginTop: 16 }}>{error}</div>;
+  if (!data) return <div className="state" style={{ marginTop: 16 }}>Sin datos.</div>;
+
+  const monthTxt = `${monthNameEs(month)} ${year}`;
+  const t = data.totals || {};
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <header className="reports-section-header">
+        <div className="reports-section-title">
+          <h2>Depósito {data.category?.name || categoryName}</h2>
+          <div style={{ fontSize: "0.85rem", opacity: 0.75, marginTop: 4 }}>
+            Reporte basado en la categoría de productos "{data.category?.name || categoryName}"
+          </div>
+        </div>
+      </header>
+
+      <div className="rp-kpi-row" style={{ marginTop: 12 }}>
+        <div className="reports-summary-card reports-summary-card--main">
+          <div className="reports-summary-label">Pedidos del mes</div>
+          <div className="reports-summary-value">{niceNumber(t.ordersCount)}</div>
+          <div className="reports-summary-sub">pedidos con {data.category?.name || categoryName}</div>
+        </div>
+        <div className="reports-summary-card">
+          <div className="reports-summary-label">Unidades despachadas</div>
+          <div className="reports-summary-value">{niceNumber(t.itemsCount)}</div>
+        </div>
+        <div className="reports-summary-card">
+          <div className="reports-summary-label">Monto total</div>
+          <div className="reports-summary-value">{niceCurrency(t.amount)}</div>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 20 }}>
+        <h3 className="reports-subtitle">Consumo por servicio — {monthTxt}</h3>
+        {data.by_service?.length ? (
+          <div className="reports-table-wrapper">
+            <table className="reports-table">
+              <thead>
+                <tr>
+                  <th>Servicio</th>
+                  <th className="numeric">Pedidos</th>
+                  <th className="numeric">Unidades</th>
+                  <th className="numeric">Monto</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.by_service.map((r, i) => (
+                  <tr key={i}>
+                    <td>{r.serviceName}</td>
+                    <td className="numeric">{niceNumber(r.pedidos)}</td>
+                    <td className="numeric">{niceNumber(r.qty)}</td>
+                    <td className="numeric">{niceCurrency(r.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="state">Sin movimientos de servicios en el mes.</div>
+        )}
+      </div>
+
+      <div style={{ marginTop: 20 }}>
+        <h3 className="reports-subtitle">Top productos despachados — {monthTxt}</h3>
+        {data.top_products?.length ? (
+          <div className="reports-table-wrapper">
+            <table className="reports-table">
+              <thead>
+                <tr>
+                  <th>Código</th>
+                  <th>Producto</th>
+                  <th className="numeric">Cant.</th>
+                  <th className="numeric">Pedidos</th>
+                  <th className="numeric">Monto</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.top_products.map((r, i) => (
+                  <tr key={i}>
+                    <td>{r.code}</td>
+                    <td>{r.name}</td>
+                    <td className="numeric">{niceNumber(r.qty)}</td>
+                    <td className="numeric">{niceNumber(r.pedidos)}</td>
+                    <td className="numeric">{niceCurrency(r.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="state">Sin productos en el mes.</div>
+        )}
+      </div>
+
+      <div style={{ marginTop: 20 }}>
+        <h3 className="reports-subtitle">Pedidos del mes</h3>
+        {data.orders?.length ? (
+          <div className="reports-table-wrapper">
+            <table className="reports-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Fecha</th>
+                  <th>Servicio</th>
+                  <th className="numeric">Unid.</th>
+                  <th className="numeric">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.orders.map(o => (
+                  <tr key={o.id}>
+                    <td>#{o.id}</td>
+                    <td>{niceDate(o.fecha)}</td>
+                    <td>{o.serviceName}</td>
+                    <td className="numeric">{niceNumber(o.qty)}</td>
+                    <td className="numeric">{niceCurrency(o.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="state">Sin pedidos en el mes.</div>
+        )}
+      </div>
+
+      <div style={{ marginTop: 20 }}>
+        <h3 className="reports-subtitle">Stock actual de productos</h3>
+        {data.current_stock?.length ? (
+          <div className="reports-table-wrapper">
+            <table className="reports-table">
+              <thead>
+                <tr>
+                  <th>Código</th>
+                  <th>Producto</th>
+                  <th className="numeric">Stock actual</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.current_stock.map((r, i) => (
+                  <tr key={i}>
+                    <td>{r.code}</td>
+                    <td>{r.name}</td>
+                    <td className="numeric">{niceNumber(r.stock)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="state">Sin productos en la categoría.</div>
         )}
       </div>
     </div>

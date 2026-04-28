@@ -106,6 +106,101 @@ function resolveServiceName(servicioId) {
   }
 }
 
+/* ======================= HELPER: filtro para el reporte GENERAL =======================
+   El reporte General (Resumen, Actividad, Insumos, Servicios, Por día, Anual,
+   Trazabilidad) debe EXCLUIR:
+     - Pedidos de los servicios que son "hijos" de algún depósito
+       (ej: TADICOR, VIAL TRUCK, RECURSOS HUMANOS, etc.).
+     - Pedidos que contengan al menos un producto de una categoría marcada
+       como "de depósito aparte" (por ahora solo "Uniformes").
+
+   Esta función devuelve:
+     { sqlExclusions, params }
+   donde sqlExclusions es un string listo para concatenar con AND, y params
+   son los parámetros posicionales a agregar.
+
+   Uso típico:
+     const { sqlExclusions, params: extra } = buildGeneralReportFilter();
+     const sql = `SELECT ... WHERE p.Fecha >= ? AND p.Fecha < ? ${sqlExclusions}`;
+     stmt.all(start, end, ...extra);
+======================================================================== */
+
+// Lista de nombres de categorías "separadas" (que tienen su propio reporte).
+// Si en el futuro sumás más categorías separadas, agregalas acá.
+const CATEGORIAS_SEPARADAS = ["Uniformes"];
+
+function buildGeneralReportFilter() {
+  const exclusions = [];
+  const params = [];
+
+  // 1) Excluir pedidos de servicios hijos de depósitos
+  try {
+    const childServiceIds = db.prepare(`
+      SELECT DISTINCT CAST(service_id AS TEXT) AS sid
+      FROM warehouse_services
+    `).all().map(r => r.sid);
+
+    if (childServiceIds.length) {
+      const placeholders = childServiceIds.map(() => "?").join(",");
+      exclusions.push(`
+        AND (p.ServicioID IS NULL OR CAST(p.ServicioID AS TEXT) NOT IN (${placeholders}))
+      `);
+      params.push(...childServiceIds);
+    }
+  } catch (e) {
+    // Si la tabla warehouse_services no existe todavía, no filtramos.
+  }
+
+  // 2) Excluir pedidos que contengan productos de categorías separadas.
+  //    Buscamos los IDs de categoría (puede haber duplicados por nombre).
+  try {
+    const catIdsSeparadas = [];
+    const catRows = db.prepare(`SELECT CategoriaID AS id, CategoriaNombre AS name FROM Categorias`).all();
+    const normalize = (s) => String(s || "")
+      .normalize("NFD")
+      .replace(/\p{Diacritic}/gu, "")
+      .toLowerCase()
+      .trim();
+
+    for (const r of catRows) {
+      const nm = normalize(r.name);
+      if (CATEGORIAS_SEPARADAS.some(c => normalize(c) === nm)) {
+        catIdsSeparadas.push(String(r.id));
+      }
+    }
+
+    if (catIdsSeparadas.length) {
+      // Necesitamos detectar la tabla de productos y la columna de categoría.
+      const prod = resolveProductsTableLocal();
+      if (prod) {
+        const prodInfo = _tinfo(prod.table);
+        const catCol = _pickCol(prodInfo, ["CategoriaID", "IdCategoria", "categoria_id"]);
+        if (catCol) {
+          const catPlaceholders = catIdsSeparadas.map(() => "?").join(",");
+          exclusions.push(`
+            AND NOT EXISTS (
+              SELECT 1
+              FROM PedidoItems pi2
+              JOIN ${prod.table} pr2 ON CAST(pr2.${prod.idCol} AS TEXT) = CAST(pi2.ProductoID AS TEXT)
+              WHERE pi2.PedidoID = p.PedidoID
+                AND CAST(pr2.${catCol} AS TEXT) IN (${catPlaceholders})
+            )
+          `);
+          params.push(...catIdsSeparadas);
+        }
+      }
+    }
+  } catch (e) {
+    // Si algo falla (tabla no existe, schema distinto), no filtramos.
+    console.warn("[reports] buildGeneralReportFilter categorias warn:", e?.message || e);
+  }
+
+  return {
+    sqlExclusions: exclusions.join(" "),
+    params,
+  };
+}
+
 /* ======================= LISTA DE SERVICIOS ======================= */
 
 router.get("/services", mustBeAdmin, (_req, res) => {
@@ -166,41 +261,40 @@ router.get("/monthly", mustBeAdmin, (req, res) => {
   })();
 
   try {
+    // Filtro para excluir pedidos de depósitos y categorías separadas
+    const { sqlExclusions, params: exclusionParams } = buildGeneralReportFilter();
+
+    // Helper corto para ejecutar queries con el filtro aplicado
+    const runSql = (sql, ...extraBefore) => {
+      return db.prepare(sql).get(...extraBefore, ...exclusionParams);
+    };
+    const runAll = (sql, ...extraBefore) => {
+      return db.prepare(sql).all(...extraBefore, ...exclusionParams);
+    };
+
     // Totales generales del período
     const totals = (() => {
-      const ordersCount =
-        db
-          .prepare(
-            `
+      const ordersCount = runSql(`
         SELECT COUNT(*) AS c
-        FROM Pedidos
-        WHERE Fecha >= ? AND Fecha < ?
-      `
-          )
-          .get(start, end)?.c || 0;
+        FROM Pedidos p
+        WHERE p.Fecha >= ? AND p.Fecha < ?
+        ${sqlExclusions}
+      `, start, end)?.c || 0;
 
-      const itemsCount =
-        db
-          .prepare(
-            `
+      const itemsCount = runSql(`
         SELECT COALESCE(SUM(i.Cantidad),0) AS c
         FROM PedidoItems i
         JOIN Pedidos p ON p.PedidoID = i.PedidoID
         WHERE p.Fecha >= ? AND p.Fecha < ?
-      `
-          )
-          .get(start, end)?.c || 0;
+        ${sqlExclusions}
+      `, start, end)?.c || 0;
 
-      const amount =
-        db
-          .prepare(
-            `
-        SELECT COALESCE(SUM(Total),0) AS s
-        FROM Pedidos
-        WHERE Fecha >= ? AND Fecha < ?
-      `
-          )
-          .get(start, end)?.s || 0;
+      const amount = runSql(`
+        SELECT COALESCE(SUM(p.Total),0) AS s
+        FROM Pedidos p
+        WHERE p.Fecha >= ? AND p.Fecha < ?
+        ${sqlExclusions}
+      `, start, end)?.s || 0;
 
       return {
         ordersCount: Number(ordersCount),
@@ -210,9 +304,7 @@ router.get("/monthly", mustBeAdmin, (req, res) => {
     })();
 
     // Top servicios por monto
-    const top_services_raw = db
-      .prepare(
-        `
+    const top_services_raw = runAll(`
       SELECT COALESCE(p.ServicioID,'')           AS serviceId,
              COUNT(DISTINCT p.PedidoID)          AS pedidos,
              COALESCE(SUM(i.Cantidad),0)         AS qty,
@@ -220,12 +312,11 @@ router.get("/monthly", mustBeAdmin, (req, res) => {
       FROM Pedidos p
       LEFT JOIN PedidoItems i ON i.PedidoID = p.PedidoID
       WHERE p.Fecha >= ? AND p.Fecha < ?
+      ${sqlExclusions}
       GROUP BY p.ServicioID
       ORDER BY amount DESC
       LIMIT 10
-    `
-      )
-      .all(start, end);
+    `, start, end);
 
     const top_services = top_services_raw.map((r) => ({
       serviceId: r.serviceId || null,
@@ -236,9 +327,7 @@ router.get("/monthly", mustBeAdmin, (req, res) => {
     }));
 
     // Top productos por monto
-    const top_products = db
-      .prepare(
-        `
+    const top_products = runAll(`
       SELECT COALESCE(i.ProductoID, 0)          AS productId,
              COALESCE(MAX(i.Codigo), '')        AS code,
              COALESCE(MAX(i.Nombre), '')        AS name,
@@ -248,40 +337,34 @@ router.get("/monthly", mustBeAdmin, (req, res) => {
       FROM PedidoItems i
       JOIN Pedidos p ON p.PedidoID = i.PedidoID
       WHERE p.Fecha >= ? AND p.Fecha < ?
+      ${sqlExclusions}
       GROUP BY i.ProductoID, LOWER(i.Nombre), LOWER(i.Codigo)
       ORDER BY amount DESC
       LIMIT 10
-    `
-      )
-      .all(start, end)
-      .map((r) => ({
-        productId: Number(r.productId || 0),
-        code: String(r.code || ""),
-        name: String(r.name || ""),
-        pedidos: Number(r.pedidos || 0),
-        qty: Number(r.qty || 0),
-        amount: Number(r.amount || 0),
-      }));
+    `, start, end).map((r) => ({
+      productId: Number(r.productId || 0),
+      code: String(r.code || ""),
+      name: String(r.name || ""),
+      pedidos: Number(r.pedidos || 0),
+      qty: Number(r.qty || 0),
+      amount: Number(r.amount || 0),
+    }));
 
     // Evolución diaria
-    const by_day = db
-      .prepare(
-        `
+    const by_day = runAll(`
       SELECT SUBSTR(p.Fecha,1,10)              AS day,
              COUNT(*)                          AS pedidos,
              COALESCE(SUM(p.Total),0)          AS monto
       FROM Pedidos p
       WHERE p.Fecha >= ? AND p.Fecha < ?
+      ${sqlExclusions}
       GROUP BY day
       ORDER BY day
-    `
-      )
-      .all(start, end)
-      .map((r) => ({
-        day: r.day,
-        pedidos: Number(r.pedidos || 0),
-        monto: Number(r.monto || 0),
-      }));
+    `, start, end).map((r) => ({
+      day: r.day,
+      pedidos: Number(r.pedidos || 0),
+      monto: Number(r.monto || 0),
+    }));
 
     // Totales del mes anterior (para comparativa ▲▼)
     const prevMonthRange = (() => {
@@ -292,22 +375,25 @@ router.get("/monthly", mustBeAdmin, (req, res) => {
 
     const prev_totals = (() => {
       try {
-        const ordersCount = db.prepare(`
-          SELECT COUNT(*) AS c FROM Pedidos
-          WHERE Fecha >= ? AND Fecha < ?
-        `).get(prevMonthRange.start, prevMonthRange.end)?.c || 0;
+        const ordersCount = runSql(`
+          SELECT COUNT(*) AS c FROM Pedidos p
+          WHERE p.Fecha >= ? AND p.Fecha < ?
+          ${sqlExclusions}
+        `, prevMonthRange.start, prevMonthRange.end)?.c || 0;
 
-        const itemsCount = db.prepare(`
+        const itemsCount = runSql(`
           SELECT COALESCE(SUM(i.Cantidad),0) AS c
           FROM PedidoItems i
           JOIN Pedidos p ON p.PedidoID = i.PedidoID
           WHERE p.Fecha >= ? AND p.Fecha < ?
-        `).get(prevMonthRange.start, prevMonthRange.end)?.c || 0;
+          ${sqlExclusions}
+        `, prevMonthRange.start, prevMonthRange.end)?.c || 0;
 
-        const amount = db.prepare(`
-          SELECT COALESCE(SUM(Total),0) AS s FROM Pedidos
-          WHERE Fecha >= ? AND Fecha < ?
-        `).get(prevMonthRange.start, prevMonthRange.end)?.s || 0;
+        const amount = runSql(`
+          SELECT COALESCE(SUM(p.Total),0) AS s FROM Pedidos p
+          WHERE p.Fecha >= ? AND p.Fecha < ?
+          ${sqlExclusions}
+        `, prevMonthRange.start, prevMonthRange.end)?.s || 0;
 
         return {
           ordersCount: Number(ordersCount),
@@ -365,6 +451,12 @@ function wma(series, key, weights) {
 function totalsForRange(start, end, serviceId) {
   const hasService = String(serviceId ?? "").trim() !== "";
 
+  // Si NO hay servicio específico, aplicamos el filtro general (excluir depósitos/uniformes).
+  // Si hay servicio específico, el caller ya sabe qué quiere y no filtramos.
+  const { sqlExclusions, params: exclusionParams } = hasService
+    ? { sqlExclusions: "", params: [] }
+    : buildGeneralReportFilter();
+
   const ordersCount = hasService
     ? (db.prepare(`
         SELECT COUNT(*) AS c
@@ -374,9 +466,10 @@ function totalsForRange(start, end, serviceId) {
       `).get(start, end, serviceId)?.c || 0)
     : (db.prepare(`
         SELECT COUNT(*) AS c
-        FROM Pedidos
-        WHERE Fecha >= ? AND Fecha < ?
-      `).get(start, end)?.c || 0);
+        FROM Pedidos p
+        WHERE p.Fecha >= ? AND p.Fecha < ?
+        ${sqlExclusions}
+      `).get(start, end, ...exclusionParams)?.c || 0);
 
   const itemsCount = hasService
     ? (db.prepare(`
@@ -391,7 +484,8 @@ function totalsForRange(start, end, serviceId) {
         FROM PedidoItems i
         JOIN Pedidos p ON p.PedidoID = i.PedidoID
         WHERE p.Fecha >= ? AND p.Fecha < ?
-      `).get(start, end)?.c || 0);
+        ${sqlExclusions}
+      `).get(start, end, ...exclusionParams)?.c || 0);
 
   const amount = hasService
     ? (db.prepare(`
@@ -401,10 +495,11 @@ function totalsForRange(start, end, serviceId) {
           AND CAST(ServicioID AS TEXT) = CAST(? AS TEXT)
       `).get(start, end, serviceId)?.s || 0)
     : (db.prepare(`
-        SELECT COALESCE(SUM(Total),0) AS s
-        FROM Pedidos
-        WHERE Fecha >= ? AND Fecha < ?
-      `).get(start, end)?.s || 0);
+        SELECT COALESCE(SUM(p.Total),0) AS s
+        FROM Pedidos p
+        WHERE p.Fecha >= ? AND p.Fecha < ?
+        ${sqlExclusions}
+      `).get(start, end, ...exclusionParams)?.s || 0);
 
   return {
     ordersCount: Number(ordersCount),
@@ -661,6 +756,9 @@ router.get("/traceability", mustBeAdmin, (req, res) => {
     const srv = resolveServicesTableLocal();
     const emp = resolveEmployeesTableLocal();
 
+    // Filtro para excluir pedidos de depósitos y categorías separadas
+    const { sqlExclusions, params: exclusionParams } = buildGeneralReportFilter();
+
     /* ===================== SALIDAS DEL MES ===================== */
     const outgoing = db.prepare(`
       SELECT
@@ -673,9 +771,10 @@ router.get("/traceability", mustBeAdmin, (req, res) => {
       FROM PedidoItems i
       JOIN Pedidos p ON p.PedidoID = i.PedidoID
       WHERE p.Fecha >= ? AND p.Fecha < ?
+      ${sqlExclusions}
       GROUP BY i.ProductoID, LOWER(i.Nombre), LOWER(i.Codigo)
       ORDER BY qty DESC, amount DESC
-    `).all(start, end).map((r) => ({
+    `).all(start, end, ...exclusionParams).map((r) => ({
       productId: Number(r.productId || 0),
       code: String(r.code || ""),
       name: String(r.name || ""),
@@ -772,9 +871,10 @@ router.get("/traceability", mustBeAdmin, (req, res) => {
         JOIN PedidoItems i ON i.PedidoID = p.PedidoID
         LEFT JOIN ${srv.table} s ON CAST(s.${srv.idCol} AS TEXT) = CAST(p.ServicioID AS TEXT)
         WHERE p.Fecha >= ? AND p.Fecha < ?
+        ${sqlExclusions}
         GROUP BY p.ServicioID
         ORDER BY amount DESC, qty DESC
-      `).all(start, end).map((r) => ({
+      `).all(start, end, ...exclusionParams).map((r) => ({
         serviceId: String(r.serviceId || ""),
         serviceName: String(r.serviceName || "—"),
         pedidos: Number(r.pedidos || 0),
@@ -807,9 +907,10 @@ router.get("/traceability", mustBeAdmin, (req, res) => {
         JOIN PedidoItems i ON i.PedidoID = p.PedidoID
         LEFT JOIN ${emp.table} e ON CAST(e.${emp.idCol} AS TEXT) = CAST(p.EmpleadoID AS TEXT)
         WHERE p.Fecha >= ? AND p.Fecha < ?
+        ${sqlExclusions}
         GROUP BY p.EmpleadoID
         ORDER BY pedidos DESC, qty DESC, amount DESC
-      `).all(start, end);
+      `).all(start, end, ...exclusionParams);
 
       supervisors = rawSupervisors.map((r) => {
         // Usar getEmployeeDisplayName como fallback si el JOIN no dio nombre completo
@@ -1254,6 +1355,229 @@ router.get("/warehouse/:id", mustBeAdmin, (req, res) => {
     console.error("[reports] GET /warehouse/:id error:", e);
     return res.status(500).json({
       error: "No se pudo construir el informe del depósito",
+    });
+  }
+});
+
+/* ======================= INFORME POR CATEGORÍA (POR NOMBRE) =======================
+   Este endpoint sirve para generar un reporte tipo "depósito" pero basado en una
+   categoría de productos. Se usa para la pestaña "Depósito Uniformes" que no
+   requiere tener un warehouse creado: simplemente filtra los pedidos donde al
+   menos un ítem pertenece a la categoría pedida.
+
+   GET /reports/category/by-name/:name?year=&month=
+======================================================================== */
+
+router.get("/category/by-name/:name", mustBeAdmin, (req, res) => {
+  const rawName = String(req.params.name || "").trim();
+  if (!rawName) {
+    return res.status(400).json({ error: "nombre de categoría requerido" });
+  }
+
+  // Resolver IDs de categoría por nombre (matching flexible, sin acentos / case insensitive).
+  // Importante: puede haber duplicados (pasó en tu caso con Uniformes). Tomamos TODOS
+  // los IDs que matchean para no perder datos.
+  const normalize = (s) => String(s || "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .trim();
+
+  let categoryIds = [];
+  let categoryName = rawName;
+  try {
+    const catRows = db.prepare(`SELECT CategoriaID AS id, CategoriaNombre AS name FROM Categorias`).all();
+    const wanted = normalize(rawName);
+    const matches = catRows.filter(r => normalize(r.name) === wanted);
+    if (!matches.length) {
+      return res.status(404).json({
+        error: `No se encontró la categoría "${rawName}"`,
+      });
+    }
+    categoryIds = matches.map(r => String(r.id));
+    categoryName = matches[0].name; // nombre canónico
+  } catch (e) {
+    console.error("[reports] /category/by-name resolve error:", e);
+    return res.status(500).json({ error: "No se pudo resolver la categoría" });
+  }
+
+  const { year, month, start, end } = (() => {
+    const r = monthRange(req.query.year, req.query.month);
+    const startQ = req.query.start
+      ? String(req.query.start).trim() + " 00:00:00"
+      : r.start;
+    const endQ = req.query.end
+      ? String(req.query.end).trim() + " 23:59:59"
+      : r.end;
+    return { ...r, start: startQ, end: endQ };
+  })();
+
+  try {
+    // Descubrir schema de productos para JOIN con categorías
+    const prod = resolveProductsTableLocal();
+    if (!prod) {
+      return res.status(500).json({ error: "No se pudo detectar la tabla de productos" });
+    }
+
+    // Determinar la columna que enlaza productos con categorías.
+    // Normalmente es "CategoriaID" en la tabla de productos.
+    const prodInfo = _tinfo(prod.table);
+    const catCol = _pickCol(prodInfo, ["CategoriaID", "IdCategoria", "categoria_id"]);
+    if (!catCol) {
+      return res.status(500).json({ error: "No se encontró columna de categoría en productos" });
+    }
+
+    // IN clause dinámico
+    const catPlaceholders = categoryIds.map(() => "?").join(",");
+
+    // ── Totales del mes ──
+    const totals = db.prepare(`
+      SELECT
+        COUNT(DISTINCT p.PedidoID)    AS ordersCount,
+        COALESCE(SUM(i.Cantidad), 0)  AS itemsCount,
+        COALESCE(SUM(i.Subtotal), 0)  AS amount
+      FROM PedidoItems i
+      JOIN Pedidos p ON p.PedidoID = i.PedidoID
+      JOIN ${prod.table} pr ON CAST(pr.${prod.idCol} AS TEXT) = CAST(i.ProductoID AS TEXT)
+      WHERE p.Fecha >= ? AND p.Fecha < ?
+        AND CAST(pr.${catCol} AS TEXT) IN (${catPlaceholders})
+    `).get(start, end, ...categoryIds) || { ordersCount: 0, itemsCount: 0, amount: 0 };
+
+    // ── Top productos de la categoría en el mes ──
+    const top_products = db.prepare(`
+      SELECT
+        i.ProductoID                             AS productId,
+        COALESCE(MAX(i.Codigo), '')              AS code,
+        COALESCE(MAX(i.Nombre), '')              AS name,
+        COUNT(DISTINCT i.PedidoID)               AS pedidos,
+        COALESCE(SUM(i.Cantidad), 0)             AS qty,
+        COALESCE(SUM(i.Subtotal), 0)             AS amount
+      FROM PedidoItems i
+      JOIN Pedidos p ON p.PedidoID = i.PedidoID
+      JOIN ${prod.table} pr ON CAST(pr.${prod.idCol} AS TEXT) = CAST(i.ProductoID AS TEXT)
+      WHERE p.Fecha >= ? AND p.Fecha < ?
+        AND CAST(pr.${catCol} AS TEXT) IN (${catPlaceholders})
+      GROUP BY i.ProductoID, LOWER(COALESCE(i.Nombre,'')), LOWER(COALESCE(i.Codigo,''))
+      ORDER BY amount DESC, qty DESC
+      LIMIT 15
+    `).all(start, end, ...categoryIds).map(r => ({
+      productId: r.productId,
+      code: String(r.code || ""),
+      name: String(r.name || ""),
+      pedidos: Number(r.pedidos || 0),
+      qty: Number(r.qty || 0),
+      amount: Number(r.amount || 0),
+    }));
+
+    // ── Desglose por servicio ──
+    const by_service_raw = db.prepare(`
+      SELECT
+        CAST(p.ServicioID AS TEXT)   AS serviceId,
+        COUNT(DISTINCT p.PedidoID)   AS pedidos,
+        COALESCE(SUM(i.Cantidad), 0) AS qty,
+        COALESCE(SUM(i.Subtotal), 0) AS amount
+      FROM PedidoItems i
+      JOIN Pedidos p ON p.PedidoID = i.PedidoID
+      JOIN ${prod.table} pr ON CAST(pr.${prod.idCol} AS TEXT) = CAST(i.ProductoID AS TEXT)
+      WHERE p.Fecha >= ? AND p.Fecha < ?
+        AND CAST(pr.${catCol} AS TEXT) IN (${catPlaceholders})
+        AND p.ServicioID IS NOT NULL
+      GROUP BY p.ServicioID
+      ORDER BY amount DESC
+    `).all(start, end, ...categoryIds);
+
+    const by_service = by_service_raw.map(r => ({
+      serviceId: r.serviceId,
+      serviceName: resolveServiceName(r.serviceId),
+      pedidos: Number(r.pedidos || 0),
+      qty: Number(r.qty || 0),
+      amount: Number(r.amount || 0),
+    }));
+
+    // ── Evolución diaria ──
+    const by_day = db.prepare(`
+      SELECT
+        SUBSTR(p.Fecha, 1, 10)       AS day,
+        COUNT(DISTINCT p.PedidoID)   AS pedidos,
+        COALESCE(SUM(i.Subtotal), 0) AS monto,
+        COALESCE(SUM(i.Cantidad), 0) AS qty
+      FROM PedidoItems i
+      JOIN Pedidos p ON p.PedidoID = i.PedidoID
+      JOIN ${prod.table} pr ON CAST(pr.${prod.idCol} AS TEXT) = CAST(i.ProductoID AS TEXT)
+      WHERE p.Fecha >= ? AND p.Fecha < ?
+        AND CAST(pr.${catCol} AS TEXT) IN (${catPlaceholders})
+      GROUP BY day
+      ORDER BY day
+    `).all(start, end, ...categoryIds).map(r => ({
+      day: r.day,
+      pedidos: Number(r.pedidos || 0),
+      monto: Number(r.monto || 0),
+      qty: Number(r.qty || 0),
+    }));
+
+    // ── Listado de pedidos (solo los que tengan productos de la categoría) ──
+    const orders = db.prepare(`
+      SELECT
+        p.PedidoID                        AS id,
+        p.Fecha                           AS fecha,
+        CAST(p.ServicioID AS TEXT)        AS serviceId,
+        COALESCE(SUM(i.Subtotal), 0)      AS total,
+        COALESCE(SUM(i.Cantidad), 0)      AS qty
+      FROM PedidoItems i
+      JOIN Pedidos p ON p.PedidoID = i.PedidoID
+      JOIN ${prod.table} pr ON CAST(pr.${prod.idCol} AS TEXT) = CAST(i.ProductoID AS TEXT)
+      WHERE p.Fecha >= ? AND p.Fecha < ?
+        AND CAST(pr.${catCol} AS TEXT) IN (${catPlaceholders})
+      GROUP BY p.PedidoID
+      ORDER BY p.Fecha DESC
+    `).all(start, end, ...categoryIds).map(r => ({
+      id: Number(r.id),
+      fecha: r.fecha,
+      serviceId: r.serviceId,
+      serviceName: resolveServiceName(r.serviceId),
+      total: Number(r.total || 0),
+      qty: Number(r.qty || 0),
+    }));
+
+    // ── Stock actual de productos de la categoría ──
+    const current_stock = prod.stockCol ? db.prepare(`
+      SELECT
+        pr.${prod.idCol}                            AS productId,
+        COALESCE(NULLIF(TRIM(pr.${prod.nameCol}), ''), 'Sin nombre') AS name,
+        ${prod.codeCol ? `COALESCE(NULLIF(TRIM(pr.${prod.codeCol}), ''), '')` : `''`} AS code,
+        COALESCE(pr.${prod.stockCol}, 0)            AS stock
+      FROM ${prod.table} pr
+      WHERE CAST(pr.${catCol} AS TEXT) IN (${catPlaceholders})
+      ORDER BY name COLLATE NOCASE
+    `).all(...categoryIds).map(r => ({
+      productId: r.productId,
+      name: String(r.name || ""),
+      code: String(r.code || ""),
+      stock: Number(r.stock || 0),
+    })) : [];
+
+    return res.json({
+      ok: true,
+      period: { year, month, start, end },
+      category: {
+        name: categoryName,
+        ids: categoryIds,
+      },
+      totals: {
+        ordersCount: Number(totals.ordersCount || 0),
+        itemsCount:  Number(totals.itemsCount  || 0),
+        amount:      Number(totals.amount      || 0),
+      },
+      top_products,
+      by_service,
+      by_day,
+      orders,
+      current_stock,
+    });
+  } catch (e) {
+    console.error("[reports] GET /category/by-name error:", e);
+    return res.status(500).json({
+      error: "No se pudo construir el informe de la categoría",
     });
   }
 });

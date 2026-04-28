@@ -1,10 +1,15 @@
+/* ============================================================
+   DEPOSITO — Sin gradientes, alineación correcta, accesible
+   ============================================================ */
+
 .deposito-page {
   padding: 1.25rem;
-  background: radial-gradient(circle at top left, #f1f5f9 0, #ffffff 45%, #f9fafb 100%);
+  background: #f8fafc;
   min-height: calc(100vh - 56px);
   box-sizing: border-box;
 }
 
+/* ---- Topbar ---- */
 .dep-topbar {
   display: flex;
   align-items: center;
@@ -26,6 +31,7 @@
   color: #111827;
 }
 
+/* ---- Filtros ---- */
 .deposito-filters {
   display: flex;
   flex-wrap: wrap;
@@ -39,59 +45,105 @@
   flex-direction: column;
   gap: 0.25rem;
   font-size: 0.85rem;
-  color: #4b5563;
+  color: #374151;
+  font-weight: 500;
 }
 
 .deposito-field input[type="date"],
 .deposito-field input[type="number"],
-.deposito-search {
-  padding: 0.4rem 0.5rem;
+.deposito-search,
+.deposito-select {
+  padding: 0.4rem 0.6rem;
   border-radius: 0.45rem;
   border: 1px solid #d1d5db;
   font-size: 0.85rem;
   min-width: 180px;
   max-width: 220px;
   background-color: #ffffff;
-  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+  color: #111827;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-.deposito-search { min-width: 10rem; }
+.deposito-search {
+  min-width: 10rem;
+}
 
 .deposito-field input:focus-visible,
-.deposito-search:focus-visible {
+.deposito-search:focus-visible,
+.deposito-select:focus-visible {
   outline: none;
-  border-color: #0ea5e9;
-  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.25);
-  background-color: #f9fafb;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.25);
 }
 
-.deposito-quickranges { display: flex; flex-direction: column; gap: 0.25rem; margin-left: auto; }
-.deposito-quickranges-label { font-size: 0.75rem; color: #6b7280; }
-.deposito-quickranges-buttons { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.deposito-quickranges {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-left: auto;
+}
+.deposito-quickranges-label {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+.deposito-quickranges-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
 
+/* ---- Botones pill ---- */
 .deposito-page .pill {
-  border-radius: 999px;
+  border-radius: 0.45rem;
   border: 1px solid transparent;
-  padding: 0.35rem 0.8rem;
-  font-size: 0.8rem;
+  padding: 0.38rem 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 500;
   cursor: pointer;
-  background-color: #0ea5e9;
+  background-color: #2563eb;
   color: #ffffff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.25rem;
-  transition: transform 0.1s, box-shadow 0.1s, background-color 0.15s, border-color 0.1s;
+  transition: background-color 0.15s, border-color 0.15s;
+  white-space: nowrap;
 }
-.deposito-page .pill:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(15,23,42,0.12); background-color: #0284c7; }
-.deposito-page .pill:active:not(:disabled) { transform: translateY(0); box-shadow: none; }
-.deposito-page .pill:disabled { opacity: 0.5; cursor: default; }
-.deposito-page .pill--ghost { background-color: #ffffff; color: #0f172a; border-color: #e5e7eb; }
-.deposito-page .pill--ghost:hover:not(:disabled) { background-color: #f1f5f9; }
-.deposito-page .pill.is-active { background-color: #0ea5e9; color: #ffffff; border-color: #0284c7; }
+.deposito-page .pill:hover:not(:disabled) {
+  background-color: #1d4ed8;
+}
+.deposito-page .pill:active:not(:disabled) {
+  background-color: #1e40af;
+}
+.deposito-page .pill:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.deposito-page .pill--ghost {
+  background-color: #ffffff;
+  color: #374151;
+  border-color: #d1d5db;
+}
+.deposito-page .pill--ghost:hover:not(:disabled) {
+  background-color: #f3f4f6;
+  border-color: #9ca3af;
+}
+.deposito-page .pill.is-active {
+  background-color: #2563eb;
+  color: #ffffff;
+  border-color: #1d4ed8;
+}
+.deposito-page button:focus-visible,
+.deposito-page th.deposito-th--sortable:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
 
-.deposito-export-btn { flex-shrink: 0; }
+.deposito-export-btn {
+  flex-shrink: 0;
+}
 
+/* ---- KPI Grid (overview) ---- */
 .dep-kpi-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -109,42 +161,117 @@
 .deposito-summary-card {
   border-radius: 0.75rem;
   border: 1px solid #e5e7eb;
-  padding: 0.65rem 0.75rem;
+  padding: 0.8rem 1rem;
   background-color: #ffffff;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.3rem;
 }
 
 .deposito-summary-card--main {
-  background: linear-gradient(135deg, #0ea5e9, #38bdf8);
+  background: #1d4ed8;
   color: #ffffff;
-  border-color: transparent;
+  border-color: #1d4ed8;
+}
+
+.deposito-summary-card--main .deposito-summary-label,
+.deposito-summary-card--main .deposito-summary-sub {
+  opacity: 0.85;
 }
 
 .deposito-summary-card--alert {
-  border-color: #fecaca;
-  background: linear-gradient(135deg, #fef2f2, #fee2e2);
+  border-color: #fca5a5;
+  background: #fef2f2;
+  color: #991b1b;
 }
 
-.deposito-summary-label { font-size: 0.75rem; color: inherit; opacity: 0.8; }
-.deposito-summary-value { font-size: 1.15rem; font-weight: 700; color: inherit; }
-.deposito-summary-sub { font-size: 0.7rem; color: inherit; opacity: 0.8; }
+.deposito-summary-card--alert .deposito-summary-label,
+.deposito-summary-card--alert .deposito-summary-sub {
+  color: #b91c1c;
+}
 
-.dep-kpi-donut-row { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.25rem; }
-.dep-kpi-donut-labels { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.7rem; }
-.dep-kpi-donut-labels div { display: flex; align-items: center; gap: 0.35rem; }
+.deposito-summary-label {
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+.deposito-summary-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.deposito-summary-sub {
+  font-size: 0.72rem;
+}
 
-.dep-minichart { display: flex; flex-direction: column; gap: 5px; }
-.dep-minichart-row { display: grid; grid-template-columns: 140px 1fr 60px; align-items: center; gap: 6px; font-size: 0.75rem; }
-.dep-minichart-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #374151; }
-.dep-minichart-track { background: #f3f4f6; border-radius: 999px; height: 8px; overflow: hidden; }
-.dep-minichart-fill { height: 100%; border-radius: 999px; transition: width 0.3s ease; }
-.dep-minichart-val { text-align: right; font-variant-numeric: tabular-nums; color: #6b7280; }
+.dep-kpi-donut-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.25rem;
+}
+.dep-kpi-donut-labels {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  color: #991b1b;
+}
+.dep-kpi-donut-labels div {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
 
-.dep-donut { display: flex; align-items: center; gap: 0.5rem; }
-.dep-donut-legend { display: flex; flex-direction: column; gap: 0.2rem; }
+/* ---- Mini gráfico de barras ---- */
+.dep-minichart {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.dep-minichart-row {
+  display: grid;
+  grid-template-columns: 140px 1fr 60px;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+}
+.dep-minichart-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #374151;
+}
+.dep-minichart-track {
+  background: #e5e7eb;
+  border-radius: 3px;
+  height: 8px;
+  overflow: hidden;
+}
+.dep-minichart-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+.dep-minichart-val {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: #4b5563;
+  font-weight: 500;
+}
+
+/* ---- Donut ---- */
+.dep-donut {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.dep-donut-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
 .dep-donut-dot {
   font-size: 0.75rem;
   font-weight: 700;
@@ -162,10 +289,27 @@
   margin-right: 4px;
 }
 
-.dep-gauge { display: flex; align-items: center; gap: 6px; }
-.dep-gauge-track { flex: 1; height: 6px; background: #e5e7eb; border-radius: 999px; overflow: hidden; min-width: 40px; }
-.dep-gauge-fill { height: 100%; border-radius: 999px; transition: width 0.2s ease; }
+/* ---- Gauge de cobertura ---- */
+.dep-gauge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dep-gauge-track {
+  flex: 1;
+  height: 6px;
+  background: #e5e7eb;
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 40px;
+}
+.dep-gauge-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.2s ease;
+}
 
+/* ---- KPI mini row de pedidos ---- */
 .dep-order-kpis {
   display: flex;
   gap: 0.75rem;
@@ -176,25 +320,51 @@
 .dep-order-kpi {
   border-radius: 0.65rem;
   border: 1px solid #e5e7eb;
-  padding: 0.6rem 0.9rem;
+  padding: 0.7rem 1rem;
   display: flex;
   flex-direction: column;
   align-items: center;
-  min-width: 90px;
+  min-width: 96px;
   background: #ffffff;
-  box-shadow: 0 1px 3px rgba(15,23,42,0.05);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
 }
 
-.dep-order-kpi--open { border-color: #bfdbfe; background: #eff6ff; }
-.dep-order-kpi--prep { border-color: #fed7aa; background: #fff7ed; }
-.dep-order-kpi--closed { border-color: #bbf7d0; background: #f0fdf4; }
-.dep-order-kpi--trend { background: #f8fafc; min-width: 140px; }
+.dep-order-kpi--open {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+.dep-order-kpi--prep {
+  border-color: #fbbf24;
+  background: #fffbeb;
+}
+.dep-order-kpi--closed {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+.dep-order-kpi--retirado {
+  border-color: #6ee7b7;
+  background: #ecfdf5;
+}
+.dep-order-kpi--trend {
+  background: #f8fafc;
+  min-width: 140px;
+}
 
-.dep-order-kpi-num { font-size: 1.5rem; font-weight: 700; color: #111827; line-height: 1; }
-.dep-order-kpi-lbl { font-size: 0.7rem; color: #6b7280; margin-top: 2px; }
+.dep-order-kpi-num {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: #111827;
+  line-height: 1;
+}
+.dep-order-kpi-lbl {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: #6b7280;
+  margin-top: 3px;
+  text-align: center;
+}
 
-
-
+/* ---- Grid principal (overview) ---- */
 .deposito-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.3fr);
@@ -202,117 +372,467 @@
 }
 
 .deposito-card {
-  border-radius: 0.9rem;
+  border-radius: 0.75rem;
   border: 1px solid #e5e7eb;
   background-color: #ffffff;
-  padding: 0.75rem;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+  padding: 0.85rem;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.06);
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
 
 .deposito-card--alert {
-  border-color: #fecaca;
-  background: linear-gradient(135deg, #fff7f7, #fef2f2);
+  border-color: #fca5a5;
+  background: #fef9f9;
 }
 
 .deposito-card-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid #f0f0f0;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid #e5e7eb;
   margin-bottom: 0.75rem;
 }
 
-.deposito-card-header h2 { margin: 0; font-size: 1rem; }
-.deposito-card-header small { font-size: 0.75rem; color: #6b7280; }
+.deposito-card-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #111827;
+}
+.deposito-card-header small {
+  font-size: 0.75rem;
+  color: #6b7280;
+  display: block;
+  margin-top: 0.1rem;
+}
 
 .deposito-header-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 0.75rem;
+  gap: 0.6rem;
   flex: 1;
   min-width: 0;
   flex-wrap: wrap;
 }
 
+/* ---- Tabla principal ---- */
 .deposito-table-wrapper {
-  border-radius: 0.75rem;
+  border-radius: 0.6rem;
   border: 1px solid #e5e7eb;
   background-color: #ffffff;
   overflow: auto;
   max-height: 55vh;
 }
 
-.deposito-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-.deposito-table thead { position: sticky; top: 0; background-color: #f9fafb; z-index: 1; }
-.deposito-table th, .deposito-table td { padding: 0.45rem 0.6rem; text-align: left; border-bottom: 1px solid #f3f4f6; }
-.deposito-th--numeric, .deposito-td--numeric { text-align: right; }
-.deposito-th--sortable { cursor: pointer; user-select: none; white-space: nowrap; }
-.deposito-th--sortable:hover { background-color: #e5e7eb; }
-.deposito-row:nth-child(even) { background-color: #f9fafb; }
-.deposito-row:hover { background-color: #e5f2ff; }
-.deposito-row--sin-stock { background-color: #fee2e2; }
-.deposito-row--sin-stock:hover { background-color: #fecaca; }
-.deposito-row--riesgo { background-color: #fef3c7; }
-.deposito-row--riesgo:hover { background-color: #fde68a; }
-.deposito-empty { padding: 0.6rem; font-style: italic; color: #6b7280; text-align: center; }
-.deposito-subtext { font-size: 0.7rem; color: #6b7280; margin-top: 0.15rem; }
+.deposito-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  color: #111827;
+}
+.deposito-table thead {
+  position: sticky;
+  top: 0;
+  background-color: #f3f4f6;
+  z-index: 1;
+}
+.deposito-table th {
+  padding: 0.55rem 0.75rem;
+  text-align: left;
+  border-bottom: 2px solid #e5e7eb;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #374151;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.deposito-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid #f0f0f0;
+  vertical-align: top;
+}
+.deposito-th--numeric,
+.deposito-td--numeric {
+  text-align: right;
+}
+.deposito-th--sortable {
+  cursor: pointer;
+  user-select: none;
+}
+.deposito-th--sortable:hover {
+  background-color: #e5e7eb;
+}
+.deposito-row:nth-child(even) {
+  background-color: #f9fafb;
+}
+.deposito-row:hover {
+  background-color: #eff6ff;
+}
+.deposito-row--sin-stock {
+  background-color: #fee2e2;
+}
+.deposito-row--sin-stock:hover {
+  background-color: #fecaca;
+}
+.deposito-row--riesgo {
+  background-color: #fef3c7;
+}
+.deposito-row--riesgo:hover {
+  background-color: #fde68a;
+}
+.deposito-empty {
+  padding: 1.25rem 0.75rem;
+  font-style: italic;
+  color: #6b7280;
+  text-align: center;
+}
+.deposito-subtext {
+  font-size: 0.72rem;
+  color: #6b7280;
+  margin-top: 0.2rem;
+}
 
-.deposito-badge { display: inline-flex; align-items: center; padding: 0.1rem 0.4rem; border-radius: 999px; font-size: 0.65rem; margin-left: 0.25rem; font-weight: 600; }
-.deposito-badge--danger { background-color: #b91c1c; color: #fef2f2; }
-.deposito-badge--warning { background-color: #f97316; color: #fff7ed; }
+/* ---- Badges ---- */
+.deposito-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.45rem;
+  border-radius: 0.3rem;
+  font-size: 0.68rem;
+  margin-left: 0.35rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.deposito-badge--danger {
+  background-color: #dc2626;
+  color: #ffffff;
+}
+.deposito-badge--warning {
+  background-color: #d97706;
+  color: #ffffff;
+}
 
-.deposito-footnote { margin-top: 0.5rem; font-size: 0.75rem; color: #6b7280; }
+/* ---- Código de producto ---- */
+.deposito-code {
+  display: inline-block;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 0.72rem;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+  padding: 0.05rem 0.35rem;
+  border-radius: 0.25rem;
+  margin-right: 0.35rem;
+  white-space: nowrap;
+  vertical-align: middle;
+}
 
-.deposito-state { margin: 0.5rem 0; }
+/* ---- Nombre + código en celda ---- */
+.deposito-product-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.deposito-product-name {
+  font-weight: 500;
+  color: #111827;
+}
+.deposito-product-code {
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 0.72rem;
+  color: #6b7280;
+}
 
-.deposito-lowfilter { display: flex; gap: 0.5rem; flex-wrap: nowrap; overflow-x: auto; padding: 0.25rem; }
-.deposito-lowfilter-btn { white-space: nowrap; }
-.deposito-lowfilter-btn.is-active { background-color: #0ea5e9 !important; color: #ffffff !important; border-color: #0284c7 !important; }
+/* ---- Celda de empleado + servicio ---- */
+.deposito-employee-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.deposito-employee-name {
+  font-weight: 600;
+  color: #111827;
+}
+.deposito-service-name {
+  font-size: 0.75rem;
+  color: #4b5563;
+  font-style: italic;
+}
+.deposito-role-badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  background: #e0e7ff;
+  color: #3730a3;
+  padding: 0.05rem 0.35rem;
+  border-radius: 0.25rem;
+  font-weight: 500;
+}
 
-.deposito-stockbar { margin-top: 0.2rem; width: 100%; height: 0.35rem; border-radius: 999px; background-color: #e5e7eb; overflow: hidden; }
-.deposito-stockbar-fill { height: 100%; width: calc(var(--ratio) * 100%); background: linear-gradient(90deg, #22c55e, #facc15, #f97316, #ef4444); transition: width 0.2s; }
+/* ---- Fila expandida de items ---- */
+.deposito-row--expanded > td {
+  border-bottom: none;
+}
+.deposito-row--items-container {
+  background-color: #f8fafc;
+}
+.deposito-items-panel {
+  padding: 0.5rem 0.75rem 0.75rem 2rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+.deposito-items-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #4b5563;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.4rem;
+}
+.deposito-items-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+.deposito-items-table th {
+  text-align: left;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #6b7280;
+  border-bottom: 1px solid #e5e7eb;
+}
+.deposito-items-table td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid #f0f0f0;
+  vertical-align: middle;
+}
+.deposito-items-table .numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.deposito-items-table tr:last-child td {
+  border-bottom: none;
+}
 
-.deposito-legend { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 12px; align-items: center; }
-.legend-dot { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }
-.legend-danger { background: #ef4444; }
-.legend-warning { background: #f59e0b; }
-.legend-neutral { background: #6b7280; }
+/* ---- Barra de stock ---- */
+.deposito-stockbar {
+  margin-top: 0.25rem;
+  width: 100%;
+  height: 0.35rem;
+  border-radius: 3px;
+  background-color: #e5e7eb;
+  overflow: hidden;
+}
+.deposito-stockbar-fill {
+  height: 100%;
+  border-radius: 3px;
+  width: calc(var(--ratio) * 100%);
+  transition: width 0.2s;
+}
 
-.deposito-summary-sub code { background: #f1f5f9; padding: 0 4px; border-radius: 4px; }
+/* ---- Leyenda ---- */
+.deposito-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 0.78rem;
+  align-items: center;
+  margin-top: 0.5rem;
+  color: #4b5563;
+}
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.legend-danger {
+  background: #dc2626;
+}
+.legend-warning {
+  background: #d97706;
+}
+.legend-neutral {
+  background: #6b7280;
+}
 
-.deposito-critical { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: baseline; }
-.deposito-critical > div b { font-size: 20px; display: block; }
-.deposito-critical > div small { color: #6b7280; }
+/* ---- Filtro de stock bajo ---- */
+.deposito-lowfilter {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+.deposito-lowfilter-btn {
+  white-space: nowrap;
+}
+.deposito-lowfilter-btn.is-active {
+  background-color: #2563eb !important;
+  color: #ffffff !important;
+  border-color: #1d4ed8 !important;
+}
+
+/* ---- Panel de pedidos ---- */
+.deposito-orders-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ---- Estados ---- */
+.deposito-state {
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.75rem;
+  border-radius: 0.45rem;
+  font-size: 0.85rem;
+}
+.state.error {
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  color: #b91c1c;
+}
+
+/* ---- Misc ---- */
+.deposito-footnote {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+.deposito-summary-card--alert .deposito-summary-sub code {
+  background: #fecaca;
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+/* ---- Tiempos de preparación y retiro ---- */
+.deposito-order-timing {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 24px;
+  font-size: 0.8rem;
+  color: #6b7280;
+  padding: 8px 0 10px;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 10px;
+}
+.deposito-order-timing span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ---- Badge de retirado ---- */
+.deposito-retirado-tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.72rem;
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #86efac;
+  padding: 0.15rem 0.5rem;
+  border-radius: 0.3rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ---- Vista previa remito ---- */
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0;
+}
+.muted {
+  color: #6b7280;
+  font-size: 0.85rem;
+}
+.actions-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* ---- Responsive ---- */
+@media (max-width: 1100px) {
+  .dep-kpi-grid,
+  .deposito-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 
 @media (max-width: 900px) {
-  .deposito-grid { grid-template-columns: minmax(0, 1fr); }
-  .dep-kpi-grid, .deposito-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .deposito-card-header { flex-direction: column; align-items: stretch; }
-  .deposito-header-actions { flex-wrap: wrap; justify-content: space-between; gap: 0.5rem; }
-  .deposito-lowfilter { width: 100%; order: 1; }
-  .deposito-search { flex: 1; max-width: 100%; order: 2; }
-  .deposito-export-btn { order: 3; }
-  .dep-minichart-row { grid-template-columns: 100px 1fr 50px; }
+  .deposito-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dep-kpi-grid,
+  .deposito-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .deposito-card-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .deposito-header-actions {
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+  .deposito-lowfilter {
+    width: 100%;
+    order: 1;
+  }
+  .deposito-search {
+    flex: 1;
+    max-width: 100%;
+    order: 2;
+  }
+  .deposito-export-btn {
+    order: 3;
+  }
+  .dep-minichart-row {
+    grid-template-columns: 90px 1fr 50px;
+  }
 }
 
 @media (max-width: 640px) {
-  .deposito-page { padding-inline: 0.75rem; }
-  .dep-kpi-grid, .deposito-summary { grid-template-columns: minmax(0, 1fr); }
-  .dep-topbar { flex-direction: column; align-items: flex-start; }
-  .deposito-card-header { flex-direction: column; align-items: flex-start; }
-  .deposito-header-actions { width: 100%; justify-content: flex-start; }
-  .deposito-quickranges { width: 100%; margin-left: 0; }
-  .deposito-quickranges-buttons { justify-content: flex-start; }
-}
-
-.deposito-page button:focus-visible,
-.deposito-page th.deposito-th--sortable:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.4);
+  .deposito-page {
+    padding-inline: 0.75rem;
+  }
+  .dep-kpi-grid,
+  .deposito-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dep-topbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .deposito-card-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .deposito-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .deposito-quickranges {
+    width: 100%;
+    margin-left: 0;
+  }
+  .deposito-quickranges-buttons {
+    justify-content: flex-start;
+  }
+  .deposito-items-panel {
+    padding-left: 0.75rem;
+  }
 }
