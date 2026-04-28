@@ -595,9 +595,7 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
   );
 }
 
-/* =====================================================
-   Página principal de Depósito
-   ===================================================== */
+
 export default function Deposito() {
   const [start, setStart] = useState(isoFirstOfMonth());
   const [end, setEnd] = useState(isoToday());
