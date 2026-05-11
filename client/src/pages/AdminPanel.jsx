@@ -701,27 +701,30 @@ const onEdit = async (row) => {
                 </button>
               </div>
             </label>
-            <label>
-  <span>Visible para</span>
-  <div style={{ display: "flex", gap: 12 }}>
-    {["supervisor", "administrativo"].map((role) => (
-      <label key={role} style={{ display: "flex", gap: 4 }}>
-        <input
-          type="checkbox"
-          checked={roleVisibility.includes(role)}
-          onChange={(e) => {
-            if (e.target.checked) {
-              setRoleVisibility(prev => [...prev, role]);
-            } else {
-              setRoleVisibility(prev => prev.filter(r => r !== role));
-            }
-          }}
-        />
-        {role}
-      </label>
-    ))}
-  </div>
-</label>
+           </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 8, padding: "8px 4px" }}>
+            <span style={{ fontWeight: 600, fontSize: "0.9rem", color: "#1e3a8a", minWidth: 100 }}>Visible para</span>
+            {["supervisor", "administrativo"].map((role) => (
+              <label key={role} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: "0.9rem", fontWeight: 500, color: "#1e3a8a" }}>
+                <input
+                  type="checkbox"
+                  checked={roleVisibility.includes(role)}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setRoleVisibility(prev => [...prev, role]);
+                    } else {
+                      setRoleVisibility(prev => prev.filter(r => r !== role));
+                    }
+                  }}
+                  style={{ width: 16, height: 16, accentColor: "#1d4ed8", cursor: "pointer" }}
+                />
+                {role}
+              </label>
+            ))}
+          </div>
+
+          <div style={{ display: "none" }}>
 
           </div>
 
@@ -730,6 +733,44 @@ const onEdit = async (row) => {
               Cargando datos del producto…
             </div>
           )}
+
+          <label>
+            <span>Asignación masiva a servicios</span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="button"
+                className="btn"
+                disabled={editingId === "__new__" || editingLoading}
+                onClick={async () => {
+                  if (!confirm("¿Asignar este producto a TODOS los servicios?")) return;
+                  try {
+                    await api.post(`/api/admin/products/${editingId}/assign-all-services`);
+                    setStatusMsg("Producto asignado a todos los servicios.");
+                  } catch (e) {
+                    setErr(e?.response?.data?.error || "No se pudo asignar");
+                  }
+                }}
+              >
+                Asignar a todos los servicios
+              </button>
+              <button
+                type="button"
+                className="btn ghost"
+                disabled={editingId === "__new__" || editingLoading}
+                onClick={async () => {
+                  if (!confirm("¿Quitar este producto de TODOS los servicios?")) return;
+                  try {
+                    await api.post(`/api/admin/products/${editingId}/remove-all-services`);
+                    setStatusMsg("Producto quitado de todos los servicios.");
+                  } catch (e) {
+                    setErr(e?.response?.data?.error || "No se pudo quitar");
+                  }
+                }}
+              >
+                Quitar de todos los servicios
+              </button>
+            </div>
+          </label>
 
           <div className="actions-row">
             <button className="btn primary" onClick={onSave}>
@@ -759,10 +800,10 @@ const onEdit = async (row) => {
           {rows.map((r) => (
             <div key={r.id} className="t-row" role="row">
               <div style={{ flex: 4, minWidth: 0 }}>
-                <div className="truncate">
-                  {r.name} <span className="muted">#{r.id}</span>
-                </div>
-              </div>
+                <div style={{ fontSize: "0.82rem", wordBreak: "break-word", whiteSpace: "normal", lineHeight: 1.4 }}>
+                {r.name}
+                 </div>
+                  </div>
 
               <div style={{ flex: 2, textAlign: "right" }}>
                 {r.price == null ? "—" : money(r.price)}
