@@ -2365,5 +2365,47 @@ router.get("/roles", mustBeAdmin, (_req, res) => {
     return res.status(500).json({ error: "Error al listar roles" });
   }
 });
+// Asignar un producto a TODOS los servicios
+function getSpCols() {
+  const cols = db.prepare(`PRAGMA table_info('service_products')`).all()
+    .map(c => String(c.name).toLowerCase());
+  if (cols.includes("servicioid") && cols.includes("productoid"))
+    return { srv: "ServicioID", prod: "ProductoID" };
+  if (cols.includes("servicio_id") && cols.includes("producto_id"))
+    return { srv: "servicio_id", prod: "producto_id" };
+  if (cols.includes("service_id") && cols.includes("product_id"))
+    return { srv: "service_id", prod: "product_id" };
+  throw new Error("No se reconocen las columnas de service_products");
+}
 
+// Asignar un producto a TODOS los servicios
+router.post("/products/:productId/assign-all-services", requireAuth, requireRole(["admin","Admin"]), (req, res) => {
+  try {
+    const { productId } = req.params;
+    const { srv, prod } = getSpCols();
+    const services = db.prepare(`SELECT ServiciosID AS id FROM Servicios`).all();
+    const ins = db.prepare(`INSERT OR IGNORE INTO service_products (${srv}, ${prod}) VALUES (?, ?)`);
+    const tx = db.transaction(() => {
+      for (const s of services) ins.run(String(s.id), String(productId));
+    });
+    tx();
+    return res.json({ ok: true, count: services.length });
+  } catch (e) {
+    console.error("[assign-all-services] error:", e);
+    return res.status(500).json({ error: e.message || "Error interno" });
+  }
+});
+
+// Quitar un producto de TODOS los servicios
+router.post("/products/:productId/remove-all-services", requireAuth, requireRole(["admin","Admin"]), (req, res) => {
+  try {
+    const { productId } = req.params;
+    const { prod } = getSpCols();
+    const result = db.prepare(`DELETE FROM service_products WHERE CAST(${prod} AS TEXT) = CAST(? AS TEXT)`).run(String(productId));
+    return res.json({ ok: true, removed: result.changes });
+  } catch (e) {
+    console.error("[remove-all-services] error:", e);
+    return res.status(500).json({ error: e.message || "Error interno" });
+  }
+});
 export default router;
