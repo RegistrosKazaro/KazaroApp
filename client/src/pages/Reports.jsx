@@ -36,14 +36,16 @@ function niceDate(d) {
 
 function HorizontalBarChart({ data, valueKey, labelKey, valueFormatter, showPercent = true }) {
   if (!data?.length) return null;
-  const numericValues = data.map(d => Number(d[valueKey] || 0));
+  // FIX: ordenar siempre por valor descendente antes de renderizar
+  const sorted = [...data].sort((a, b) => Number(b[valueKey] || 0) - Number(a[valueKey] || 0));
+  const numericValues = sorted.map(d => Number(d[valueKey] || 0));
   const maxVal = Math.max(...numericValues, 0);
   const sumVal = numericValues.reduce((a, v) => a + v, 0);
   if (maxVal <= 0) return null;
   const PALETTE = ["#0ea5e9","#38bdf8","#7dd3fc","#0369a1","#2563eb","#4f46e5","#7c3aed","#a21caf","#db2777","#e11d48"];
   return (
     <div className="rp-hbarchart">
-      {data.map((item, idx) => {
+      {sorted.map((item, idx) => {
         const raw = Number(item[valueKey] || 0);
         const pctOfMax = maxVal > 0 ? (raw / maxVal) * 100 : 0;
         const pctOfTotal = sumVal > 0 ? Math.round((raw / sumVal) * 100) : 0;

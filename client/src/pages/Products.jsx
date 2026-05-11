@@ -260,6 +260,7 @@ export default function Products() {
 
 function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
   const [qtyText, setQtyText] = useState("1");
+  const [added, setAdded] = useState(false); // FIX: feedback visual
 
   const priceText = useMemo(() => {
     if (p.price == null) return "";
@@ -272,53 +273,41 @@ function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
     }).format(n);
   }, [p.price]);
 
-  const actualStock = Number.isFinite(Number(p.stock))
-    ? Number(p.stock)
-    : null;
-  const incoming = Number.isFinite(Number(p.incoming))
-    ? Number(p.incoming)
-    : 0;
-
+  const actualStock = Number.isFinite(Number(p.stock)) ? Number(p.stock) : null;
+  const incoming = Number.isFinite(Number(p.incoming)) ? Number(p.incoming) : 0;
   const hasIncoming = incoming > 0;
   const noStockActual = actualStock != null && actualStock <= 0;
-
-  // hay info de ingreso programado (pero no queremos que se pueda pedir todavía)
   const showIncomingInfo = noStockActual && hasIncoming;
-
-  // sinRestante = no hay stock disponible para pedir
-  const sinRestante =
-    remainingStock !== undefined && remainingStock <= 0;
+  const sinRestante = remainingStock !== undefined && remainingStock <= 0;
 
   const etaText = useMemo(() => {
     if (!p.nextEta) return null;
-    try {
-      return new Date(p.nextEta).toLocaleDateString("es-AR");
-    } catch {
-      return String(p.nextEta);
-    }
+    try { return new Date(p.nextEta).toLocaleDateString("es-AR"); }
+    catch { return String(p.nextEta); }
   }, [p.nextEta]);
 
   const maxQty = useMemo(() => {
     if (sinRestante) return 1;
-    if (remainingStock !== undefined && remainingStock > 0) {
-      return Math.max(1, remainingStock);
-    }
+    if (remainingStock !== undefined && remainingStock > 0) return Math.max(1, remainingStock);
     return undefined;
   }, [sinRestante, remainingStock]);
 
-  // Ajustar cantidad si cambia el límite
+  const getQtyNumber = () => {
+    const n = Number(qtyText);
+    let v = Number.isFinite(n) ? Math.trunc(n) : 1;
+    v = Math.max(1, v);
+    if (maxQty !== undefined) v = Math.min(v, maxQty);
+    return v;
+  };
 
-const getQtyNumber = () => {
-  const n = Number(qtyText);
-  let v = Number.isFinite(n) ? Math.trunc(n) : 1;
-  v = Math.max(1, v);
-
-  if (maxQty !== undefined) {
-    v = Math.min(v, maxQty);
-  }
-
-  return v;
-};
+  // FIX: mostrar checkmark por 1.5 segundos al agregar
+  const handleAdd = () => {
+    const qn = getQtyNumber();
+    setQtyText(String(qn));
+    onAdd(qn);
+    setAdded(true);
+    setTimeout(() => setAdded(false), 1500);
+  };
 
   return (
     <article className="product-card">
@@ -327,65 +316,49 @@ const getQtyNumber = () => {
       {p.price != null && <div className="product-price">{priceText}</div>}
 
       {remainingStock !== undefined && (
-        <div
-          className="product-stock"
-          aria-live="polite"
-          style={{ marginTop: 6 }}
-        >
+        <div className="product-stock" aria-live="polite" style={{ marginTop: 6 }}>
           {remainingStock > 0 && <>Stock restante: {remainingStock}</>}
-
           {remainingStock <= 0 && showIncomingInfo && (
-            <>
-              Sin stock actual. Ingreso disponible: {incoming}
-              {etaText ? <> (desde {etaText})</> : null}
-            </>
+            <>Sin stock actual. Ingreso disponible: {incoming}{etaText ? <> (desde {etaText})</> : null}</>
           )}
-
           {remainingStock <= 0 && !showIncomingInfo && "Sin stock"}
         </div>
       )}
 
       <div className="actions">
         <input
-  type="number"
-  min="1"
-  {...(maxQty !== undefined ? { max: Math.max(1, maxQty) } : {})}
-  step="1"
-  className="qty-input"
-  value={qtyText}
-  onChange={(e) => {
-    const next = e.target.value;
-
-    // permitir borrar el valor
-    if (next === "") {
-      setQtyText("");
-      return;
-    }
-
-    const n = Number(next);
-    if (!Number.isFinite(n)) return;
-
-    setQtyText(next);
-  }}
-  onBlur={() => {
-    setQtyText(String(getQtyNumber()));
-  }}
-  disabled={sinRestante}
-  aria-label={`Cantidad de ${p.name}`}
-/>
+          type="number"
+          min="1"
+          {...(maxQty !== undefined ? { max: Math.max(1, maxQty) } : {})}
+          step="1"
+          className="qty-input"
+          value={qtyText}
+          onChange={(e) => {
+            const next = e.target.value;
+            if (next === "") { setQtyText(""); return; }
+            const n = Number(next);
+            if (!Number.isFinite(n)) return;
+            setQtyText(next);
+          }}
+          onBlur={() => setQtyText(String(getQtyNumber()))}
+          disabled={sinRestante}
+          aria-label={`Cantidad de ${p.name}`}
+        />
         <button
-  type="button"
-  className="btn btn-add"
-  onClick={() => {
-    const qn = getQtyNumber();
-    setQtyText(String(qn));
-    onAdd(qn);
-  }}
-  disabled={addDisabled || sinRestante}
-  aria-label={`Agregar ${getQtyNumber()} de ${p.name} al carrito`}
->
-  Agregar
-</button>
+          type="button"
+          className={`btn btn-add${added ? " btn-add--ok" : ""}`}
+          onClick={handleAdd}
+          disabled={addDisabled || sinRestante}
+          aria-label={`Agregar ${getQtyNumber()} de ${p.name} al carrito`}
+          style={added ? {
+            background: "#22c55e",
+            borderColor: "#16a34a",
+            color: "#fff",
+            transition: "background 0.2s, border-color 0.2s",
+          } : { transition: "background 0.2s, border-color 0.2s" }}
+        >
+          {added ? "✓ Agregado" : "Agregar"}
+        </button>
       </div>
     </article>
   );

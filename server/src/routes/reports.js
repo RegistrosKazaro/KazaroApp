@@ -44,33 +44,12 @@ function _pickCol(info, candidates) {
 
 function resolveServicesTableLocal() {
   const table = "Servicios";
-  const info = _tinfo(table);
+  const info  = _tinfo(table);
   if (!info.length) return null;
-
-  const idCol =
-    _pickCol(info, [
-      "ServiciosID",
-      "ServicioID",
-      "IdServicio",
-      "ServiceID",
-      "service_id",
-      "servicio_id",
-      "id",
-    ]) ||
-    info.find((c) => c.pk === 1)?.name ||
-    "ServiciosID";
-
-  const nameCol =
-    _pickCol(info, [
-      "ServicioNombre",
-      "Nombre",
-      "Servicio",
-      "Descripcion",
-      "Detalle",
-      "Titulo",
-      "NombreServicio",
-    ]) || idCol;
-
+  // FIX: usar nombres exactos de columna conocidos (ServiciosID, ServicioNombre)
+  const idCol   = info.find(c => c.pk === 1)?.name || "ServiciosID";
+  const nameCol = info.some(c => c.name === "ServicioNombre") ? "ServicioNombre"
+                : _pickCol(info, ["Nombre","Servicio","Descripcion","Detalle","NombreServicio"]) || idCol;
   const nameExpr = `COALESCE(NULLIF(TRIM(s.${nameCol}), ''), CAST(s.${idCol} AS TEXT))`;
   return { table, idCol, nameCol, nameExpr };
 }
