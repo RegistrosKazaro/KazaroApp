@@ -240,5 +240,67 @@ router.get("/pdf/:id", requireAuth, async (req, res) => {
     return res.status(500).json({ error: "No se pudo generar el PDF" });
   }
 });
+// AGREGAR en server/src/routes/orders.js
+// Pegá esto ANTES del "export default router" al final del archivo
 
+// ─── Mis pedidos (supervisor) ────────────────────────────────────────────────
+router.get("/mis-pedidos", requireAuth, async (req, res) => {
+  try {
+    const empleadoId = req.user.id;
+
+    // Traer pedidos del empleado con sus items y servicio
+    const pedidos = db.prepare(`
+      SELECT
+        p.PedidoID   AS id,
+        p.EmpleadoID,
+        p.Rol        AS rol,
+        p.Nota       AS nota,
+        p.Total      AS total,
+        p.Fecha      AS fecha,
+        p.ServicioID,
+        COALESCE(p.Status, 'open') AS status
+      FROM Pedidos p
+      WHERE CAST(p.EmpleadoID AS TEXT) = CAST(? AS TEXT)
+      ORDER BY p.PedidoID DESC
+      LIMIT 100
+    `).all(String(empleadoId));
+
+    // Enriquecer con items y nombre de servicio
+    const result = pedidos.map(p => {
+      const items = db.prepare(`
+        SELECT
+          ProductoID AS productId,
+          Nombre     AS name,
+          Precio     AS price,
+          Cantidad   AS qty,
+          Subtotal   AS subtotal,
+          Codigo     AS code
+        FROM PedidoItems
+        WHERE PedidoID = ?
+        ORDER BY PedidoItemID
+      `).all(p.id);
+
+      let servicioNombre = null;
+      if (p.ServicioID) {
+        try {
+          const srv = db.prepare(
+            `SELECT ServicioNombre AS name FROM Servicios WHERE CAST(ServiciosID AS TEXT) = CAST(? AS TEXT) LIMIT 1`
+          ).get(p.ServicioID);
+          servicioNombre = srv?.name || null;
+        } catch {}
+      }
+
+      return {
+        ...p,
+        items,
+        servicioNombre,
+      };
+    });
+
+    return res.json(result);
+  } catch (e) {
+    console.error("[orders] GET /mis-pedidos error:", e);
+    return res.status(500).json({ error: "Error interno" });
+  }
+});
 export default router;

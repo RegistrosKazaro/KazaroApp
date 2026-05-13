@@ -199,35 +199,46 @@ function drawItemsTable(doc, y, rows, total) {
   doc.font("Helvetica-Bold").fontSize(11).fillColor("#111827").text("Detalle de ítems", M, y);
   y += 14;
 
-  doc.save().roundedRect(M, y - 2, contentW, headerH, 4).fill("#EFF6FF").restore();
+  const drawHeader = (yPos) => {
+    doc.save().roundedRect(M, yPos - 2, contentW, headerH, 4).fill("#EFF6FF").restore();
+    const labels = [
+      { text: "Código", w: W_CODE, a: "left" },
+      { text: "Descripción", w: W_DESC, a: "left" },
+      { text: "Cant.", w: W_QTY, a: "right" },
+      { text: "Precio", w: W_PRICE, a: "right" },
+      { text: "Subtotal", w: W_SUB, a: "right" },
+    ];
+    let x = M;
+    doc.font("Helvetica-Bold").fontSize(9).fillColor("#1F2933");
+    for (const col of labels) {
+      doc.text(col.text, x + 6, yPos + 5, { width: col.w - 12, align: col.a, lineBreak: false });
+      x += col.w;
+    }
+    return yPos + headerH;
+  };
 
-  const labels = [
-    { text: "Código", w: W_CODE, a: "left" },
-    { text: "Descripción", w: W_DESC, a: "left" },
-    { text: "Cant.", w: W_QTY, a: "right" },
-    { text: "Precio", w: W_PRICE, a: "right" },
-    { text: "Subtotal", w: W_SUB, a: "right" },
-  ];
-
-  let x = M;
-  doc.font("Helvetica-Bold").fontSize(9).fillColor("#1F2933");
-  for (const col of labels) {
-    doc.text(col.text, x + 6, y + 5, { width: col.w - 12, align: col.a, lineBreak: false });
-    x += col.w;
-  }
-  y += headerH;
+  y = drawHeader(y);
 
   const bottomReserve = 120;
-  const maxY = doc.page.height - bottomReserve;
-  const maxRows = Math.max(0, Math.floor((maxY - y - rowH) / rowH));
-  const data = rows.slice(0, maxRows);
-  const leftover = rows.length - data.length;
 
-  for (let i = 0; i < data.length; i++) {
-    const it = data[i];
+  for (let i = 0; i < rows.length; i++) {
+    const it = rows[i];
+
+    // Si no hay espacio para la fila, agregar página nueva
+    if (y + rowH > doc.page.height - bottomReserve) {
+      doc.addPage();
+      y = M;
+      // Redibujar encabezado de tabla en la nueva página
+      doc.font("Helvetica-Bold").fontSize(11).fillColor("#111827")
+        .text("Detalle de ítems (continuación)", M, y);
+      y += 14;
+      y = drawHeader(y);
+    }
+
     if (i % 2 === 1) {
       doc.save().rect(M, y - 1, contentW, rowH).fill(LIGHT_GRAY).restore();
     }
+
     let xx = M;
     const cols = [
       { v: String(it.code || "—"), w: W_CODE, a: "left" },
@@ -247,10 +258,10 @@ function drawItemsTable(doc, y, rows, total) {
     y += rowH;
   }
 
-  if (leftover > 0) {
-    doc.font("Helvetica").fontSize(8).fillColor(TEXT_MUTED)
-      .text(`(${leftover} ítems no mostrados en este remito)`, M, y + 2);
-    y += 16;
+  // Total al final
+  if (y + rowH > doc.page.height - bottomReserve) {
+    doc.addPage();
+    y = M;
   }
 
   doc.save().roundedRect(M, y + 4, contentW, rowH, 4).fill("#F9FAFB").restore();

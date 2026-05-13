@@ -1942,9 +1942,12 @@ router.put("/sp/assignments/:serviceId", mustBeAdmin, (req, res) => {
     );
 
     const tx = db.transaction(() => {
-      let added = 0,
-        removed = 0;
-      for (const pid of toAdd) added += ins.run(sid, pid).changes;
+      let added = 0, removed = 0;
+      const insVis = db.prepare(`INSERT OR IGNORE INTO ProductRoleVisibility (product_id, role) VALUES (?, 'supervisor')`);
+      for (const pid of toAdd) {
+        added += ins.run(sid, pid).changes;
+        insVis.run(pid); // visibilidad automática para supervisor
+      }
       for (const pid of toDel) removed += del.run(sid, pid).changes;
       return { added, removed };
     });

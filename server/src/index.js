@@ -23,7 +23,7 @@ import { createCorsMiddleware } from "./utils/corsConfig.js";
 
 // ✅ CSRF middleware (debe ser middleware express: (req,res,next) => {})
 import { requireCsrf } from "./utils/simpleCsrf.js";
-
+import { startReminderJob } from "./utils/reminderJob.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
@@ -116,4 +116,5 @@ app.listen(PORT, "0.0.0.0", async () => {
   } else {
     console.warn(`⚠️ Mailer no verificado: ${result?.reason || "unknown"}`);
   }
+   startReminderJob();
 });

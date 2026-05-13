@@ -21,9 +21,9 @@ import Services from "./pages/Services";
 import AdminPanel from "./pages/AdminPanel";
 import Reports from "./pages/Reports";
 import Deposito from "./pages/Deposito";
+import MisPedidos from "./pages/MisPedidos";
 import ServiceBudgets from "./pages/ServiceBudgets";
 import "./styles/app.css";
-
 /** Protege todo lo que cuelga de /app/:role */
 function Guarded() {
   const { user, loading } = useAuth();
@@ -111,6 +111,7 @@ function Layout() {
               <NavLink to={`${base}/reports`} className={navClass}>
                 Informes
               </NavLink>
+              
               <NavLink to={`${base}/cart`} className={navClass}>
                 Carrito <span className="count">{count}</span>
               </NavLink>
@@ -131,6 +132,12 @@ function Layout() {
               {isDepositoSolo && (
                 <NavLink to={`${base}/deposito`} className={navClass}>
                   Depósito
+                </NavLink>
+              )}
+
+              {roles.includes("supervisor") && (
+                <NavLink to={`${base}/mis-pedidos`} className={navClass}>
+                  Mis pedidos
                 </NavLink>
               )}
 
@@ -208,6 +215,7 @@ export default function App() {
           <Route path="services" element={<Services />} />
           <Route path="deposito" element={<Deposito />} />
           <Route path="cart" element={<Cart />} />
+          <Route path="mis-pedidos" element={<MisPedidos />} />
 
           {/* Índice por rol */}
           <Route index element={<RoleIndexRedirect />} />
