@@ -102,14 +102,14 @@ async function sendReminders() {
       const text = `Recordatorio: tu pedido #${pad7(p.id)} lleva más de 2 días en estado "${statusLabel}". Total: ${money(p.total)}`;
 
       try {
-        await sendMail({
-          to: destinatario,
-          subject,
-          text,
-          html,
-          entityType: "pedido_recordatorio",
-          entityId: String(p.id),
-        });
+       // await sendMail({
+         // to: destinatario,
+         // subject,
+         // text,
+         // html,
+          //entityType: "pedido_recordatorio",
+          //entityId: String(p.id),
+        //});
 
         // Marcar como enviado para no volver a mandar
         db.prepare(`INSERT OR IGNORE INTO PedidoRecordatorios (pedido_id, enviado_at) VALUES (?, ?)`).run(p.id, nowArgentina());
