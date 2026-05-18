@@ -305,21 +305,25 @@ export default function Cart() {
               Limpiar
             </button>
             <button
-              className="btn"
-              onClick={sendOrder}
-              disabled={sending || items.length === 0 || overLimit}
-              title={
-                overLimit
-                  ? `El pedido excede el ${maxPctAllowed ?? ""}% del presupuesto del servicio`
-                  : ""
-              }
-            >
-              {sending
-                ? "Enviando…"
-                : overLimit
-                ? `Excede ${maxPctAllowed ?? ""}% del presupuesto`
-                : "Enviar pedido"}
-            </button>
+  className="btn"
+  onClick={sendOrder}
+  disabled={sending || items.length === 0 || overLimit || (isSupervisorRoute && !service?.id)}
+  title={
+    isSupervisorRoute && !service?.id
+      ? "Tenés que elegir un servicio antes de enviar el pedido"
+      : overLimit
+      ? `El pedido excede el ${maxPctAllowed ?? ""}% del presupuesto del servicio`
+      : ""
+  }
+>
+  {sending
+    ? "Enviando…"
+    : isSupervisorRoute && !service?.id
+    ? "Elegí un servicio primero"
+    : overLimit
+    ? `Excede ${maxPctAllowed ?? ""}% del presupuesto`
+    : "Enviar pedido"}
+</button>
           </div>
 
           {errorSend && (
