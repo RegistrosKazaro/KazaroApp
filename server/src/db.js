@@ -706,9 +706,10 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
     ) inc ON CAST(inc.pid AS TEXT) = CAST(p.${prodId} AS TEXT)
   `;
 
-  const where = [];
+    const where = [];
   const params = [];
-   const prodInfoEmp = tinfo(products);
+  where.push(`COALESCE(p.is_active, 1) = 1`);
+  const prodInfoEmp = tinfo(products);
   if (prodInfoEmp.some(c => c.name === "empresa_id") && empresaId != null) {
     where.push(`p.empresa_id = ${Number(empresaId)}`);
   }

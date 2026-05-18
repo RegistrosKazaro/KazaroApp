@@ -857,18 +857,32 @@ const onEdit = async (row) => {
                 ) : (
                   <>
                     <button className="pill" onClick={() => startStockEdit(r)}>
-                      Stock
-                    </button>
-                    <button className="pill" onClick={() => onEdit(r)}>
-                      Editar
-                    </button>
-                    <button
-                      className="pill danger"
-                      onClick={() => onDelete(r.id)}
-                      aria-label={`Eliminar ${r.name}`}
-                    >
-                      Eliminar
-                    </button>
+  Stock
+</button>
+<button className="pill" onClick={() => onEdit(r)}>
+  Editar
+</button>
+<button
+  className={`pill ${r.is_active === 0 ? "" : "danger"}`}
+  style={{ background: r.is_active === 0 ? "#f0fdf4" : undefined, color: r.is_active === 0 ? "#16a34a" : undefined }}
+  onClick={async () => {
+    try {
+      const { data } = await api.put(`/api/admin/products/${r.id}/toggle-active`);
+      setRows(prev => prev.map(p => p.id === r.id ? { ...p, is_active: data.is_active } : p));
+      setStatusMsg(data.is_active ? "Producto activado." : "Producto desactivado.");
+    } catch (e) {
+      setErr(e?.response?.data?.error || "No se pudo cambiar el estado");
+    }
+  }}
+>
+  {r.is_active === 0 ? "Activar" : "Desactivar"}
+</button>
+<button
+  className="pill danger"
+  onClick={() => onDelete(r.id)}
+>
+  Eliminar
+</button>
                   </>
                 )}
               </div>
