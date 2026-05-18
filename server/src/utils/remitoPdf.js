@@ -192,7 +192,7 @@ function drawMeta(doc, y, { empleado, rol, fecha, servicio }) {
 
 function drawItemsTable(doc, y, rows, total) {
   const contentW = doc.page.width - M * 2;
-  const W_CODE = 90, W_QTY = 60, W_PRICE = 80, W_SUB = 90;
+  const W_CODE = 70, W_QTY = 45, W_PRICE = 75, W_SUB = 80;
   const W_DESC = contentW - (W_CODE + W_QTY + W_PRICE + W_SUB);
   const headerH = 24, rowH = 22;
 
@@ -242,12 +242,12 @@ function drawItemsTable(doc, y, rows, total) {
     let xx = M;
     const cols = [
       { v: String(it.code || "—"), w: W_CODE, a: "left" },
-      { v: String(it.name || ""), w: W_DESC, a: "left", clip: true },
+      { v: String(it.name || ""), w: W_DESC, a: "left", clip: false },
       { v: String(it.qty ?? 0), w: W_QTY, a: "right" },
       { v: money(it.price), w: W_PRICE, a: "right" },
       { v: money(it.subtotal ?? (+it.price || 0) * (+it.qty || 0)), w: W_SUB, a: "right" },
     ];
-    doc.font("Helvetica").fontSize(9).fillColor("#111827");
+    doc.font("Helvetica").fontSize(8).fillColor("#111827");
     for (const c of cols) {
       const w = c.w - 12;
       const text = c.clip ? fitText(doc, c.v, w) : c.v;
