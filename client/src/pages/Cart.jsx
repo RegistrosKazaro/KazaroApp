@@ -185,9 +185,9 @@ export default function Cart() {
         )}
 
         {isSupervisorRoute && !service && (
-          <div style={{ marginTop: 6 }}>
-            <strong>Servicio:</strong> <em>no seleccionado</em> —{" "}
-            <Link to="/app/supervisor/services">elegir</Link>
+          <div style={{ marginTop: 6, color: "#dc2626" }}>
+            <strong>⚠️ Servicio:</strong> <em>no seleccionado</em> —{" "}
+            <Link to="/app/supervisor/services">elegir antes de enviar</Link>
           </div>
         )}
 
