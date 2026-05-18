@@ -129,7 +129,8 @@ router.get("/products", mustBeAdmin, (req, res) => {
 
     const sql = `
       SELECT ${C_ID} AS id,
-             ${C_NAME} AS name
+             ${C_NAME} AS name,
+             COALESCE(is_active, 1) AS is_active
              ${C_CAT ? `, ${C_CAT} AS categoryId` : ""}
              ${C_CATNAME ? `, ${C_CATNAME} AS categoryName` : ""}
              ${C_CODE  ? `, ${C_CODE}  AS code`  : ""}
@@ -2409,6 +2410,26 @@ router.post("/products/:productId/remove-all-services", requireAuth, requireRole
   } catch (e) {
     console.error("[remove-all-services] error:", e);
     return res.status(500).json({ error: e.message || "Error interno" });
+  }
+});
+
+router.put("/products/:id/toggle-active", mustBeAdmin, (req, res) => {
+  try {
+    const sch = prodSchemaOrThrow();
+    const { products } = sch.tables;
+    const { prodId } = sch.cols;
+    const id = req.params.id;
+
+    const current = db.prepare(`SELECT is_active FROM ${products} WHERE CAST(${prodId} AS TEXT) = CAST(? AS TEXT) LIMIT 1`).get(id);
+    if (!current) return res.status(404).json({ error: "Producto no encontrado" });
+
+    const newVal = current.is_active ? 0 : 1;
+    db.prepare(`UPDATE ${products} SET is_active = ? WHERE CAST(${prodId} AS TEXT) = CAST(? AS TEXT)`).run(newVal, id);
+
+    return res.json({ ok: true, is_active: newVal });
+  } catch (e) {
+    console.error("[toggle-active] error:", e);
+    return res.status(500).json({ error: "Error interno" });
   }
 });
 export default router;
