@@ -84,6 +84,7 @@ app.use("/catalog", catalogRoutes);
 app.use("/services", servicesRoutes);
 app.use("/supervisor", supervisorRoutes);
 app.use("/service-products", serviceProductsRoutes);
+app.use("/api/reports", reportsRoutes);
 app.use("/reports", reportsRoutes);
 app.use("/deposito", depositoRoutes);
 

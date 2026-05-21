@@ -487,6 +487,52 @@ function totalsForRange(start, end, serviceId) {
   };
 }
 
+function yearlySummary(year, serviceId) {
+  const months = Array.from({ length: 12 }, (_, i) => {
+    const month = i + 1;
+    const range = monthRange(year, month);
+    return {
+      month,
+      ...totalsForRange(range.start, range.end, serviceId),
+    };
+  });
+
+  const totals = months.reduce(
+    (acc, row) => ({
+      ordersCount: acc.ordersCount + Number(row.ordersCount || 0),
+      itemsCount: acc.itemsCount + Number(row.itemsCount || 0),
+      amount: acc.amount + Number(row.amount || 0),
+    }),
+    { ordersCount: 0, itemsCount: 0, amount: 0 }
+  );
+
+  return { year, months, totals };
+}
+
+router.get("/yearly", mustBeAdmin, (req, res) => {
+  try {
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const serviceId = req.query.serviceId ? String(req.query.serviceId) : "";
+
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+      return res.status(400).json({ error: "Parámetro inválido: year" });
+    }
+
+    const current = yearlySummary(year, serviceId);
+    const previous = yearlySummary(year - 1, serviceId);
+
+    return res.json({
+      ok: true,
+      ...current,
+      serviceId: serviceId || null,
+      prev_year: previous,
+    });
+  } catch (e) {
+    console.error("[reports] GET /yearly error:", e);
+    return res.status(500).json({ error: "No se pudo generar el informe anual" });
+  }
+});
+
 router.get("/forecast", mustBeAdmin, (req, res) => {
   try {
     const year = Number(req.query.year);
