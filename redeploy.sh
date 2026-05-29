@@ -26,7 +26,8 @@ PM2_NAME="kazaro-server"
 BRANCH="main"
 
 cd "$APP_DIR"
-
+echo "==> Migracion multiempresa"
+node "$APP_DIR/server/migrate_multiempresa.mjs" || true
 # ========================
 # Git (deploy seguro: deja el repo EXACTO como origin/main)
 # ========================
