@@ -1,0 +1,131 @@
+// server/migrate_multiempresa.mjs
+// Migración multiempresa IDEMPOTENTE: se puede correr muchas veces sin romper nada.
+// No borra datos. Kazaro = empresa_id 1, Pazar = empresa_id 2.
+import Database from "better-sqlite3";
+import path from "node:path";
+
+const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), "Kazaro.db");
+const db = new Database(DB_PATH);
+db.pragma("foreign_keys = OFF");
+
+const log = (...a) => console.log("[migrate]", ...a);
+
+function tableExists(name) {
+  return !!db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name=? LIMIT 1"
+  ).get(name);
+}
+function colExists(table, col) {
+  if (!tableExists(table)) return false;
+  return db.prepare(`PRAGMA table_info(${table})`).all()
+    .some((c) => String(c.name).toLowerCase() === col.toLowerCase());
+}
+function addColIfMissing(table, colDef, colName) {
+  if (!tableExists(table)) { log(`skip ${table} (no existe)`); return; }
+  if (colExists(table, colName)) { log(`ok ${table}.${colName} ya existe`); return; }
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${colDef}`);
+  log(`+ columna ${table}.${colName}`);
+}
+function setDefaultEmpresa(table) {
+  if (!colExists(table, "empresa_id")) return;
+  const r = db.prepare(`UPDATE ${table} SET empresa_id = 1 WHERE empresa_id IS NULL`).run();
+  if (r.changes) log(`= ${table}: ${r.changes} filas -> empresa_id=1`);
+}
+
+const tx = db.transaction(() => {
+  // 1) Tabla Empresas
+  if (!tableExists("Empresas")) {
+    db.exec(`
+      CREATE TABLE Empresas (
+        EmpresaID INTEGER PRIMARY KEY AUTOINCREMENT,
+        slug TEXT UNIQUE NOT NULL,
+        nombre TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1
+      )`);
+    log("+ tabla Empresas");
+  }
+  const upsertEmp = db.prepare(`
+    INSERT INTO Empresas (EmpresaID, slug, nombre, is_active) VALUES (?, ?, ?, 1)
+    ON CONFLICT(EmpresaID) DO UPDATE SET slug=excluded.slug, nombre=excluded.nombre
+  `);
+  upsertEmp.run(1, "kazaro", "Kazaro");
+  upsertEmp.run(2, "pazar", "Pazar");
+  log("= seed Empresas (1=Kazaro, 2=Pazar)");
+
+  // 2) EmpresaMailConfig
+  if (!tableExists("EmpresaMailConfig")) {
+    db.exec(`
+      CREATE TABLE EmpresaMailConfig (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        empresa_id INTEGER NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT,
+        UNIQUE(empresa_id, key)
+      )`);
+    log("+ tabla EmpresaMailConfig");
+  }
+
+  // 3) Columnas empresa_id
+  addColIfMissing("Empleados",  "empresa_id INTEGER REFERENCES Empresas(EmpresaID)", "empresa_id");
+  addColIfMissing("Pedidos",    "empresa_id INTEGER REFERENCES Empresas(EmpresaID)", "empresa_id");
+  addColIfMissing("Servicios",  "empresa_id INTEGER REFERENCES Empresas(EmpresaID)", "empresa_id");
+  addColIfMissing("Ordenes",    "empresa_id INTEGER REFERENCES Empresas(EmpresaID)", "empresa_id");
+  addColIfMissing("Productos",  "empresa_id INTEGER REFERENCES Empresas(EmpresaID)", "empresa_id");
+  addColIfMissing("Categorias", "empresa_id INTEGER REFERENCES Empresas(EmpresaID)", "empresa_id");
+
+  // 4) Backfill: todo lo existente es de Kazaro
+  ["Empleados","Pedidos","Servicios","Ordenes","Productos","Categorias"].forEach(setDefaultEmpresa);
+
+  // 5) Índices únicos POR empresa (reemplazan los globales)
+  if (colExists("Productos", "empresa_id")) {
+    db.exec(`DROP INDEX IF EXISTS ux_product_code`);
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_product_code
+             ON Productos(Code, empresa_id) WHERE Code IS NOT NULL AND Code != ''`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_productos_empresa ON Productos(empresa_id)`);
+    log("= índice ux_product_code (Code, empresa_id)");
+  }
+  if (colExists("Servicios", "empresa_id")) {
+    db.exec(`DROP INDEX IF EXISTS ux_servicios_nombre`);
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_servicios_nombre
+             ON Servicios(ServicioNombre, empresa_id) WHERE ServicioNombre IS NOT NULL AND ServicioNombre != ''`);
+    log("= índice ux_servicios_nombre (ServicioNombre, empresa_id)");
+  }
+
+  // 6) Categorías de Pazar (solo si no existen aún para empresa 2)
+  if (colExists("Categorias", "empresa_id")) {
+    const insCat = db.prepare(`
+      INSERT INTO Categorias (CategoriaNombre, empresa_id)
+      SELECT ?, 2
+      WHERE NOT EXISTS (
+        SELECT 1 FROM Categorias WHERE lower(trim(CategoriaNombre)) = lower(trim(?)) AND empresa_id = 2
+      )
+    `);
+    for (const nombre of ["Aceites / Grasa","EPP","Insumos maquinarias","Bolsas","Combustibles"]) {
+      const r = insCat.run(nombre, nombre);
+      if (r.changes) log(`+ categoria Pazar: ${nombre}`);
+    }
+  }
+
+  // 7) Config de mail de Pazar (idempotente). NO toca el .env de Kazaro.
+  const setMail = db.prepare(`
+    INSERT INTO EmpresaMailConfig (empresa_id, key, value) VALUES (2, ?, ?)
+    ON CONFLICT(empresa_id, key) DO UPDATE SET value=excluded.value
+  `);
+  const pazarMail = {
+    SMTP_HOST: "smtp.gmail.com",
+    SMTP_PORT: "587",
+    SMTP_SECURE: "false",
+    SMTP_USER: "nicolas.barcena@kazaro.com.ar",
+    SMTP_PASS: "yecqcnnxmuefrnqk",
+    MAIL_FROM: "Pazar Pedidos <nicolas.barcena@kazaro.com.ar>",
+    MAIL_TO: "nicolas.barcena@kazaro.com.ar,agustin.torresmartinez@pazar.com.ar,Juan.brarda@pazar.com.ar,diego.echevarria@pazar.com.ar",
+    MAIL_CC: "",
+    MAIL_BCC: "",
+  };
+  for (const [k, v] of Object.entries(pazarMail)) setMail.run(k, v);
+  log("= mail config Pazar (empresa_id=2)");
+});
+
+tx();
+db.close();
+log("MIGRACION COMPLETA OK");

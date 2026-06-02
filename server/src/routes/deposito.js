@@ -16,6 +16,11 @@ import { sendMail } from "../utils/mailer.js";
 const router = Router();
 console.log("[deposito] Router cargado: Modo Seguro (JS JOIN)");
 
+/* ========================= Empresa ========================= */
+function getEmpresaId(req) {
+  return req.user?.empresaId ?? 1;
+}
+
 /* ========================= Auth ========================= */
 function requireDepositoOrAdmin(req, res, next) {
   try {
@@ -27,6 +32,7 @@ function requireDepositoOrAdmin(req, res, next) {
     return next();
   } catch { return res.status(403).json({ ok: false, error: "Error permisos" }); }
 }
+
 const mustWarehouse = [requireAuth, requireDepositoOrAdmin];
 
 /* ========================= Helpers de DB ========================= */
@@ -77,6 +83,13 @@ async function notifyOrderReady(orderId, closedAt) {
       return;
     }
 
+    // empresa del pedido (para que el mail salga con la config correcta)
+    let empresaId = null;
+    try {
+      const row = db.prepare("SELECT empresa_id FROM Pedidos WHERE PedidoID = ? LIMIT 1").get(Number(orderId));
+      empresaId = row?.empresa_id ?? null;
+    } catch {}
+
     const servicioNombre = pedido.ServicioID
       ? getServiceNameById(String(pedido.ServicioID)) || `Servicio ${pedido.ServicioID}`
       : null;
@@ -104,7 +117,6 @@ async function notifyOrderReady(orderId, closedAt) {
 
     const items = pedido.items || [];
 
-    // ---- Texto plano ----
     const itemsText = items.length
       ? items.map(it => `  [${it.code || "—"}] ${it.name}  ×  ${it.qty}`).join("\n")
       : "  (sin detalle disponible)";
@@ -124,11 +136,8 @@ async function notifyOrderReady(orderId, closedAt) {
       `Listo para retiro:  ${fechaCierre}`,
       ``,
       `Por favor, acercate al depósito a retirar tus materiales.`,
-      ``,
-      `— Kazaro Depósito`,
     ].join("\n");
 
-    // ---- HTML ----
     const itemsHtml = items.length
       ? items.map(it => `
           <tr>
@@ -143,20 +152,17 @@ async function notifyOrderReady(orderId, closedAt) {
 <html lang="es">
 <body style="margin:0;padding:24px;background:#f8fafc;font-family:sans-serif;color:#111827;">
   <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:10px;overflow:hidden;border:1px solid #e5e7eb;">
-
     <div style="background:#1d4ed8;padding:20px 28px;">
       <h1 style="margin:0;font-size:20px;color:#ffffff;font-weight:700;">
         Pedido #${nro} — Listo para retirar
       </h1>
       ${servicioNombre ? `<p style="margin:4px 0 0;color:#bfdbfe;font-size:14px;">Servicio: ${servicioNombre}</p>` : ""}
     </div>
-
     <div style="padding:24px 28px;">
       <p style="margin:0 0 16px;">Hola <strong>${empleadoNombre}</strong>,</p>
       <p style="margin:0 0 20px;background:#eff6ff;border-left:4px solid #2563eb;padding:12px 16px;border-radius:4px;">
         Tu pedido de insumos ya está <strong>preparado y listo para retirar</strong> en el depósito.
       </p>
-
       <h3 style="font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#6b7280;margin:0 0 8px;">
         Detalle del pedido
       </h3>
@@ -168,27 +174,13 @@ async function notifyOrderReady(orderId, closedAt) {
             <th style="padding:8px 10px;text-align:right;border-bottom:2px solid #e5e7eb;font-size:12px;text-transform:uppercase;letter-spacing:0.04em;">Cantidad</th>
           </tr>
         </thead>
-        <tbody>
-          ${itemsHtml}
-        </tbody>
+        <tbody>${itemsHtml}</tbody>
       </table>
-
       <p style="font-size:16px;font-weight:700;margin:0 0 20px;">Total: ${totalStr}</p>
-
       <table style="font-size:13px;color:#6b7280;border-spacing:0;margin-bottom:24px;">
-        <tr>
-          <td style="padding:2px 0;">Fecha del pedido:</td>
-          <td style="padding:2px 0 2px 16px;color:#374151;">${fechaPedido}</td>
-        </tr>
-        <tr>
-          <td style="padding:2px 0;">Listo para retiro:</td>
-          <td style="padding:2px 0 2px 16px;color:#374151;">${fechaCierre}</td>
-        </tr>
+        <tr><td style="padding:2px 0;">Fecha del pedido:</td><td style="padding:2px 0 2px 16px;color:#374151;">${fechaPedido}</td></tr>
+        <tr><td style="padding:2px 0;">Listo para retiro:</td><td style="padding:2px 0 2px 16px;color:#374151;">${fechaCierre}</td></tr>
       </table>
-
-      <p style="color:#6b7280;font-size:13px;margin:0;">
-        — Kazaro Depósito
-      </p>
     </div>
   </div>
 </body>
@@ -205,6 +197,7 @@ async function notifyOrderReady(orderId, closedAt) {
       html,
       entityType: "pedido_listo",
       entityId: String(orderId),
+      empresaId,
     });
 
     console.log(`[deposito] Notificación enviada a ${supervisorEmail} — pedido #${nro}`);
@@ -215,23 +208,32 @@ async function notifyOrderReady(orderId, closedAt) {
 
 /* ========================= Rutas ========================= */
 
-// LISTAR PEDIDOS — con empleado, servicio, items, timestamps
+// LISTAR PEDIDOS — filtrados por empresa, con empleado, servicio, items, timestamps
 router.get("/orders", mustWarehouse, (req, res) => {
   try {
     ensureStatusColumn();
     ensureTimestampColumns();
     if (!hasTable("Pedidos")) return res.json([]);
 
+    const empresaId = getEmpresaId(req);
+
     const cols = db.prepare("PRAGMA table_info(Pedidos)").all();
     const colNames = cols.map(c => c.name.toLowerCase());
 
+    const hasEmpresaCol = colNames.includes("empresa_id");
+    const empresaWhere  = hasEmpresaCol ? `WHERE empresa_id = ${Number(empresaId)}` : "";
+
     const rawOrders = db
-      .prepare("SELECT rowid AS __rowid, * FROM Pedidos ORDER BY Fecha DESC LIMIT 100")
+      .prepare(`SELECT rowid AS __rowid, * FROM Pedidos ${empresaWhere} ORDER BY Fecha DESC LIMIT 100`)
       .all();
 
     let employees = [];
     if (hasTable("Empleados")) {
-      employees = db.prepare("SELECT * FROM Empleados").all();
+      const empCols = db.prepare("PRAGMA table_info(Empleados)").all().map(c => c.name.toLowerCase());
+      const empEmpresaFilter = empCols.includes("empresa_id")
+        ? `WHERE empresa_id = ${Number(empresaId)}`
+        : "";
+      employees = db.prepare(`SELECT * FROM Empleados ${empEmpresaFilter}`).all();
     }
 
     // Items de todos los pedidos en una sola query
@@ -337,7 +339,7 @@ router.get("/orders", mustWarehouse, (req, res) => {
   }
 });
 
-// REGISTRAR RETIRO — debe ir ANTES de /:id/:action para que Express no lo capture como action="pickup"
+// REGISTRAR RETIRO — antes de /:id/:action para que Express no lo capture como action="pickup"
 router.put("/orders/:id/pickup", mustWarehouse, (req, res) => {
   const id = req.params.id;
   try {
@@ -410,16 +412,12 @@ router.put("/orders/:id/:action", mustWarehouse, async (req, res) => {
 
     params.push(id);
     const r = db.prepare(`UPDATE Pedidos SET ${sets.join(", ")} WHERE ${idCol} = ?`).run(...params);
-
     if (r.changes === 0) return res.status(404).json({ error: "Pedido no encontrado" });
 
-    // Responder de inmediato y luego enviar email en background
     res.json({ ok: true, id });
 
     if (action === "close" && closedAt) {
-      setImmediate(async () => {
-        await notifyOrderReady(id, closedAt);
-      });
+      setImmediate(async () => { await notifyOrderReady(id, closedAt); });
     }
   } catch (e) {
     console.error("[deposito] action error:", e);
@@ -434,13 +432,9 @@ router.put("/orders/reopen/:id",  mustWarehouse, (req, res) => { req.params.acti
 
 /* ========================= Analytics ========================= */
 
-// Overview: stock bajo con código de producto
 router.get("/overview", mustWarehouse, (req, res) => {
   try {
-    const threshold = Number.isNaN(Number(req.query.threshold))
-      ? 0
-      : Number(req.query.threshold);
-
+    const threshold = Number.isNaN(Number(req.query.threshold)) ? 0 : Number(req.query.threshold);
     const sch = discoverCatalogSchema();
     if (!sch.ok) return res.json({ top: [], low: [] });
 

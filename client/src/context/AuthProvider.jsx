@@ -1,9 +1,10 @@
+// client/src/context/AuthProvider.jsx  ← REEMPLAZA el archivo actual
 import { useEffect, useState } from "react";
 import { api, ensureCsrf } from "../api/client";
 import { AuthContext } from "./auth-context";
 
 export default function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
+  const [user,    setUser]    = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -14,40 +15,31 @@ export default function AuthProvider({ children }) {
         const payload = res?.data?.user ?? res?.data ?? null;
         if (alive) setUser(payload);
       })
-      .catch(() => {
-        if (alive) setUser(null);
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
-    return () => {
-      alive = false;
-    };
+      .catch(() => { if (alive) setUser(null); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
   }, []);
 
-  async function login(username, password) {
+  // Ahora acepta empresaSlug como tercer parámetro (opcional, default "kazaro")
+  async function login(username, password, empresaSlug = "kazaro") {
     await ensureCsrf();
-    const res = await api.post("/auth/login", { username, password });
+    const res = await api.post("/auth/login", { username, password, empresaSlug });
     const payload = res.data?.user || res.data || null;
     setUser(payload);
     return payload;
   }
 
   async function logout() {
-    try {
-      await api.post("/auth/logout");
-    } catch (e) {
-      if (typeof console !== "undefined") console.warn("[logout] fallo en servidor:", e);
-    }
+    try { await api.post("/auth/logout"); }
+    catch (e) { console.warn("[logout] fallo en servidor:", e); }
     try {
       localStorage.removeItem("cart");
       localStorage.removeItem("selectedService");
+      sessionStorage.removeItem("kazaro_empresa");
       window.dispatchEvent(new Event("app:logout"));
-    } catch (e) {
-      if (typeof console !== "undefined") console.warn("[logout] no se pudo limpiar storage:", e);
-    }
+    } catch (e) { console.warn("[logout] no se pudo limpiar storage:", e); }
     setUser(null);
-    window.location.replace("/login");
+    window.location.replace("/");  // vuelve al selector de empresa
   }
 
   return (

@@ -10,6 +10,7 @@ import {
 import { getWarehouseForChildService } from "../warehouses.js";
 import { generateRemitoPDFBuffer } from "../utils/remitoPdf.js";
 import { sendMail } from "../utils/mailer.js";
+import { listEmpresas } from "../utils/empresa.js";
 
 // Mail que recibe copia de TODOS los pedidos de servicios hijos de un depósito.
 const DEPOSITO_CC_EMAIL = "gustavo.bacur@kazaro.com.ar";
@@ -20,8 +21,8 @@ const pad7 = (n) => String(n ?? "").padStart(7, "0");
 function sqlLocalToISO(sqlTs) {
   if (!sqlTs) return new Date().toISOString();
   try {
-    const clean = String(sqlTs).replace(" ", "T");
-    const d = new Date(clean + "-03:00");
+    const base = String(sqlTs).replace(" ", "T");
+    const d = new Date(base + "-03:00");
     if (Number.isNaN(d.getTime())) return new Date().toISOString();
     return d.toISOString();
   } catch { return new Date().toISOString(); }
@@ -51,11 +52,8 @@ function resolveServiceName(servicioId, hintedName) {
 function resolveEmpresaNombre(empresaId) {
   if (!empresaId) return "Kazaro";
   try {
-    const row = db.prepare(`SELECT nombre FROM Empresas WHERE id = ? LIMIT 1`).get(empresaId);
-    return row?.nombre ?? "Kazaro";
-  } catch {
-    return "Kazaro";
-  }
+    return listEmpresas().find((e) => e.id === empresaId)?.nombre ?? "Kazaro";
+  } catch { return "Kazaro"; }
 }
 
 router.post("/", requireAuth, async (req, res) => {
@@ -63,8 +61,9 @@ router.post("/", requireAuth, async (req, res) => {
     const empleadoId    = req.user.id;
     const empresaId     = req.user.empresaId ?? null;
     const empresaNombre = resolveEmpresaNombre(empresaId);
-    const asRoleClient  = normalizeRoleName(req.body?.asRole ?? req.body?.rol);
-    const rolEfectivo   = asRoleClient || primaryRole(empleadoId);
+
+    const asRoleClient = normalizeRoleName(req.body?.asRole ?? req.body?.rol);
+    const rolEfectivo  = asRoleClient || primaryRole(empleadoId);
 
     let { servicioId = null, nota = "", items } = req.body || {};
 
@@ -76,8 +75,9 @@ router.post("/", requireAuth, async (req, res) => {
         const mios = listServicesByUser(empleadoId);
         if (Array.isArray(mios) && mios.length === 1) servicioId = mios[0].id;
       }
-      if (!servicioId)
+      if (!servicioId) {
         return res.status(400).json({ error: "servicioId es requerido para pedidos de supervisor" });
+      }
     } else {
       servicioId = null;
     }
@@ -105,12 +105,13 @@ router.post("/", requireAuth, async (req, res) => {
       throw err;
     }
 
-    const pedidosInfo   = db.prepare("PRAGMA table_info(Pedidos)").all();
-    const hasEmpresaCol = pedidosInfo.some((c) => c.name === "empresa_id");
-    if (hasEmpresaCol && empresaId)
+    // Guardar rol y empresa en el pedido
+    const hasEmpresaCol = db.prepare("PRAGMA table_info(Pedidos)").all().some((c) => c.name === "empresa_id");
+    if (hasEmpresaCol && empresaId) {
       db.prepare("UPDATE Pedidos SET Rol = ?, empresa_id = ? WHERE PedidoID = ?").run(rolEfectivo, empresaId, Number(pedidoId));
-    else
+    } else {
       db.prepare("UPDATE Pedidos SET Rol = ? WHERE PedidoID = ?").run(rolEfectivo, Number(pedidoId));
+    }
 
     const pedido = getFullOrder(pedidoId);
     if (!pedido) return res.status(500).json({ error: "No se pudo recuperar el pedido" });
@@ -119,47 +120,36 @@ router.post("/", requireAuth, async (req, res) => {
     const empleadoNombre = getEmployeeDisplayName(empleadoId) || `Empleado ${empleadoId}`;
     const usuario        = pedido.user || getUserById(empleadoId);
     const rol            = rolEfectivo;
-
-    const sidResolved = rol === "supervisor"
-      ? String(pedido.ServicioID ?? servicioId ?? "").trim()
-      : "";
-    const serviceName = sidResolved ? resolveServiceName(sidResolved, pedido?.servicio?.name) : "";
-
+    const sid            = rol === "supervisor" ? String(pedido.ServicioID ?? servicioId ?? "").trim() : "";
+    const serviceName    = rol === "supervisor" ? resolveServiceName(sid, pedido?.servicio?.name) : "";
     const total          = Number(pedido.Total || 0);
     const notaFinal      = String(nota || pedido.Nota || "—");
-    const servicioParaPdf = rol === "supervisor" && sidResolved
-      ? { id: sidResolved, name: serviceName || sidResolved }
-      : null;
 
+    /* PDF */
     const pedidoParaPdf = {
-      ...pedido,
-      ServicioID: sidResolved || null,
-      Rol: rol,
-      empresaNombre,
-      servicio: servicioParaPdf,
+      ...pedido, rol, empresaNombre,
+      servicio: rol === "supervisor" ? { id: sid || null, name: serviceName } : null,
     };
 
     let buffer = null, filename = `remito_${nro}.pdf`;
     try {
       const out = await generateRemitoPDFBuffer({ pedido: pedidoParaPdf });
-      buffer = out.buffer;
-      filename = out.filename || filename;
+      buffer = out.buffer; filename = out.filename || filename;
     } catch (e) { console.warn("[orders] No se pudo generar PDF:", e?.message); }
 
+    /* MAIL */
     let mailStatus = { sent: false, skipped: true };
     try {
-      const toArr = rol === "supervisor" && sidResolved ? getServiceEmails(sidResolved) || [] : [];
+      const toArr = rol === "supervisor" && sid ? getServiceEmails(sid) || [] : [];
 
       // Si el servicio del pedido es hijo de un depósito (ej: TADICOR, VIAL TRUCK, etc),
       // agregar a Gustavo en CC. Para cualquier otro servicio, ccArr queda vacío
       // y el mail sale exactamente igual que antes.
       let ccArr = [];
       try {
-        if (rol === "supervisor" && sidResolved) {
-          const warehouse = getWarehouseForChildService(sidResolved);
-          if (warehouse) {
-            ccArr = [DEPOSITO_CC_EMAIL];
-          }
+        if (rol === "supervisor" && sid) {
+          const warehouse = getWarehouseForChildService(sid);
+          if (warehouse) ccArr = [DEPOSITO_CC_EMAIL];
         }
       } catch (e) {
         console.warn("[orders] warehouse CC check skipped:", e?.message || e);
@@ -180,20 +170,14 @@ router.post("/", requireAuth, async (req, res) => {
       mailStatus = { sent: true, messageId: info?.messageId };
     } catch (e) { mailStatus = { sent: false, error: e?.message }; }
 
-    return res.status(201).json({
-      ok: true, pedidoId,
-      remito: {
-        numero: nro,
-        fecha: sqlLocalToISO(pedido.Fecha),
-        empleado: empleadoNombre,
-        total,
-        nota: notaFinal,
-        pdfUrl: `/orders/pdf/${pedidoId}`,
-        servicio: servicioParaPdf,
-      },
-      rol: rolEfectivo,
-      mail: mailStatus,
-    });
+    const pdfUrl = `/orders/pdf/${pedidoId}`;
+    const remito = {
+      numero: nro, fecha: sqlLocalToISO(pedido.Fecha),
+      empleado: empleadoNombre, total, nota: notaFinal, pdfUrl,
+      servicio: rol === "supervisor" ? { id: sid || null, name: serviceName } : null,
+    };
+
+    return res.status(201).json({ ok: true, pedidoId, remito, rol: rolEfectivo, mail: mailStatus });
   } catch (e) {
     console.error("[orders] POST / error:", e);
     return res.status(500).json({ error: "Error interno" });
@@ -206,29 +190,19 @@ router.get("/pdf/:id", requireAuth, async (req, res) => {
   if (!pedido) return res.status(404).end();
 
   try {
-    const rol          = String(pedido.Rol || "").toLowerCase();
-    const isSupervisor = rol.includes("super");
+    const rol  = String(pedido.Rol || "").toLowerCase();
+    const sid  = rol === "supervisor" ? String(pedido.ServicioID ?? "").trim() : "";
+    const serviceName = rol === "supervisor" ? resolveServiceName(sid, pedido?.servicio?.name) : "";
 
-    let sidFromDb = null, empresaIdDb = null;
+    let empresaNombre = "Kazaro";
     try {
-      const row = db.prepare("SELECT ServicioID, empresa_id FROM Pedidos WHERE PedidoID = ? LIMIT 1").get(id);
-      sidFromDb    = row?.ServicioID ?? null;
-      empresaIdDb  = row?.empresa_id ?? null;
+      const row = db.prepare("SELECT empresa_id FROM Pedidos WHERE PedidoID = ? LIMIT 1").get(id);
+      if (row?.empresa_id) empresaNombre = resolveEmpresaNombre(row.empresa_id);
     } catch {}
 
-    const sidResolved    = isSupervisor && sidFromDb != null ? String(sidFromDb).trim() : "";
-    const serviceName    = sidResolved ? resolveServiceName(sidResolved, pedido?.servicio?.name) : "";
-    const empresaNombre  = resolveEmpresaNombre(empresaIdDb);
-    const servicioParaPdf = isSupervisor && sidResolved
-      ? { id: sidResolved, name: serviceName || sidResolved }
-      : null;
-
     const pedidoParaPdf = {
-      ...pedido,
-      ServicioID: sidResolved || null,
-      Rol: rol,
-      empresaNombre,
-      servicio: servicioParaPdf,
+      ...pedido, rol, empresaNombre,
+      servicio: rol === "supervisor" ? { id: sid || null, name: serviceName } : null,
     };
 
     const { filename, buffer } = await generateRemitoPDFBuffer({ pedido: pedidoParaPdf });
@@ -240,15 +214,12 @@ router.get("/pdf/:id", requireAuth, async (req, res) => {
     return res.status(500).json({ error: "No se pudo generar el PDF" });
   }
 });
-// AGREGAR en server/src/routes/orders.js
-// Pegá esto ANTES del "export default router" al final del archivo
 
 // ─── Mis pedidos (supervisor) ────────────────────────────────────────────────
 router.get("/mis-pedidos", requireAuth, async (req, res) => {
   try {
     const empleadoId = req.user.id;
 
-    // Traer pedidos del empleado con sus items y servicio
     const pedidos = db.prepare(`
       SELECT
         p.PedidoID   AS id,
@@ -265,7 +236,6 @@ router.get("/mis-pedidos", requireAuth, async (req, res) => {
       LIMIT 100
     `).all(String(empleadoId));
 
-    // Enriquecer con items y nombre de servicio
     const result = pedidos.map(p => {
       const items = db.prepare(`
         SELECT
@@ -290,11 +260,7 @@ router.get("/mis-pedidos", requireAuth, async (req, res) => {
         } catch {}
       }
 
-      return {
-        ...p,
-        items,
-        servicioNombre,
-      };
+      return { ...p, items, servicioNombre };
     });
 
     return res.json(result);
@@ -303,4 +269,5 @@ router.get("/mis-pedidos", requireAuth, async (req, res) => {
     return res.status(500).json({ error: "Error interno" });
   }
 });
+
 export default router;

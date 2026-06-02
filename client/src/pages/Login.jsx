@@ -1,119 +1,137 @@
 // client/src/pages/Login.jsx
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
+import { useEmpresa } from "../hooks/useEmpresa";
 import "../styles/login.css";
 import logo from "../assets/LogoVertFull.png";
+import logoPazar from "../assets/LogoPazar.png";
 import isoBadges from "../assets/normasiso.png";
 
 export default function Login() {
-  const nav = useNavigate();
-  const { login } = useAuth();
+  const nav         = useNavigate();
+  const { login }   = useAuth();
+  const { empresa } = useEmpresa();
 
-  const [username, setU] = useState("");
-  const [password, setP] = useState("");
-  const [show, setShow] = useState(false);
-  const [err, setErr] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [username, setU]      = useState("");
+  const [password, setP]      = useState("");
+  const [show,     setShow]   = useState(false);
+  const [err,      setErr]    = useState("");
+  const [loading,  setLoading]= useState(false);
+
+  useEffect(() => {
+    if (!empresa) nav("/", { replace: true });
+  }, [empresa, nav]);
 
   async function onSubmit(e) {
     e.preventDefault();
-    if (loading) return; // evita doble click
-
+    if (loading) return;
     const u = username.trim();
     const p = password;
-
-    if (!u || !p) {
-      setErr("Ingresá usuario y contraseña");
-      return;
-    }
-
+    if (!u || !p) { setErr("Ingresá usuario y contraseña"); return; }
     setErr("");
     setLoading(true);
     try {
-      const { roles = [] } = await login(u, p);
+      const { roles = [] } = await login(u, p, empresa?.slug ?? "kazaro");
       const rolesLower = roles.map((r) => String(r).toLowerCase());
-
-      // Más de un rol → pantalla de selección
-      if (rolesLower.length > 1) {
-        nav("/roles", { replace: true });
-        return;
-      }
-
-      // Un solo rol → lo mandamos a su landing directa
+      if (rolesLower.length > 1) { nav("/roles", { replace: true }); return; }
       if (rolesLower.some((r) => r.includes("super"))) {
         nav("/app/supervisor/services", { replace: true });
       } else {
         nav("/app/administrativo/products", { replace: true });
       }
     } catch (error) {
-      console.error(error);
-      const message =
-        error?.response?.data?.error ||
-        error?.message ||
-        "Usuario o contraseña inválidos";
+      const message = error?.response?.data?.error || error?.message || "Usuario o contraseña inválidos";
       setErr(message);
     } finally {
       setLoading(false);
     }
   }
 
+  if (!empresa) return null;
+
   return (
     <div className="login-bg">
       <div className="login-container">
-        <form onSubmit={onSubmit} className="srv-card login-card">
-          <header className="login-header">
-            <span className="logo-panel">
-              <img src={logo} className="brand-logo" alt="Kazaró" />
-            </span>
-            <h1 className="login-title">Ingresar</h1>
-          </header>
+        <form onSubmit={onSubmit} className="login-card">
 
-          <label>Usuario</label>
-          <input
-            className="input"
-            type="text"
-            value={username}
-            onChange={(e) => setU(e.target.value)}
-            autoFocus
-            autoComplete="username"
-            disabled={loading}
-          />
-
-          <label>Contraseña</label>
-          <div className="input-with-btn">
-            <input
-              type={show ? "text" : "password"}
-              className="input"
-              value={password}
-              onChange={(e) => setP(e.target.value)}
-              autoComplete="current-password"
-              disabled={loading}
-            />
-            <button
-              type="button"
-              className="link-btn"
-              onClick={() => setShow((s) => !s)}
-              aria-pressed={show}
-            >
-              {show ? "Ocultar" : "Mostrar"}
-            </button>
+          {/* Logo */}
+          <div className="login-logo-wrap">
+            <img
+  src={empresa?.slug === "pazar" ? logoPazar : logo}
+  className={empresa?.slug === "pazar" ? "brand-logo brand-logo-pazar" : "brand-logo"}
+  alt={empresa.nombre}
+/>
           </div>
 
-          {err && <div className="state error">{err}</div>}
+          {/* Título */}
+          <div className="login-header-text">
+            <h1 className="login-title">Bienvenido</h1>
+            <p className="login-subtitle">Ingresá a <strong>{empresa.nombre}</strong></p>
+          </div>
 
-          <button className="btn" type="submit" disabled={loading}>
-            {loading ? "Entrando..." : "Entrar"}
+          {/* Campos */}
+          <div className="login-fields">
+            <div className="field-group">
+              <label htmlFor="lUsername">Usuario</label>
+              <input
+                id="lUsername"
+                className="input"
+                type="text"
+                value={username}
+                onChange={(e) => setU(e.target.value)}
+                autoFocus
+                autoComplete="username"
+                disabled={loading}
+                placeholder="Tu usuario"
+              />
+            </div>
+
+            <div className="field-group">
+              <label htmlFor="lPassword">Contraseña</label>
+              <div className="input-with-btn">
+                <input
+                  id="lPassword"
+                  type={show ? "text" : "password"}
+                  className="input"
+                  value={password}
+                  onChange={(e) => setP(e.target.value)}
+                  autoComplete="current-password"
+                  disabled={loading}
+                  placeholder="Tu contraseña"
+                />
+                <button
+                  type="button"
+                  className="toggle-btn"
+                  onClick={() => setShow((s) => !s)}
+                  aria-pressed={show}
+                  tabIndex={-1}
+                >
+                  {show ? "Ocultar" : "Mostrar"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {err && <div className="login-error">{err}</div>}
+
+          <button className="btn-primary" type="submit" disabled={loading}>
+            {loading ? "Ingresando..." : "Ingresar"}
           </button>
+
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => nav("/", { replace: true })}
+            disabled={loading}
+          >
+            ← Cambiar empresa
+          </button>
+
         </form>
       </div>
 
-      {/* Badges ISO abajo-izquierda */}
-      <img
-        src={isoBadges}
-        className="iso-badges"
-        alt="Certificaciones ISO y Empresa B"
-      />
+      <img src={isoBadges} className="iso-badges" alt="Certificaciones ISO y Empresa B" />
     </div>
   );
 }

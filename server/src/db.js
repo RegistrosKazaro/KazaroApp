@@ -606,7 +606,6 @@ export function listCategories(empresaId = null) {
   const { prodCat, prodCatName, catId, catName } = sch.cols;
 
   if (categories && prodCat && catId && catName) {
-    // Verificar si Categorias tiene empresa_id
     const catInfo = tinfo(categories);
     const hasEmpresaCat = catInfo.some(c => c.name === "empresa_id");
     const eCatFilter = (hasEmpresaCat && empresaId != null)
@@ -706,7 +705,7 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
     ) inc ON CAST(inc.pid AS TEXT) = CAST(p.${prodId} AS TEXT)
   `;
 
-    const where = [];
+  const where = [];
   const params = [];
   where.push(`COALESCE(p.is_active, 1) = 1`);
   const prodInfoEmp = tinfo(products);
@@ -732,13 +731,7 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
     `);
     params.push(String(serviceId));
   }
-  // Filtro de empresas 
-  const prodInfo = tinfo(products);
-  const prodHasEmpresa = prodInfo.some(c => c.name === "empresa_id");
-  if (prodHasEmpresa && empresaId != null) {
-    where.push(`p.empresa_id = ${Number(empresaId)}`);
-  }
-    if (!normRoles.length) {
+  if (!normRoles.length) {
     where.push(`1 = 0`);
   } else {
     const rolePlaceholders = normRoles.map(() => `?`).join(",");
@@ -886,9 +879,6 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
     throw new Error("Datos de pedido inválidos");
   }
 
-  // Importamos warehouses acá adentro (no arriba del archivo) para evitar
-  // problemas de carga: en el arranque, db.js termina de exportar todo
-  // y recién después warehouses.js lo puede importar.
   let getWarehouseForChildService, getWarehouseForLinkedService,
       warehouseDecrementStock, warehouseIncrementStock, getWarehouseStock;
   try {
@@ -909,10 +899,6 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
 
   const servicioIdForInsert = (chosenRole === "administrativo") ? null : (servicioId || null);
 
-  // Determinar qué tipo de pedido es:
-  //   childWarehouse  = un servicio hijo pide al depósito (OUT)
-  //   linkedWarehouse = el depósito mismo se repone del stock general (IN)
-  //   null            = flujo normal, descontar del stock general
   const childWarehouse = (servicioIdForInsert && getWarehouseForChildService)
     ? getWarehouseForChildService(servicioIdForInsert)
     : null;
@@ -964,9 +950,6 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
 
       const precio = row.price != null ? Number(row.price) : 0;
 
-      // ═══════════════════════════════════════════════════════════
-      // CASO A: servicio hijo → sacar del DEPÓSITO (no del general)
-      // ═══════════════════════════════════════════════════════════
       if (childWarehouse && warehouseDecrementStock && getWarehouseStock) {
         const avail = getWarehouseStock(childWarehouse.id, pid);
         if (avail < cantidad) {
@@ -987,10 +970,6 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
           price:       precio,
         });
       }
-
-      // ═══════════════════════════════════════════════════════════
-      // CASO B: depósito reponiendo → descontar general + sumar al depósito
-      // ═══════════════════════════════════════════════════════════
       else if (linkedWarehouse && warehouseIncrementStock) {
         if (hasStock) {
           const available = Number(row.stock ?? 0);
@@ -1032,10 +1011,6 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
           price:       precio,
         });
       }
-
-      // ═══════════════════════════════════════════════════════════
-      // CASO C: flujo normal (código original, sin cambios)
-      // ═══════════════════════════════════════════════════════════
       else if (hasStock) {
         const available = Number(row.stock ?? 0);
 
@@ -1060,7 +1035,7 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
           const { incoming } = getFutureIncomingForProduct(pid);
 
           if (available <= 0 && incoming >= cantidad) {
-            // permitido contra ingreso futuro (comportamiento original)
+            // permitido contra ingreso futuro
           } else {
             throw new Error(
               available <= 0
@@ -1460,10 +1435,8 @@ export function adminListCategoriesForSelect(empresaId = null) {
 
   const { products, categories } = sch.tables;
   const { prodCatName, catId, catName, prodCat } = sch.cols;
-  console.log("[adminListCategories] categories:", categories, "empresaId:", empresaId);
 
   if (categories && catId && catName) {
-    // Verificar si Categorias tiene empresa_id
     const catInfo = tinfo(categories);
     const hasEmpresaCat = catInfo.some(c => c.name === "empresa_id");
     const eCatFilter = (hasEmpresaCat && empresaId != null)
@@ -1672,7 +1645,6 @@ export function adminCreateProduct(fields = {}) {
     cols.push(prodCatName); vals.push("?"); args.push(String(fields.categoryName).trim());
   }
 
-  // Agregar empresa_id si la columna existe y se pasó el valor
   const prodInfo = tinfo(products);
   const hasEmpresa = prodInfo.some(c => c.name === "empresa_id");
   if (hasEmpresa && fields.empresaId != null) {

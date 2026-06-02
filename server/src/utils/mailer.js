@@ -1,205 +1,136 @@
-// server/src/utils/mailer.js
+// server/src/utils/mailer.js  ← REEMPLAZA el archivo actual
+// Si empresaId no se pasa (o es null), usa el .env global exactamente igual que antes.
+// Kazaro no nota ninguna diferencia.
 import nodemailer from "nodemailer";
 import { env } from "./env.js";
 import { logEmail } from "../db.js";
+import { getMailConfigForEmpresa } from "./empresa.js";
 
-let transporter;
+const _transporters = new Map();
 
-/* ================= Helpers ================= */
-const EMAIL_RE =
-  // intentionally simple; we only need to filter clearly invalid tokens
-  /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/i;
-
-function isValidEmail(s) {
-  return EMAIL_RE.test(String(s || "").trim());
-}
+const EMAIL_RE = /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/i;
+function isValidEmail(s) { return EMAIL_RE.test(String(s || "").trim()); }
 
 function parseAddress(input) {
   const s = String(input || "").trim();
   if (!s) return { name: "", email: "" };
-
   const m = s.match(/^(.*)<([^>]+)>$/);
-  if (m) {
-    const name = m[1].trim().replace(/^"|"$/g, "");
-    const email = m[2].trim();
-    return { name, email };
-  }
-  // If it's only an email
+  if (m) return { name: m[1].trim().replace(/^"|"$/g, ""), email: m[2].trim() };
   if (isValidEmail(s)) return { name: "", email: s };
-  // Otherwise, return as name (no email)
   return { name: s, email: "" };
 }
 
 function pickFirstEmail(val) {
   const s = String(val || "").trim();
   if (!s) return "";
-  return (
-    s.split(/[;,]+/)
-      .map((t) => t.trim())
-      .filter(Boolean)[0] || ""
-  );
+  return s.split(/[;,]+/).map((t) => t.trim()).filter(Boolean)[0] || "";
 }
 
 function parseList(listOrArray) {
-  if (Array.isArray(listOrArray)) {
-    return listOrArray
-      .map((x) => String(x || "").trim())
-      .filter(Boolean);
-  }
-  return String(listOrArray || "")
-    .split(/[;,]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  if (Array.isArray(listOrArray))
+    return listOrArray.map((x) => String(x || "").trim()).filter(Boolean);
+  return String(listOrArray || "").split(/[;,]+/).map((s) => s.trim()).filter(Boolean);
 }
 
-// formats "Name <email>" safely; returns just email if no name.
-// IMPORTANT: If email is missing, returns empty string (caller must handle).
 const fmt = (name, email) => {
   const e = String(email || "").trim();
   if (!e) return "";
-  const n = String(name || "")
-    .trim()
-    .replace(/"/g, "'");
-
+  const n = String(name || "").trim().replace(/"/g, "'");
   return n ? `"${n}" <${e}>` : e;
 };
 
-// union + dedupe (case-insensitive) + email validation
 function unionEmails(...lists) {
-  const out = [];
-  const seen = new Set();
-
+  const out = [], seen = new Set();
   for (const l of lists) {
     for (const raw of parseList(l)) {
-      const e = raw.trim();
-      const key = e.toLowerCase();
-      if (!key) continue;
-      if (!isValidEmail(e)) continue;
-
-      if (!seen.has(key)) {
-        seen.add(key);
-        out.push(e);
-      }
+      const e = raw.trim(), key = e.toLowerCase();
+      if (!key || !isValidEmail(e) || seen.has(key)) continue;
+      seen.add(key); out.push(e);
     }
   }
   return out;
 }
 
-// filter using blocklist (case-insensitive)
 function minusEmails(list, blockList) {
-  if (!blockList || !blockList.length) return list;
+  if (!blockList?.length) return list;
   const blocked = new Set(blockList.map((e) => e.toLowerCase()));
   return list.filter((e) => !blocked.has(e.toLowerCase()));
 }
 
 function safeLog(payload) {
-  try {
-    logEmail(payload);
-  } catch {
-    // avoid breaking business flow due to logging
-  }
+  try { logEmail(payload); } catch {}
 }
 
-/* ================= Transporter ================= */
-function getTransporter() {
-  if (String(env.MAIL_DISABLE || "").trim() === "1") return null;
-  if (transporter) return transporter;
+function resolveMailConfig(empresaId) {
+  const globalEnv = {
+    SMTP_HOST: env.SMTP_HOST, SMTP_PORT: env.SMTP_PORT,
+    SMTP_SECURE: env.SMTP_SECURE, SMTP_USER: env.SMTP_USER, SMTP_PASS: env.SMTP_PASS,
+    MAIL_FROM: env.MAIL_FROM, MAIL_TO: env.MAIL_TO,
+    MAIL_CC: env.MAIL_CC, MAIL_BCC: env.MAIL_BCC,
+    MAIL_DISABLE: env.MAIL_DISABLE, MAIL_BLOCKLIST: env.MAIL_BLOCKLIST,
+  };
+  if (empresaId == null) return globalEnv;
+  return getMailConfigForEmpresa(empresaId, globalEnv);
+}
 
-  const host = String(env.SMTP_HOST || "").trim();
-  const secure =
-    env.SMTP_SECURE === true ||
-    String(env.SMTP_SECURE || "").trim().toLowerCase() === "true";
-
-  const port = Number(env.SMTP_PORT || 0) || (secure ? 465 : 587);
-  const user = pickFirstEmail(env.SMTP_USER);
-  const pass = String(env.SMTP_PASS || "");
-
+function getTransporter(cfg, cacheKey) {
+  if (String(cfg.MAIL_DISABLE || "").trim() === "1") return null;
+  if (_transporters.has(cacheKey)) return _transporters.get(cacheKey);
+  const host = String(cfg.SMTP_HOST || "").trim();
   if (!host) return null;
-
-  // For Gmail/most providers you need auth; keep optional for internal relays.
-  const auth = user && pass ? { user, pass } : undefined;
-
-  transporter = nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    auth,
-  });
-
-  return transporter;
+  const secure = cfg.SMTP_SECURE === true || String(cfg.SMTP_SECURE || "").trim().toLowerCase() === "true";
+  const port   = Number(cfg.SMTP_PORT || 0) || (secure ? 465 : 587);
+  const user   = pickFirstEmail(cfg.SMTP_USER);
+  const pass   = String(cfg.SMTP_PASS || "");
+  const auth   = user && pass ? { user, pass } : undefined;
+  const t = nodemailer.createTransport({ host, port, secure, auth });
+  _transporters.set(cacheKey, t);
+  return t;
 }
 
-/* ================= Public API ================= */
 export async function sendMail({
-  to,
-  cc,
-  bcc,
-  subject,
-  text,
-  html,
-  attachments,
-  entityType,
-  entityId,
+  to, cc, bcc, subject, text, html, attachments,
+  entityType, entityId,
   displayAsUser = false,
   userName = null,
   userEmail = null,
-  systemTag = "Kazaro Pedidos",
+  systemTag = null,
+  empresaId = null,       // ← NUEVO (opcional)
+  empresaNombre = null,   // ← NUEVO (opcional, para branding)
 }) {
-  const t = getTransporter();
+  const cfg      = resolveMailConfig(empresaId);
+  const cacheKey = empresaId ?? "global";
+  const t        = getTransporter(cfg, cacheKey);
+  const brandName = empresaNombre || systemTag || "Kazaro Pedidos";
+
   if (!t) {
-    const error =
-      "MAIL_DISABLED_OR_NOT_CONFIGURED: configure SMTP_* (or set MAIL_DISABLE=1 to disable email)";
-    safeLog({
-      entityType,
-      entityId,
-      to: String(to || ""),
-      subject,
-      status: "error",
-      providerId: null,
-      error,
-    });
+    const error = "MAIL_DISABLED_OR_NOT_CONFIGURED";
+    safeLog({ entityType, entityId, to: String(to || ""), subject, status: "error", providerId: null, error });
     throw new Error(error);
   }
 
-  // System sender
-  const parsed = parseAddress(env.MAIL_FROM);
-  const systemEmail = (
-    parsed.email ||
-    pickFirstEmail(env.SMTP_USER) ||
-    "no-reply@example.com"
-  ).trim();
+  const parsed      = parseAddress(cfg.MAIL_FROM);
+  const systemEmail = (parsed.email || pickFirstEmail(cfg.SMTP_USER) || "no-reply@example.com").trim();
+  const systemName  = (parsed.name || brandName).trim();
 
-  const systemName = (parsed.name || systemTag || "Kazaro").trim();
+  const alwaysInclude = unionEmails(cfg.MAIL_TO);
+  const toList  = unionEmails(to, alwaysInclude);
+  const ccList  = unionEmails(cc, cfg.MAIL_CC);
+  const bccList = unionEmails(bcc, cfg.MAIL_BCC);
 
-  // Recipients
-  const alwaysInclude = unionEmails(env.MAIL_TO);
-  const toList = unionEmails(to, alwaysInclude);
-  const ccList = unionEmails(cc, env.MAIL_CC);
-  const bccList = unionEmails(bcc, env.MAIL_BCC);
-
-  const block = parseList(env.MAIL_BLOCKLIST).filter(isValidEmail);
+  const block   = parseList(cfg.MAIL_BLOCKLIST).filter(isValidEmail);
   const toFinal = minusEmails(toList, block);
   const ccFinal = minusEmails(ccList, block);
-  const bccFinal = minusEmails(bccList, block);
+  const bccFinal= minusEmails(bccList, block);
 
   if (toFinal.length + ccFinal.length + bccFinal.length === 0) {
-    const error =
-      "NO_RECIPIENTS: no hay destinatarios válidos (revisar MAIL_TO / to / cc / bcc / MAIL_BLOCKLIST)";
-    safeLog({
-      entityType,
-      entityId,
-      to: "",
-      subject,
-      status: "error",
-      providerId: null,
-      error,
-    });
+    const error = "NO_RECIPIENTS";
+    safeLog({ entityType, entityId, to: "", subject, status: "error", providerId: null, error });
     throw new Error(error);
   }
 
-  // Subject
   let subjectFinal = String(subject || "").trim();
-  const requester = String(userName || "").trim();
+  const requester  = String(userName || "").trim();
   if (requester) {
     const esc = requester.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (!new RegExp(esc, "i").test(subjectFinal)) {
@@ -214,101 +145,44 @@ export async function sendMail({
 
   const base = {
     to: toFinal.join(", "),
-    cc: ccFinal.length ? ccFinal.join(", ") : undefined,
+    cc: ccFinal.length  ? ccFinal.join(", ")  : undefined,
     bcc: bccFinal.length ? bccFinal.join(", ") : undefined,
-    subject: subjectFinal,
-    text,
-    html,
-    attachments,
-    headers,
+    subject: subjectFinal, text, html, attachments, headers,
   };
 
-  // From (safe): always from system account (best deliverability)
   const fromDisplayName = requester || systemName;
   const safeFrom = fmt(fromDisplayName, systemEmail) || systemEmail;
-
-  // Reply-to: if we have a valid user email, let receiver respond to them
-  const replyTo = isValidEmail(userEmail) ? fmt(requester || userEmail, userEmail) : undefined;
-
-  const safeOpts = {
-    ...base,
-    from: safeFrom,
-    sender: fmt(systemName, systemEmail) || systemEmail,
-    ...(replyTo ? { replyTo } : {}),
-  };
-
+  const replyTo  = isValidEmail(userEmail) ? fmt(requester || userEmail, userEmail) : undefined;
+  const safeOpts = { ...base, from: safeFrom, sender: fmt(systemName, systemEmail) || systemEmail, ...(replyTo ? { replyTo } : {}) };
   const allowUserFrom = Boolean(env.MAIL_ALLOW_USER_FROM);
+  const logTo = [base.to, base.cc, base.bcc].filter(Boolean).join(" | ");
 
   try {
-    // Optional "display as user": only if explicitly enabled AND a valid userEmail exists.
     if (displayAsUser && allowUserFrom && isValidEmail(userEmail)) {
-      const riskyFrom = fmt(requester || userEmail, userEmail);
-      const risky = {
-        ...base,
-        from: riskyFrom,
-        sender: fmt(systemName, systemEmail) || systemEmail,
-        ...(replyTo ? { replyTo } : {}),
-      };
-
       try {
-        const info = await t.sendMail(risky);
-        safeLog({
-          entityType,
-          entityId,
-          to: [base.to, base.cc, base.bcc].filter(Boolean).join(" | "),
-          subject: subjectFinal,
-          status: "sent",
-          providerId: info.messageId || info.response,
-          error: null,
-        });
+        const info = await t.sendMail({ ...base, from: fmt(requester || userEmail, userEmail), sender: fmt(systemName, systemEmail) || systemEmail, ...(replyTo ? { replyTo } : {}) });
+        safeLog({ entityType, entityId, to: logTo, subject: subjectFinal, status: "sent", providerId: info.messageId || info.response, error: null });
         return info;
-      } catch {
-        // fallback to safe sender
-      }
+      } catch {}
     }
-
     const info = await t.sendMail(safeOpts);
-    safeLog({
-      entityType,
-      entityId,
-      to: [base.to, base.cc, base.bcc].filter(Boolean).join(" | "),
-      subject: subjectFinal,
-      status: "sent",
-      providerId: info.messageId || info.response,
-      error: null,
-    });
+    safeLog({ entityType, entityId, to: logTo, subject: subjectFinal, status: "sent", providerId: info.messageId || info.response, error: null });
     return info;
   } catch (e) {
-    safeLog({
-      entityType,
-      entityId,
-      to: [base.to, base.cc, base.bcc].filter(Boolean).join(" | "),
-      subject: subjectFinal,
-      status: "error",
-      providerId: null,
-      error: e?.message || String(e),
-    });
+    safeLog({ entityType, entityId, to: logTo, subject: subjectFinal, status: "error", providerId: null, error: e?.message || String(e) });
     throw e;
   }
 }
 
-/* ================= Diagnostics ================= */
-export async function verifyTransport({ force = false } = {}) {
-  const t = getTransporter();
-  if (!t) {
-    console.log("[mailer] disabled (MAIL_DISABLE=1 o sin config SMTP)");
-    return { ok: false, skipped: true, reason: "disabled_or_missing_config" };
-  }
-
-  const envName = env.NODE_ENV || process.env.NODE_ENV || "development";
-  if (!force && envName === "development") {
-    console.log("[mailer] verify skipped en modo desarrollo (set MAIL_VERIFY_ON_BOOT=1 para forzar)");
-    return { ok: false, skipped: true, reason: "dev_skipped" };
-  }
-
+export async function verifyTransport({ force = false, empresaId = null } = {}) {
+  const cfg = resolveMailConfig(empresaId);
+  const t   = getTransporter(cfg, empresaId ?? "global");
+  if (!t) { console.log("[mailer] disabled o sin config"); return { ok: false, skipped: true, reason: "disabled_or_missing_config" }; }
+  const envName = env.NODE_ENV || "development";
+  if (!force && envName === "development") { console.log("[mailer] verify skipped en dev"); return { ok: false, skipped: true, reason: "dev_skipped" }; }
   try {
     await t.verify();
-    console.log("[mailer] SMTP ok:", t.options.host, t.options.port, t.options.secure ? "secure" : "starttls");
+    console.log("[mailer] SMTP ok:", t.options.host, t.options.port);
     return { ok: true, skipped: false };
   } catch (e) {
     console.warn("[mailer] verify failed:", e?.message || e);
