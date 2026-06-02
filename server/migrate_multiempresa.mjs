@@ -107,23 +107,24 @@ const tx = db.transaction(() => {
   }
 
   // 7) Config de mail de Pazar (idempotente). NO toca el .env de Kazaro.
+  // Pazar NO tiene credenciales SMTP propias: hereda SMTP_HOST/USER/PASS del
+  // .env (las mismas que Kazaro). Solo define su remitente y destinatarios.
+  // Borramos cualquier credencial SMTP previa de Pazar para forzar la herencia.
+  for (const k of ["SMTP_HOST", "SMTP_PORT", "SMTP_SECURE", "SMTP_USER", "SMTP_PASS"]) {
+    db.prepare("DELETE FROM EmpresaMailConfig WHERE empresa_id=2 AND key=?").run(k);
+  }
   const setMail = db.prepare(`
     INSERT INTO EmpresaMailConfig (empresa_id, key, value) VALUES (2, ?, ?)
     ON CONFLICT(empresa_id, key) DO UPDATE SET value=excluded.value
   `);
   const pazarMail = {
-    SMTP_HOST: "smtp.gmail.com",
-    SMTP_PORT: "587",
-    SMTP_SECURE: "false",
-    SMTP_USER: "nicolas.barcena@kazaro.com.ar",
-    SMTP_PASS: "yecqcnnxmuefrnqk",
     MAIL_FROM: "Pazar Pedidos <nicolas.barcena@kazaro.com.ar>",
     MAIL_TO: "nicolas.barcena@kazaro.com.ar,agustin.torresmartinez@pazar.com.ar,Juan.brarda@pazar.com.ar,diego.echevarria@pazar.com.ar",
     MAIL_CC: "",
     MAIL_BCC: "",
   };
   for (const [k, v] of Object.entries(pazarMail)) setMail.run(k, v);
-  log("= mail config Pazar (empresa_id=2)");
+  log("= mail config Pazar (empresa_id=2) — SMTP heredado del .env");
 });
 
 tx();
