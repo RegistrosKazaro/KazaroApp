@@ -1,11 +1,5 @@
-// server/migrate_multiempresa.mjs
-// Migración multiempresa IDEMPOTENTE: se puede correr muchas veces sin romper nada.
-// No borra datos. Kazaro = empresa_id 1, Pazar = empresa_id 2.
-import Database from "better-sqlite3";
-import path from "node:path";
 
-const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), "Kazaro.db");
-const db = new Database(DB_PATH);
+import { db } from "./src/db.js";
 db.pragma("foreign_keys = OFF");
 
 const log = (...a) => console.log("[migrate]", ...a);
