@@ -96,7 +96,7 @@ router.post("/", requireAuth, async (req, res) => {
 
     let pedidoId;
     try {
-      pedidoId = createOrder({ empleadoId, servicioId, nota, items, maxTotalAllowed });
+      pedidoId = createOrder({ empleadoId, servicioId, nota, items, asRole: rolEfectivo, maxTotalAllowed });
     } catch (err) {
       if (err?.message === "ORDER_OVER_LIMIT") {
         const pct = Number(budgetSettings.maxPct ?? DEFAULT_SERVICE_PCT);
