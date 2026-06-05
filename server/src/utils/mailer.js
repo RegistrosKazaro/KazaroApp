@@ -95,8 +95,9 @@ export async function sendMail({
   userName = null,
   userEmail = null,
   systemTag = null,
-  empresaId = null,       // ← NUEVO (opcional)
-  empresaNombre = null,   // ← NUEVO (opcional, para branding)
+  empresaId = null,
+  empresaNombre = null,
+  overrideTo = false,
 }) {
   const cfg      = resolveMailConfig(empresaId);
   const cacheKey = empresaId ?? "global";
@@ -113,7 +114,7 @@ export async function sendMail({
   const systemEmail = (parsed.email || pickFirstEmail(cfg.SMTP_USER) || "no-reply@example.com").trim();
   const systemName  = (parsed.name || brandName).trim();
 
-  const alwaysInclude = unionEmails(cfg.MAIL_TO);
+  const alwaysInclude = overrideTo ? [] : unionEmails(cfg.MAIL_TO);
   const toList  = unionEmails(to, alwaysInclude);
   const ccList  = unionEmails(cc, cfg.MAIL_CC);
   const bccList = unionEmails(bcc, cfg.MAIL_BCC);
