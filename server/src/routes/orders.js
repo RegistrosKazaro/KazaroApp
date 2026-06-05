@@ -137,14 +137,12 @@ router.post("/", requireAuth, async (req, res) => {
       buffer = out.buffer; filename = out.filename || filename;
     } catch (e) { console.warn("[orders] No se pudo generar PDF:", e?.message); }
 
-    /* MAIL */
+/* MAIL */
     let mailStatus = { sent: false, skipped: true };
     try {
       const toArr = rol === "supervisor" && sid ? getServiceEmails(sid) || [] : [];
 
-      // Si el servicio del pedido es hijo de un depósito (ej: TADICOR, VIAL TRUCK, etc),
-      // agregar a Gustavo en CC. Para cualquier otro servicio, ccArr queda vacío
-      // y el mail sale exactamente igual que antes.
+      // CC al depósito si el servicio es hijo de un warehouse (Kazaro).
       let ccArr = [];
       try {
         if (rol === "supervisor" && sid) {
@@ -155,10 +153,33 @@ router.post("/", requireAuth, async (req, res) => {
         console.warn("[orders] warehouse CC check skipped:", e?.message || e);
       }
 
-      const info = await sendMail({
-        to: toArr.length ? toArr.join(",") : undefined,
+      // ¿El pedido tiene productos de categoría "Uniformes"? (solo Kazaro)
+      let tieneUniformes = false;
+      try {
+        if (empresaId === 1) {
+          const row = db.prepare(`
+            SELECT 1
+            FROM PedidoItems i
+            JOIN Productos p ON CAST(p.ProductID AS TEXT) = CAST(i.ProductoID AS TEXT)
+            JOIN Categorias c ON CAST(c.CategoriaID AS TEXT) = CAST(p.CategoriaID AS TEXT)
+            WHERE i.PedidoID = ?
+              AND lower(trim(c.CategoriaNombre)) = 'uniformes'
+            LIMIT 1
+          `).get(Number(pedidoId));
+          tieneUniformes = !!row;
+        }
+      } catch (e) {
+        console.warn("[orders] check uniformes skipped:", e?.message || e);
+      }
+
+      // Mail que siempre recibe los pedidos de Kazaro (con y sin uniformes)
+      const NICOLAS = "nicolas.barcena@kazaro.com.ar";
+
+      const mailOpts = {
         cc: ccArr.length ? ccArr.join(",") : undefined,
-        subject: `NUEVO PEDIDO DE INSUMOS #${nro}`,
+        subject: tieneUniformes
+          ? `NUEVO PEDIDO DE UNIFORMES #${nro}`
+          : `NUEVO PEDIDO DE INSUMOS #${nro}`,
         text: `Pedido #${nro} generado.`,
         attachments: buffer ? [{ filename, content: buffer, contentType: "application/pdf" }] : undefined,
         displayAsUser: true,
@@ -166,8 +187,23 @@ router.post("/", requireAuth, async (req, res) => {
         userEmail: usuario?.email || null,
         empresaId,
         empresaNombre,
-      });
-      mailStatus = { sent: true, messageId: info?.messageId };
+      };
+
+      if (tieneUniformes) {
+        // Canal exclusivo uniformes: solo eugenia + nicolas.barcena (no van los 4 normales).
+        mailOpts.to = `eugenia.alvarez@kazaro.com.ar,${NICOLAS}`;
+        mailOpts.overrideTo = true;
+      } else if (empresaId === 1) {
+        // Kazaro sin uniformes: los 4 del .env + nicolas.barcena.
+        const baseTo = toArr.length ? [...toArr, NICOLAS] : [NICOLAS];
+        mailOpts.to = baseTo.join(",");
+      } else {
+        // Pazar (u otras): igual que hoy.
+        mailOpts.to = toArr.length ? toArr.join(",") : undefined;
+      }
+
+      const info = await sendMail(mailOpts);
+      mailStatus = { sent: true, messageId: info?.messageId, uniformes: tieneUniformes };
     } catch (e) { mailStatus = { sent: false, error: e?.message }; }
 
     const pdfUrl = `/orders/pdf/${pedidoId}`;
