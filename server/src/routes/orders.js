@@ -178,8 +178,8 @@ router.post("/", requireAuth, async (req, res) => {
       const mailOpts = {
         cc: ccArr.length ? ccArr.join(",") : undefined,
         subject: tieneUniformes
-          ? `NUEVO PEDIDO DE UNIFORMES #${nro}`
-          : `NUEVO PEDIDO DE INSUMOS #${nro}`,
+          ? `NUEVO PEDIDO DE UNIFORMES #${nro}${serviceName ? ` — ${serviceName}` : ""}`
+          : `NUEVO PEDIDO DE INSUMOS #${nro}${serviceName ? ` — ${serviceName}` : ""}`,
         text: `Pedido #${nro} generado.`,
         attachments: buffer ? [{ filename, content: buffer, contentType: "application/pdf" }] : undefined,
         displayAsUser: true,
