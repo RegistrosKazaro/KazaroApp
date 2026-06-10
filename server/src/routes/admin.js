@@ -1025,9 +1025,19 @@ router.delete("/services/:id", mustBeAdmin, (req, res) => {
     const id = String(req.params.id || "").trim();
     if (!id) return res.status(400).json({ error: "id requerido" });
 
+    // Detectar nombre real de la columna en service_products (puede ser ServicioID, servicio_id o service_id)
+    const { srv: SP_SRV_COL } = detectSPCols();
+
+    // ¿Existen tablas opcionales?
+    const hasServiceBudgets = !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='service_budgets' LIMIT 1`).get();
+    const hasServiceEmails  = !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='service_emails'  LIMIT 1`).get();
+
     const tx = db.transaction(() => {
       db.prepare(`DELETE FROM supervisor_services WHERE CAST(ServicioID AS TEXT) = CAST(? AS TEXT)`).run(id);
-      db.prepare(`DELETE FROM service_products WHERE CAST(ServicioID AS TEXT) = CAST(? AS TEXT)`).run(id);
+      db.prepare(`DELETE FROM service_products    WHERE CAST(${SP_SRV_COL} AS TEXT) = CAST(? AS TEXT)`).run(id);
+      if (hasServiceBudgets) db.prepare(`DELETE FROM service_budgets WHERE CAST(service_id AS TEXT) = CAST(? AS TEXT)`).run(id);
+      if (hasServiceEmails)  db.prepare(`DELETE FROM service_emails  WHERE CAST(service_id AS TEXT) = CAST(? AS TEXT)`).run(id);
+
       const r = db.prepare(`DELETE FROM Servicios WHERE CAST(${SRV_ID} AS TEXT) = CAST(? AS TEXT)`).run(id);
       return r.changes || 0;
     });
@@ -1036,7 +1046,7 @@ router.delete("/services/:id", mustBeAdmin, (req, res) => {
     return res.json({ ok: true });
   } catch (e) {
     console.error("DELETE /admin/services/:id error:", e);
-    return res.status(500).json({ error: "No se pudo eliminar el servicio" });
+    return res.status(500).json({ error: e?.message || "No se pudo eliminar el servicio" });
   }
 });
 
