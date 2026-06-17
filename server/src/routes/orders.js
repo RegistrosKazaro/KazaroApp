@@ -70,6 +70,30 @@ router.post("/", requireAuth, async (req, res) => {
     if (!Array.isArray(items) || items.length === 0)
       return res.status(400).json({ error: "Faltan items" });
 
+    // No se puede mezclar productos de categoría "Uniformes" con otras categorías
+    try {
+      const productIds = items.map(it => Number(it.productId)).filter(Boolean);
+      if (productIds.length > 0) {
+        const placeholders = productIds.map(() => "?").join(",");
+        const rows = db.prepare(`
+          SELECT c.CategoriaNombre AS catName
+          FROM Productos p
+          LEFT JOIN Categorias c ON CAST(c.CategoriaID AS TEXT) = CAST(p.CategoriaID AS TEXT)
+          WHERE p.ProductID IN (${placeholders})
+        `).all(...productIds);
+        const norm = s => String(s || "").normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
+        const hasUni   = rows.some(r => norm(r.catName) === "uniformes");
+        const hasOther = rows.some(r => norm(r.catName) !== "uniformes");
+        if (hasUni && hasOther) {
+          return res.status(400).json({
+            error: "No se puede mezclar productos de la categoría \"Uniformes\" con otras categorías. Los uniformes deben pedirse por separado."
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("[orders] valid uniformes mix skipped:", e?.message || e);
+    }
+
     if (rolEfectivo === "supervisor") {
       if (!servicioId) {
         const mios = listServicesByUser(empleadoId);
