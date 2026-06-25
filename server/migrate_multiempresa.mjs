@@ -100,9 +100,6 @@ const tx = db.transaction(() => {
   }
 
   // 7) Config de mail de Pazar (idempotente). NO toca el .env de Kazaro.
-  // Pazar NO tiene credenciales SMTP propias: hereda SMTP_HOST/USER/PASS del
-  // .env (las mismas que Kazaro). Solo define su remitente y destinatarios.
-  // Borramos cualquier credencial SMTP previa de Pazar para forzar la herencia.
   for (const k of ["SMTP_HOST", "SMTP_PORT", "SMTP_SECURE", "SMTP_USER", "SMTP_PASS"]) {
     db.prepare("DELETE FROM EmpresaMailConfig WHERE empresa_id=2 AND key=?").run(k);
   }
@@ -131,6 +128,23 @@ const tx = db.transaction(() => {
   // 8) soft-delete: deleted_at
   addColIfMissing("Pedidos",   "deleted_at TEXT", "deleted_at");
   addColIfMissing("Servicios", "deleted_at TEXT", "deleted_at");
+
+  // 9) Auditoría de acciones
+  if (!tableExists("audit_log")) {
+    db.exec(`
+      CREATE TABLE audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        empresa_id INTEGER,
+        usuario TEXT,
+        accion TEXT NOT NULL,
+        entidad TEXT,
+        entidad_id TEXT,
+        detalle TEXT,
+        fecha TEXT NOT NULL DEFAULT (datetime('now'))
+      )`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_audit_fecha ON audit_log(fecha)`);
+    log("+ tabla audit_log");
+  }
 });
 
 tx();

@@ -22,6 +22,7 @@ import {
   registrarCambioProducto,
   leerEstadoActualProducto,
   ensureProductHistorialTable,
+  audit,
 } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendMail } from "../utils/mailer.js";
@@ -834,6 +835,7 @@ router.delete("/orders/:id", mustBeAdmin, (req, res) => {
   try {
     const r = db.prepare(`UPDATE Pedidos SET deleted_at = datetime('now') WHERE PedidoID = ? AND deleted_at IS NULL`).run(Number(req.params.id));
     if (!r.changes) return res.status(404).json({ error: "Pedido no encontrado" });
+    audit({ empresaId: req.user?.empresaId ?? null, usuario: req.user?.username || req.user?.email || null, accion: "delete", entidad: "Pedido", entidadId: req.params.id });
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Error al eliminar pedido" });
@@ -1026,6 +1028,7 @@ router.delete("/services/:id", mustBeAdmin, (req, res) => {
 
     const r = db.prepare(`UPDATE Servicios SET deleted_at = datetime('now') WHERE CAST(${SRV_ID} AS TEXT) = CAST(? AS TEXT) AND deleted_at IS NULL`).run(id);
     if (!r.changes) return res.status(404).json({ error: "Servicio no encontrado" });
+    audit({ empresaId: req.user?.empresaId ?? null, usuario: req.user?.username || req.user?.email || null, accion: "delete", entidad: "Servicio", entidadId: id });
     return res.json({ ok: true });
   } catch (e) {
     console.error("DELETE /admin/services/:id error:", e);
@@ -1539,6 +1542,25 @@ router.put("/products/:id/toggle-active", mustBeAdmin, (req, res) => {
     return res.status(500).json({ error: "Error interno" });
   }
 });
+/* =========================
+   Auditoría
+   ========================= */
 
+router.get("/audit", mustBeAdmin, (req, res) => {
+  try {
+    const empresaId = req.user?.empresaId ?? 1;
+    const limit = Math.min(Number(req.query.limit) || 200, 1000);
+    const rows = db.prepare(`
+      SELECT id, usuario, accion, entidad, entidad_id AS entidadId, detalle, fecha
+      FROM audit_log
+      WHERE empresa_id = ? OR empresa_id IS NULL
+      ORDER BY id DESC LIMIT ?
+    `).all(empresaId, limit);
+    res.json({ ok: true, rows });
+  } catch (e) {
+    console.error("[admin] GET /audit error:", e?.message || e);
+    res.status(500).json({ error: "No se pudo cargar la auditoría" });
+  }
+});
 router.use("/empresa", empresaRouter);
 export default router;

@@ -1715,6 +1715,16 @@ export function adminUpdateProduct(id, fields = {}) {
   return db.prepare(sql).get(id, id);
   
 }
+export function audit({ empresaId = null, usuario = null, accion, entidad = null, entidadId = null, detalle = null }) {
+  try {
+    db.prepare(
+      `INSERT INTO audit_log (empresa_id, usuario, accion, entidad, entidad_id, detalle)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(empresaId, usuario, accion, entidad, entidadId == null ? null : String(entidadId), detalle);
+  } catch (e) {
+    console.warn("[audit] no se pudo registrar:", e?.message || e);
+  }
+}
 
 import("./warehouses.js")
   .then((mod) => {
