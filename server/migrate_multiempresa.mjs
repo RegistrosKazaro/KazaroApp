@@ -118,6 +118,15 @@ const tx = db.transaction(() => {
   };
   for (const [k, v] of Object.entries(pazarMail)) setMail.run(k, v);
   log("= mail config Pazar (empresa_id=2) — SMTP heredado del .env");
+  // 7b) Config hardcodeada de Kazaro -> EmpresaMailConfig (editable). Solo si no existe.
+  const setK = db.prepare(`
+    INSERT INTO EmpresaMailConfig (empresa_id, key, value) VALUES (1, ?, ?)
+    ON CONFLICT(empresa_id, key) DO NOTHING
+  `);
+  setK.run("MAIL_ALWAYS", "nicolas.barcena@kazaro.com.ar");
+  setK.run("MAIL_UNIFORMES_TO", "eugenia.alvarez@kazaro.com.ar,nicolas.barcena@kazaro.com.ar");
+  setK.run("DEPOSITO_CC", "gustavo.bacur@kazaro.com.ar");
+  log("= config hardcode Kazaro -> EmpresaMailConfig");
 
   // 8) soft-delete: deleted_at
   addColIfMissing("Pedidos",   "deleted_at TEXT", "deleted_at");

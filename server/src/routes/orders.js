@@ -10,10 +10,10 @@ import {
 import { getWarehouseForChildService } from "../warehouses.js";
 import { generateRemitoPDFBuffer } from "../utils/remitoPdf.js";
 import { sendMail } from "../utils/mailer.js";
-import { listEmpresas } from "../utils/empresa.js";
+import { listEmpresas, getMailConfigValue } from "../utils/empresa.js";
 
 // Mail que recibe copia de TODOS los pedidos de servicios hijos de un depósito.
-const DEPOSITO_CC_EMAIL = "gustavo.bacur@kazaro.com.ar";
+const DEPOSITO_CC_FALLBACK = "gustavo.bacur@kazaro.com.ar";
 
 const router = Router();
 const pad7 = (n) => String(n ?? "").padStart(7, "0");
@@ -171,7 +171,7 @@ router.post("/", requireAuth, async (req, res) => {
       try {
         if (rol === "supervisor" && sid) {
           const warehouse = getWarehouseForChildService(sid);
-          if (warehouse) ccArr = [DEPOSITO_CC_EMAIL];
+          if (warehouse) ccArr = [getMailConfigValue(empresaId, "DEPOSITO_CC", DEPOSITO_CC_FALLBACK)];
         }
       } catch (e) {
         console.warn("[orders] warehouse CC check skipped:", e?.message || e);
@@ -197,7 +197,8 @@ router.post("/", requireAuth, async (req, res) => {
       }
 
       // Mail que siempre recibe los pedidos de Kazaro (con y sin uniformes)
-      const NICOLAS = "nicolas.barcena@kazaro.com.ar";
+      const NICOLAS = getMailConfigValue(empresaId, "MAIL_ALWAYS", "nicolas.barcena@kazaro.com.ar");
+      const UNIFORMES_TO = getMailConfigValue(empresaId, "MAIL_UNIFORMES_TO", `eugenia.alvarez@kazaro.com.ar,${NICOLAS}`);
 
       const mailOpts = {
         cc: ccArr.length ? ccArr.join(",") : undefined,
@@ -215,7 +216,7 @@ router.post("/", requireAuth, async (req, res) => {
 
       if (tieneUniformes) {
         // Canal exclusivo uniformes: solo eugenia + nicolas.barcena (no van los 4 normales).
-        mailOpts.to = `eugenia.alvarez@kazaro.com.ar,${NICOLAS}`;
+        mailOpts.to = UNIFORMES_TO;
         mailOpts.overrideTo = true;
       } else if (empresaId === 1) {
         // Kazaro sin uniformes: los 4 del .env + nicolas.barcena.
