@@ -8,8 +8,16 @@ import { getUserById, getUserRoles, listServicesByUser, updateUserPasswordHash }
 import { getUserForLoginWithEmpresa, getEmpresaIdForUser } from "../db_multiempresa_patch.js";
 import { getEmpresaBySlug, listEmpresas } from "../utils/empresa.js";
 import { signToken } from "../middleware/auth.js";
+import rateLimit from "express-rate-limit";
 
 const router = express.Router();
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiados intentos de login. Esperá unos minutos e intentá de nuevo." },
+});
 
 function normalizeBool(v) {
   const s = String(v ?? "1").trim().toLowerCase();
@@ -146,7 +154,7 @@ router.get("/me", (req, res) => {
 // ─── POST /auth/login ─────────────────────────────────────────
 // Body: { username, password, empresaSlug }
 // empresaSlug es opcional; si no se envía usa "kazaro" (retrocompatible)
-router.post("/login", async (req, res) => {
+router.post("/login", loginLimiter, async (req, res) => {
   try {
     const username = String(
       req.body?.username ?? req.body?.user ?? req.body?.email ?? ""
