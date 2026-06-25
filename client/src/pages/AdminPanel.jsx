@@ -1743,7 +1743,16 @@ function OrdersSection() {
       }
     }
   }, []);
-
+const onDeleteOrder = useCallback(async (o) => {
+    if (!window.confirm(`¿Eliminar el pedido #${String(o.id).padStart(7, "0")}? Se ocultará del listado y los reportes (recuperable).`)) return;
+    try {
+      await api.delete(`/api/admin/orders/${o.id}`, { withCredentials: true });
+      setOrders((prev) => prev.filter((x) => x.id !== o.id));
+    } catch (e) {
+      alert("No se pudo eliminar el pedido");
+      console.error("delete order error:", e);
+    }
+  }, []);
   useEffect(() => {
     load();
   }, [load]);
@@ -1948,6 +1957,13 @@ function OrdersSection() {
                 disabled={previewLoading && selectedOrder?.id === o.id}
               >
                 {previewLoading && selectedOrder?.id === o.id ? "Cargando…" : "Ver remito"}
+              </button>
+              <button
+                className="pill"
+                style={{ background: "#fee2e2", color: "#b91c1c" }}
+                onClick={() => onDeleteOrder(o)}
+              >
+                Eliminar
               </button>
             </div>
           </div>
