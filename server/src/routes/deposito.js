@@ -221,7 +221,9 @@ router.get("/orders", mustWarehouse, (req, res) => {
     const colNames = cols.map(c => c.name.toLowerCase());
 
     const hasEmpresaCol = colNames.includes("empresa_id");
-    const empresaWhere  = hasEmpresaCol ? `WHERE empresa_id = ${Number(empresaId)}` : "";
+    const hasDeletedCol = colNames.includes("deleted_at");
+    let empresaWhere = hasEmpresaCol ? `WHERE empresa_id = ${Number(empresaId)}` : "";
+    if (hasDeletedCol) empresaWhere += `${empresaWhere ? " AND" : "WHERE"} deleted_at IS NULL`;
 
     const rawOrders = db
       .prepare(`SELECT rowid AS __rowid, * FROM Pedidos ${empresaWhere} ORDER BY Fecha DESC LIMIT 100`)

@@ -816,7 +816,7 @@ router.get("/orders", mustBeAdmin, (req, res) => {
     const rows = db.prepare(`
       SELECT PedidoID AS id, EmpleadoID AS empleadoId, Rol AS rol, Total AS total, Fecha AS fecha,
         COALESCE(Remito, RemitoNumero, Remito_Numero, Numero_Remito, NroRemito) AS remito
-      FROM Pedidos ${eFilter} ORDER BY PedidoID DESC LIMIT 200
+      FROM Pedidos ${eFilter ? eFilter + " AND" : "WHERE"} deleted_at IS NULL ORDER BY PedidoID DESC LIMIT 200
     `).all();
 
     const enriched = rows.map((row) => ({
@@ -832,7 +832,7 @@ router.get("/orders", mustBeAdmin, (req, res) => {
 
 router.delete("/orders/:id", mustBeAdmin, (req, res) => {
   try {
-    const r = db.prepare(`DELETE FROM Pedidos WHERE PedidoID = ?`).run(Number(req.params.id));
+    const r = db.prepare(`UPDATE Pedidos SET deleted_at = datetime('now') WHERE PedidoID = ? AND deleted_at IS NULL`).run(Number(req.params.id));
     if (!r.changes) return res.status(404).json({ error: "Pedido no encontrado" });
     res.json({ ok: true });
   } catch {
@@ -884,7 +884,7 @@ router.get("/services", mustBeAdmin, (req, res) => {
         (SELECT a.EmpleadoID FROM supervisor_services a WHERE CAST(a.ServicioID AS TEXT) = CAST(s.${SRV_ID} AS TEXT) LIMIT 1) AS assigned_to_id,
         (SELECT ${EMP_NAME_EXPR} FROM supervisor_services a JOIN Empleados e ON e.${EMP_ID} = a.EmpleadoID WHERE CAST(a.ServicioID AS TEXT) = CAST(s.${SRV_ID} AS TEXT) LIMIT 1) AS assigned_to
       FROM Servicios s
-      WHERE (s.${SRV_NAME} LIKE @like OR CAST(s.${SRV_ID} AS TEXT) LIKE @like) ${eFilter}
+      WHERE (s.${SRV_NAME} LIKE @like OR CAST(s.${SRV_ID} AS TEXT) LIKE @like) ${eFilter} AND s.deleted_at IS NULL
       ORDER BY s.${SRV_NAME} COLLATE NOCASE LIMIT ${limit}
     `).all({ like });
 
@@ -902,7 +902,7 @@ router.get("/services-all", mustBeAdmin, (req, res) => {
     const hasEmpresa = srvCols.includes("empresa_id");
     const eFilter    = hasEmpresa ? `WHERE s.empresa_id = ${Number(empresaId)}` : "";
 
-    const rows = db.prepare(`SELECT s.${SRV_ID} AS id, s.${SRV_NAME} AS name FROM Servicios s ${eFilter} ORDER BY s.${SRV_NAME} COLLATE NOCASE`).all();
+    const rows = db.prepare(`SELECT s.${SRV_ID} AS id, s.${SRV_NAME} AS name FROM Servicios s ${eFilter ? eFilter + " AND" : "WHERE"} s.deleted_at IS NULL ORDER BY s.${SRV_NAME} COLLATE NOCASE`).all();
     return res.json(Array.isArray(rows) ? rows : []);
   } catch (e) {
     console.error("GET /admin/services-all error:", e);
@@ -917,8 +917,7 @@ router.get("/services/export", mustBeAdmin, (req, res) => {
     const hasEmpresa = srvCols.includes("empresa_id");
     const eFilter    = hasEmpresa ? `WHERE empresa_id = ${Number(empresaId)}` : "";
 
-    const rows = db.prepare(`SELECT ${SRV_ID} AS id, ${SRV_NAME} AS name FROM Servicios ${eFilter} ORDER BY ${SRV_NAME} COLLATE NOCASE`).all();
-
+const rows = db.prepare(`SELECT ${SRV_ID} AS id, ${SRV_NAME} AS name FROM Servicios ${eFilter ? eFilter + " AND" : "WHERE"} deleted_at IS NULL ORDER BY ${SRV_NAME} COLLATE NOCASE`).all();
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(rows.map((r) => ({ id: r.id, name: r.name ?? "" })));
     XLSX.utils.book_append_sheet(wb, ws, "Servicios");
@@ -1025,24 +1024,8 @@ router.delete("/services/:id", mustBeAdmin, (req, res) => {
     const id = String(req.params.id || "").trim();
     if (!id) return res.status(400).json({ error: "id requerido" });
 
-    // Detectar nombre real de la columna en service_products (puede ser ServicioID, servicio_id o service_id)
-    const { srv: SP_SRV_COL } = detectSPCols();
-
-    // ¿Existen tablas opcionales?
-    const hasServiceBudgets = !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='service_budgets' LIMIT 1`).get();
-    const hasServiceEmails  = !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='service_emails'  LIMIT 1`).get();
-
-    const tx = db.transaction(() => {
-      db.prepare(`DELETE FROM supervisor_services WHERE CAST(ServicioID AS TEXT) = CAST(? AS TEXT)`).run(id);
-      db.prepare(`DELETE FROM service_products    WHERE CAST(${SP_SRV_COL} AS TEXT) = CAST(? AS TEXT)`).run(id);
-      if (hasServiceBudgets) db.prepare(`DELETE FROM service_budgets WHERE CAST(service_id AS TEXT) = CAST(? AS TEXT)`).run(id);
-      if (hasServiceEmails)  db.prepare(`DELETE FROM service_emails  WHERE CAST(service_id AS TEXT) = CAST(? AS TEXT)`).run(id);
-
-      const r = db.prepare(`DELETE FROM Servicios WHERE CAST(${SRV_ID} AS TEXT) = CAST(? AS TEXT)`).run(id);
-      return r.changes || 0;
-    });
-    const changes = tx();
-    if (!changes) return res.status(404).json({ error: "Servicio no encontrado" });
+    const r = db.prepare(`UPDATE Servicios SET deleted_at = datetime('now') WHERE CAST(${SRV_ID} AS TEXT) = CAST(? AS TEXT) AND deleted_at IS NULL`).run(id);
+    if (!r.changes) return res.status(404).json({ error: "Servicio no encontrado" });
     return res.json({ ok: true });
   } catch (e) {
     console.error("DELETE /admin/services/:id error:", e);

@@ -1,4 +1,3 @@
-
 import { db } from "./src/db.js";
 db.pragma("foreign_keys = OFF");
 
@@ -119,6 +118,10 @@ const tx = db.transaction(() => {
   };
   for (const [k, v] of Object.entries(pazarMail)) setMail.run(k, v);
   log("= mail config Pazar (empresa_id=2) — SMTP heredado del .env");
+
+  // 8) soft-delete: deleted_at
+  addColIfMissing("Pedidos",   "deleted_at TEXT", "deleted_at");
+  addColIfMissing("Servicios", "deleted_at TEXT", "deleted_at");
 });
 
 tx();

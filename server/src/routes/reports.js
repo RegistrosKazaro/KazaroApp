@@ -44,9 +44,11 @@ function getEmpresaId(req) {
 function empresaFilter(table, empresaId, alias = "") {
   try {
     const cols = _tinfo(table).map(c => c.name.toLowerCase());
-    if (!cols.includes("empresa_id")) return "";
     const prefix = alias ? `${alias}.` : "";
-    return `AND ${prefix}empresa_id = ${Number(empresaId)}`;
+    let out = "";
+    if (cols.includes("empresa_id")) out += ` AND ${prefix}empresa_id = ${Number(empresaId)}`;
+    if (cols.includes("deleted_at")) out += ` AND ${prefix}deleted_at IS NULL`;
+    return out;
   } catch { return ""; }
 }
 
