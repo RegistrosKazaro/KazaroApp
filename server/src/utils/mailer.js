@@ -58,7 +58,13 @@ function minusEmails(list, blockList) {
 }
 
 function safeLog(payload) {
-  try { logEmail(payload); } catch {}
+  try {
+    logEmail({
+      ...payload,
+      entityType: payload.entityType || "general",
+      entityId: payload.entityId || "0",
+    });
+  } catch {}
 }
 
 function resolveMailConfig(empresaId) {
