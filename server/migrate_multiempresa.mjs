@@ -145,6 +145,21 @@ const tx = db.transaction(() => {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_audit_fecha ON audit_log(fecha)`);
     log("+ tabla audit_log");
   }
+  if (!tableExists("password_resets")) {
+    db.exec(`
+      CREATE TABLE password_resets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        empleado_id INTEGER NOT NULL,
+        token_hash TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_preset_token ON password_resets(token_hash)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_preset_emp ON password_resets(empleado_id)`);
+    log("+ tabla password_resets");
+  }
+
 });
 
 tx();

@@ -4,10 +4,11 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import argon2 from "argon2";
 import { env } from "../utils/env.js";
-import { getUserById, getUserRoles, listServicesByUser, updateUserPasswordHash } from "../db.js";
+import { db, getUserById, getUserRoles, listServicesByUser, updateUserPasswordHash } from "../db.js";
 import { getUserForLoginWithEmpresa, getEmpresaIdForUser } from "../db_multiempresa_patch.js";
 import { getEmpresaBySlug, listEmpresas } from "../utils/empresa.js";
 import { signToken } from "../middleware/auth.js";
+import { sendMail } from "../utils/mailer.js";
 import rateLimit from "express-rate-limit";
 
 const router = express.Router();
@@ -227,6 +228,45 @@ router.post("/logout", (req, res) => {
   } catch {}
   return res.json({ ok: true });
 });
+router.post("/forgot-password", loginLimiter, async (req, res) => {
+  try {
+    const username = String(req.body?.username ?? "").trim();
+    const empresaSlug = String(req.body?.empresaSlug ?? "kazaro").toLowerCase().trim() || "kazaro";
+    // Respuesta SIEMPRE igual (no revelar si el usuario existe)
+    const generic = { ok: true, message: "Si el usuario existe, te enviamos un email con instrucciones." };
+    if (!username) return res.json(generic);
 
+    const empresa = getEmpresaBySlug(empresaSlug);
+    if (!empresa) return res.json(generic);
+
+    const row = getUserForLoginWithEmpresa(username, empresa.id);
+    if (!row || !row.email) return res.json(generic);
+
+    const { randomBytes, createHash } = await import("crypto");
+    const token = randomBytes(32).toString("hex");
+    const tokenHash = createHash("sha256").update(token).digest("hex");
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hora
+
+    db.prepare(`INSERT INTO password_resets (empleado_id, token_hash, expires_at) VALUES (?, ?, ?)`)
+      .run(row.id, tokenHash, expiresAt);
+
+    const base = String(env.APP_BASE_URL || "https://insumos.kazaro.com.ar").replace(/\/$/, "");
+    const link = `${base}/reset-password?token=${token}&empresa=${empresa.slug}`;
+
+    await sendMail({
+      to: row.email,
+      subject: "Restablecer tu contraseña — KazaroApp",
+      text: `Recibimos una solicitud para restablecer tu contraseña.\n\nEntrá a este enlace (válido por 1 hora):\n${link}\n\nSi no fuiste vos, ignorá este mensaje.`,
+      entityType: "password_reset",
+      entityId: String(row.id),
+      empresaId: empresa.id,
+    });
+
+    return res.json(generic);
+  } catch (e) {
+    console.error("[auth/forgot-password] error:", e?.message || e);
+    return res.json({ ok: true, message: "Si el usuario existe, te enviamos un email con instrucciones." });
+  }
+});
 export { verifyPassword };
 export default router;
