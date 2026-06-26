@@ -1,17 +1,18 @@
-import pkg from "otplib";
-const { authenticator } = pkg;
+import { generateSecret as genSecret, generateURI, verifySync } from "otplib";
 import QRCode from "qrcode";
 
 export function generateSecret() {
-  return authenticator.generateSecret();
+  return genSecret();
 }
 
 export function verifyToken(token, secret) {
-  try { return authenticator.verify({ token: String(token).trim(), secret }); }
-  catch { return false; }
+  try {
+    const res = verifySync({ token: String(token).trim(), secret });
+    return res?.valid ?? res === true;
+  } catch { return false; }
 }
 
 export async function generateQR(secret, label, issuer = "KazaroApp") {
-  const uri = authenticator.keyuri(label, issuer, secret);
+  const uri = generateURI({ secret, label, issuer });
   return QRCode.toDataURL(uri);
 }
