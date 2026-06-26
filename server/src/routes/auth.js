@@ -268,5 +268,41 @@ router.post("/forgot-password", loginLimiter, async (req, res) => {
     return res.json({ ok: true, message: "Si el usuario existe, te enviamos un email con instrucciones." });
   }
 });
+router.post("/reset-password", loginLimiter, async (req, res) => {
+  try {
+    const token = String(req.body?.token ?? "").trim();
+    const password = String(req.body?.password ?? "");
+    if (!token || !password) return res.status(400).json({ ok: false, error: "Faltan datos" });
+    if (password.length < 6) return res.status(400).json({ ok: false, error: "La contraseña debe tener al menos 6 caracteres" });
+
+    const { createHash } = await import("crypto");
+    const tokenHash = createHash("sha256").update(token).digest("hex");
+
+    const row = db.prepare(`
+      SELECT id, empleado_id, expires_at, used_at
+      FROM password_resets
+      WHERE token_hash = ?
+      LIMIT 1
+    `).get(tokenHash);
+
+    if (!row) return res.status(400).json({ ok: false, error: "Enlace inválido" });
+    if (row.used_at) return res.status(400).json({ ok: false, error: "Este enlace ya fue usado" });
+    if (new Date(row.expires_at).getTime() < Date.now()) {
+      return res.status(400).json({ ok: false, error: "El enlace expiró. Pedí uno nuevo." });
+    }
+
+    const newHash = await argon2.hash(password, { type: argon2.argon2id });
+    const ok = updateUserPasswordHash(row.empleado_id, newHash);
+    if (!ok) return res.status(500).json({ ok: false, error: "No se pudo actualizar la contraseña" });
+
+    db.prepare(`UPDATE password_resets SET used_at = datetime('now') WHERE id = ?`).run(row.id);
+
+    return res.json({ ok: true, message: "Contraseña actualizada. Ya podés iniciar sesión." });
+  } catch (e) {
+    console.error("[auth/reset-password] error:", e?.message || e);
+    return res.status(500).json({ ok: false, error: "Error al restablecer la contraseña" });
+  }
+});
+
 export { verifyPassword };
 export default router;

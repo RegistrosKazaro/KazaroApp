@@ -114,7 +114,17 @@ export default function Login() {
           </div>
 
           {err && <div className="login-error">{err}</div>}
-
+          <div style={{ textAlign: "right", marginTop: -4, marginBottom: 4 }}>
+            <button
+              type="button"
+              className="btn-ghost"
+              style={{ fontSize: "0.85rem", padding: "2px 6px" }}
+              onClick={() => nav("/forgot-password")}
+              disabled={loading}
+            >
+              ¿Olvidaste tu contraseña?
+            </button>
+          </div>
           <button className="btn-primary" type="submit" disabled={loading}>
             {loading ? "Ingresando..." : "Ingresar"}
           </button>

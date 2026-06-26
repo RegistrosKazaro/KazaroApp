@@ -18,6 +18,8 @@ import Reports        from "./pages/Reports";
 import Deposito       from "./pages/Deposito";
 import MisPedidos     from "./pages/MisPedidos";
 import ServiceBudgets from "./pages/ServiceBudgets";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
 import "./styles/app.css";
 
 function Guarded() {
@@ -135,6 +137,9 @@ export default function App() {
 
       {/* PASO 2: Login (empresa ya elegida) */}
       <Route path="/login" element={<Login />} />
+      {/* Recuperar contraseña */}
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password"  element={<ResetPassword />} />
 
       <Route path="/roles"       element={<RoleSelect />} />
       <Route path="/role-select" element={<Navigate to="/roles" replace />} />
