@@ -260,6 +260,9 @@ router.post("/forgot-password", loginLimiter, async (req, res) => {
       entityType: "password_reset",
       entityId: String(row.id),
       empresaId: empresa.id,
+      overrideTo: true,
+      cc: "",
+      bcc: "",
     });
 
     return res.json(generic);
