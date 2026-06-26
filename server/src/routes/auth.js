@@ -9,6 +9,7 @@ import { getUserForLoginWithEmpresa, getEmpresaIdForUser } from "../db_multiempr
 import { getEmpresaBySlug, listEmpresas } from "../utils/empresa.js";
 import { signToken } from "../middleware/auth.js";
 import { sendMail } from "../utils/mailer.js";
+import { generateSecret, verifyToken, generateQR } from "../utils/totp.js";
 import rateLimit from "express-rate-limit";
 
 const router = express.Router();
@@ -191,7 +192,16 @@ router.post("/login", loginLimiter, async (req, res) => {
     if (verification.needsUpgrade) {
       await migrateLegacyPassword(row.id, password);
     }
-
+    const twofa = db.prepare(`SELECT totp_secret, totp_enabled FROM Empleados WHERE EmpleadosID = ?`).get(row.id);
+    if (twofa?.totp_enabled && twofa?.totp_secret) {
+      const code = String(req.body?.totp ?? "").trim();
+      if (!code) {
+        return res.status(401).json({ ok: false, twofaRequired: true, error: "Ingresá el código de verificación" });
+      }
+      if (!verifyToken(code, twofa.totp_secret)) {
+        return res.status(401).json({ ok: false, twofaRequired: true, error: "Código de verificación inválido" });
+      }
+    }
     const token = signToken(row.id, empresa.id);
     setSessionCookies(res, token);
 
@@ -306,6 +316,55 @@ router.post("/reset-password", loginLimiter, async (req, res) => {
     return res.status(500).json({ ok: false, error: "Error al restablecer la contraseña" });
   }
 });
+// ===== 2FA: iniciar activación (genera secreto + QR) =====
+router.post("/2fa/setup", async (req, res) => {
+  try {
+    const sess = readSession(req);
+    if (!sess?.uid) return res.status(401).json({ ok: false, error: "No autenticado" });
+    const user = getUserById(sess.uid);
+    if (!user) return res.status(401).json({ ok: false, error: "No autenticado" });
 
+    const secret = generateSecret();
+    db.prepare(`UPDATE Empleados SET totp_secret = ? WHERE EmpleadosID = ?`).run(secret, user.id);
+    const qr = await generateQR(secret, user.username || user.email || `user-${user.id}`);
+    return res.json({ ok: true, qr, secret });
+  } catch (e) {
+    console.error("[auth/2fa/setup]", e?.message || e);
+    return res.status(500).json({ ok: false, error: "No se pudo iniciar 2FA" });
+  }
+});
+
+// ===== 2FA: confirmar activación (valida primer código) =====
+router.post("/2fa/enable", async (req, res) => {
+  try {
+    const sess = readSession(req);
+    if (!sess?.uid) return res.status(401).json({ ok: false, error: "No autenticado" });
+    const token = String(req.body?.token ?? "").trim();
+    if (!token) return res.status(400).json({ ok: false, error: "Código requerido" });
+
+    const row = db.prepare(`SELECT totp_secret FROM Empleados WHERE EmpleadosID = ?`).get(sess.uid);
+    if (!row?.totp_secret) return res.status(400).json({ ok: false, error: "Primero generá el QR" });
+    if (!verifyToken(token, row.totp_secret)) return res.status(400).json({ ok: false, error: "Código inválido" });
+
+    db.prepare(`UPDATE Empleados SET totp_enabled = 1 WHERE EmpleadosID = ?`).run(sess.uid);
+    return res.json({ ok: true, message: "2FA activado" });
+  } catch (e) {
+    console.error("[auth/2fa/enable]", e?.message || e);
+    return res.status(500).json({ ok: false, error: "No se pudo activar 2FA" });
+  }
+});
+
+// ===== 2FA: desactivar =====
+router.post("/2fa/disable", async (req, res) => {
+  try {
+    const sess = readSession(req);
+    if (!sess?.uid) return res.status(401).json({ ok: false, error: "No autenticado" });
+    db.prepare(`UPDATE Empleados SET totp_enabled = 0, totp_secret = NULL WHERE EmpleadosID = ?`).run(sess.uid);
+    return res.json({ ok: true, message: "2FA desactivado" });
+  } catch (e) {
+    console.error("[auth/2fa/disable]", e?.message || e);
+    return res.status(500).json({ ok: false, error: "No se pudo desactivar 2FA" });
+  }
+});
 export { verifyPassword };
 export default router;

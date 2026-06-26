@@ -159,6 +159,9 @@ const tx = db.transaction(() => {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_preset_emp ON password_resets(empleado_id)`);
     log("+ tabla password_resets");
   }
+// 11) 2FA (TOTP) para empleados
+  addColIfMissing("Empleados", "totp_secret TEXT", "totp_secret");
+  addColIfMissing("Empleados", "totp_enabled INTEGER NOT NULL DEFAULT 0", "totp_enabled");
 
 });
 
