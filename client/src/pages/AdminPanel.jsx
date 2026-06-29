@@ -8,7 +8,7 @@ import "../styles/a11y.css";
 import EmployeesSection from "./EmployeesSection";
 import MassReassignServicesSection from "./MassReassignServicesSection";
 import TwoFactorSection from "./TwoFactorSection";
-
+import StockCriticoSection from "./StockCriticoSection";
 const API_BASE_URL =
   (import.meta?.env && import.meta.env.VITE_API_URL) || "http://localhost:4000";
 
@@ -2598,6 +2598,14 @@ export default function AdminPanel() {
 
       <div className="tabs" role="tablist" aria-label="Secciones de administración">
         <button
+          className={`tab-btn ${tab === "stockCritico" ? "is-active" : ""}`}
+          onClick={() => setTab("stockCritico")}
+          role="tab"
+          aria-selected={tab === "stockCritico"}
+        >
+          Stock crítico
+        </button>
+        <button
           className={`tab-btn ${tab === "products" ? "is-active" : ""}`}
           onClick={() => setTab("products")}
           role="tab"
@@ -2686,7 +2694,7 @@ export default function AdminPanel() {
         </button>
         <div style={{ flex: 1 }} />
       </div>
-
+      {tab === "stockCritico" && <StockCriticoSection />}
       {tab === "products" && <ProductsSection />}
       {tab === "services" && <AssignServicesSection />}
       {tab === "createService" && <CreateServiceSection />}
