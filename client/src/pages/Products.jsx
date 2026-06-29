@@ -15,11 +15,13 @@ export default function Products() {
   const serviceId = service?.id ?? null;
 
   const cat = sp.get("cat");
+  const [cats, setCats] = useState([]);
+  const catName = cats.find((c) => String(c.id) === String(cat))?.name ?? "";
+
   const q = sp.get("q") || "";
   const page = Number(sp.get("page") || 1);
   const pageSize = 20;
 
-  const [cats, setCats] = useState([]);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -216,6 +218,21 @@ export default function Products() {
                       remainingQty
                     );
 
+                    // Validación: no mezclar Uniformes con otras categorías
+                    const isUni = (s) => String(s || "").trim().toLowerCase() === "uniformes";
+                    const cartHasUni = cartItems.some((it) => isUni(it.categoryName));
+                    const cartHasOther = cartItems.some((it) => it.categoryName && !isUni(it.categoryName));
+                    if (cartItems.length > 0) {
+                      if (isUni(catName) && cartHasOther) {
+                        alert("No podés mezclar Uniformes con otras categorías. Vaciá el carrito o terminá el pedido actual primero.");
+                        return;
+                      }
+                      if (!isUni(catName) && cartHasUni) {
+                        alert("Tenés Uniformes en el carrito. Los uniformes se piden por separado.");
+                        return;
+                      }
+                    }
+
                     add({
                       productId: p.id,
                       name: p.name,
@@ -223,6 +240,7 @@ export default function Products() {
                       qty: safeQty,
                       stock: totalStock,
                       incoming,
+                      categoryName: catName,
                     });
                   }}
                   addDisabled={isSupervisor && !serviceId}

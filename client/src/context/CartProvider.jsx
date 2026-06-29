@@ -26,7 +26,7 @@ export default function CartProvider({ children }) {
   }, [service]);
 
   // Acciones
-  function add({ productId, name, price = 0, qty = 1 }) {
+  function add({ productId, name, price = 0, qty = 1, categoryName = "" }) {
     setItems(prev => {
       const i = prev.findIndex(p => p.productId === productId);
       if (i >= 0) {
@@ -34,7 +34,7 @@ export default function CartProvider({ children }) {
         copy[i] = { ...copy[i], qty: copy[i].qty + qty };
         return copy;
       }
-      return [...prev, { productId, name, price, qty }];
+      return [...prev, { productId, name, price, qty, categoryName }];
     });
   }
   function update(productId, qty) {
