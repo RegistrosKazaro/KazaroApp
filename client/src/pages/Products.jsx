@@ -320,7 +320,11 @@ function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
 
   // FIX: mostrar checkmark por 1.5 segundos al agregar
   const handleAdd = () => {
+    const pedido = Math.max(1, Math.trunc(Number(qtyText) || 1));
     const qn = getQtyNumber();
+    if (maxQty !== undefined && pedido > maxQty) {
+      alert(`Solo hay ${maxQty} disponible(s) de "${p.name}". Se agregó esa cantidad.`);
+    }
     setQtyText(String(qn));
     onAdd(qn);
     setAdded(true);
