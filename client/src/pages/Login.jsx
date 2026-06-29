@@ -18,6 +18,8 @@ export default function Login() {
   const [show,     setShow]   = useState(false);
   const [err,      setErr]    = useState("");
   const [loading,  setLoading]= useState(false);
+  const [totp,     setTotp]   = useState("");
+  const [need2fa,  setNeed2fa]= useState(false);
 
   useEffect(() => {
     if (!empresa) nav("/", { replace: true });
@@ -32,7 +34,7 @@ export default function Login() {
     setErr("");
     setLoading(true);
     try {
-      const { roles = [] } = await login(u, p, empresa?.slug ?? "kazaro");
+      const { roles = [] } = await login(u, p, empresa?.slug ?? "kazaro", totp.trim());
       const rolesLower = roles.map((r) => String(r).toLowerCase());
       if (rolesLower.length > 1) { nav("/roles", { replace: true }); return; }
       if (rolesLower.some((r) => r.includes("super"))) {
@@ -41,6 +43,12 @@ export default function Login() {
         nav("/app/administrativo/products", { replace: true });
       }
     } catch (error) {
+      if (error?.response?.data?.twofaRequired) {
+        setNeed2fa(true);
+        setErr(error?.response?.data?.error || "Ingresá el código de verificación");
+        setLoading(false);
+        return;
+      }
       const message = error?.response?.data?.error || error?.message || "Usuario o contraseña inválidos";
       setErr(message);
     } finally {
@@ -58,10 +66,10 @@ export default function Login() {
           {/* Logo */}
           <div className="login-logo-wrap">
             <img
-  src={empresa?.slug === "pazar" ? logoPazar : logo}
-  className={empresa?.slug === "pazar" ? "brand-logo brand-logo-pazar" : "brand-logo"}
-  alt={empresa.nombre}
-/>
+              src={empresa?.slug === "pazar" ? logoPazar : logo}
+              className={empresa?.slug === "pazar" ? "brand-logo brand-logo-pazar" : "brand-logo"}
+              alt={empresa.nombre}
+            />
           </div>
 
           {/* Título */}
@@ -111,9 +119,28 @@ export default function Login() {
                 </button>
               </div>
             </div>
+
+            {need2fa && (
+              <div className="field-group">
+                <label htmlFor="lTotp">Código de verificación</label>
+                <input
+                  id="lTotp"
+                  className="input"
+                  type="text"
+                  inputMode="numeric"
+                  value={totp}
+                  onChange={(e) => setTotp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  disabled={loading}
+                  placeholder="123456"
+                  autoFocus
+                  style={{ letterSpacing: "0.3em", textAlign: "center" }}
+                />
+              </div>
+            )}
           </div>
 
           {err && <div className="login-error">{err}</div>}
+
           <div style={{ textAlign: "right", marginTop: -4, marginBottom: 4 }}>
             <button
               type="button"
@@ -125,8 +152,9 @@ export default function Login() {
               ¿Olvidaste tu contraseña?
             </button>
           </div>
+
           <button className="btn-primary" type="submit" disabled={loading}>
-            {loading ? "Ingresando..." : "Ingresar"}
+            {loading ? "Ingresando..." : (need2fa ? "Verificar" : "Ingresar")}
           </button>
 
           <button

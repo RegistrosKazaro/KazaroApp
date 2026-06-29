@@ -21,9 +21,9 @@ export default function AuthProvider({ children }) {
   }, []);
 
   // Ahora acepta empresaSlug como tercer parámetro (opcional, default "kazaro")
-  async function login(username, password, empresaSlug = "kazaro") {
+  async function login(username, password, empresaSlug = "kazaro", totp = "") {
     await ensureCsrf();
-    const res = await api.post("/auth/login", { username, password, empresaSlug });
+    const res = await api.post("/auth/login", { username, password, empresaSlug, totp });
     const payload = res.data?.user || res.data || null;
     setUser(payload);
     return payload;

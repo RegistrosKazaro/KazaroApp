@@ -7,6 +7,7 @@ import "../styles/admin-panel.css";
 import "../styles/a11y.css";
 import EmployeesSection from "./EmployeesSection";
 import MassReassignServicesSection from "./MassReassignServicesSection";
+import TwoFactorSection from "./TwoFactorSection";
 
 const API_BASE_URL =
   (import.meta?.env && import.meta.env.VITE_API_URL) || "http://localhost:4000";
@@ -2675,6 +2676,14 @@ export default function AdminPanel() {
         >
           Empleados
         </button>
+        <button
+          className={`tab-btn ${tab === "twofa" ? "is-active" : ""}`}
+          onClick={() => setTab("twofa")}
+          role="tab"
+          aria-selected={tab === "twofa"}
+        >
+          Seguridad
+        </button>
         <div style={{ flex: 1 }} />
       </div>
 
@@ -2688,6 +2697,7 @@ export default function AdminPanel() {
       {tab === "orders" && <OrdersSection />}
       {tab === "historial" && <ProductHistorialSection />}
       {tab === "employees" && <EmployeesSection />}
+      {tab === "twofa" && <TwoFactorSection />}
     </div>
   );
 }
