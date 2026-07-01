@@ -1,4 +1,5 @@
 // client/src/App.jsx
+import { lazy, Suspense } from "react";
 import {
   Routes, Route, Navigate, NavLink, Link,
   Outlet, useLocation, useParams, useNavigate,
@@ -14,7 +15,7 @@ import Products       from "./pages/Products";
 import Cart           from "./pages/Cart";
 import Services       from "./pages/Services";
 import AdminPanel     from "./pages/AdminPanel";
-import Reports        from "./pages/Reports";
+const Reports = lazy(() => import("./pages/Reports"));
 import Deposito       from "./pages/Deposito";
 import MisPedidos     from "./pages/MisPedidos";
 import ServiceBudgets from "./pages/ServiceBudgets";
@@ -149,7 +150,7 @@ export default function App() {
         <Route element={<Layout />}>
           <Route path="admin"         element={<AdminOnly><AdminPanel /></AdminOnly>} />
           <Route path="admin/budgets" element={<AdminOnly><ServiceBudgets /></AdminOnly>} />
-          <Route path="reports"       element={<AdminOnly><Reports /></AdminOnly>} />
+          <Route path="reports"       element={<AdminOnly><Suspense fallback={<div className="state">Cargando…</div>}><Reports /></Suspense></AdminOnly>} />
           <Route path="products"      element={<Products />} />
           <Route path="services"      element={<Services />} />
           <Route path="deposito"      element={<Deposito />} />
