@@ -1,49 +1,52 @@
 /* ================================================================
    login.css — diseño profesional y accesible
-   Soporta temas por empresa vía EmpresaProvider (CSS vars)
+   Mismo esquema de color (azul/blanco), más pulido y prolijo.
    ================================================================ */
 
 :root {
   --brand:        #2563eb;
   --brand-dark:   #1d4ed8;
   --brand-light:  #eff6ff;
-  --text:         #111827;
-  --text-muted:   #6b7280;
-  --border:       #d1d5db;
+  --text:         #0f172a;
+  --text-muted:   #64748b;
+  --border:       #e2e8f0;
   --border-focus: #2563eb;
-  --ring:         rgba(37,99,235,.25);
+  --ring:         rgba(37,99,235,.20);
   --error-bg:     #fef2f2;
   --error-border: #fca5a5;
   --error-text:   #991b1b;
-  --radius-card:  20px;
+  --radius-card:  24px;
   --radius-input: 12px;
   --radius-btn:   12px;
-  --shadow-card:  0 20px 50px rgba(0,0,0,.10), 0 4px 12px rgba(0,0,0,.06);
-  --bg-page:      #f1f5f9;
+  --shadow-card:  0 24px 60px rgba(15,23,42,.12), 0 6px 18px rgba(15,23,42,.06);
+  --bg-page:      #eef2f8;
 }
 
 /* ── Reset base ── */
 html, body { height: 100%; margin: 0; }
 body {
   color: var(--text);
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
   line-height: 1.5;
 }
 
-/* ── Fondo de página ── */
+/* ── Fondo de página con degradé sutil ── */
 .login-bg {
   min-height: 100svh;
   display: grid;
   place-items: center;
-  padding: 20px 16px;
-  background: var(--bg-page);
+  padding: 24px 16px;
+  background:
+    radial-gradient(1200px 600px at 50% -10%, #dbe7fb 0%, transparent 60%),
+    var(--bg-page);
 }
 
 /* ── Contenedor ── */
 .login-container {
   width: 100%;
-  max-width: 420px;
+  max-width: 430px;
 }
 
 /* ── Card ── */
@@ -51,23 +54,22 @@ body {
   background: #fff;
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-card);
-  padding: 36px 32px 28px;
+  padding: 40px 36px 30px;
   display: flex;
   flex-direction: column;
   gap: 0;
-  border: none;
-  outline: none;
+  border: 1px solid rgba(226,232,240,.7);
 }
 
 /* ── Logo ── */
 .login-logo-wrap {
   display: flex;
   justify-content: center;
-  margin-bottom: 24px;
+  margin-bottom: 22px;
 }
 
 .brand-logo {
-  width: 150px;
+  width: 152px;
   max-width: 55vw;
   height: auto;
   display: block;
@@ -82,11 +84,11 @@ body {
 }
 
 .login-title {
-  margin: 0 0 4px;
-  font-size: 26px;
+  margin: 0 0 6px;
+  font-size: 27px;
   font-weight: 800;
   color: var(--text);
-  letter-spacing: -.3px;
+  letter-spacing: -.4px;
 }
 
 .login-subtitle {
@@ -100,49 +102,62 @@ body {
   font-weight: 700;
 }
 
+/* Separador sutil bajo el encabezado */
+.login-header-text::after {
+  content: "";
+  display: block;
+  width: 46px;
+  height: 3px;
+  margin: 16px auto 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--brand), #60a5fa);
+}
+
 /* ── Campos ── */
 .login-fields {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  margin-bottom: 20px;
+  margin-bottom: 22px;
 }
 
 .field-group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
 }
 
 .field-group label {
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 600;
   color: var(--text);
   display: block;
   margin: 0;
+  letter-spacing: .01em;
 }
 
 /* ── Input ── */
 .input {
   width: 100%;
-  height: 48px;
-  padding: 0 14px;
+  height: 50px;
+  padding: 0 15px;
   border: 1.5px solid var(--border);
   border-radius: var(--radius-input);
-  background: #fff;
+  background: #f8fafc;
   color: var(--text);
   font-size: 15px;
   outline: none;
-  transition: border-color .15s, box-shadow .15s;
+  transition: border-color .15s, box-shadow .15s, background .15s;
   box-sizing: border-box;
 }
-.input::placeholder { color: #9ca3af; }
-.input:hover { border-color: #9ca3af; }
+.input::placeholder { color: #94a3b8; }
+.input:hover { border-color: #cbd5e1; background: #fff; }
 .input:focus {
   border-color: var(--brand);
-  box-shadow: 0 0 0 3px var(--ring);
+  background: #fff;
+  box-shadow: 0 0 0 4px var(--ring);
 }
-.input:disabled { background: #f9fafb; color: #9ca3af; cursor: not-allowed; }
+.input:disabled { background: #f1f5f9; color: #94a3b8; cursor: not-allowed; }
 
 /* ── Input + toggle Mostrar ── */
 .input-with-btn {
@@ -156,32 +171,33 @@ body {
 /* ── Botón Mostrar/Ocultar ── */
 .toggle-btn {
   flex-shrink: 0;
-  height: 48px;
-  padding: 0 14px;
+  height: 50px;
+  padding: 0 15px;
   border: 1.5px solid var(--border);
   border-radius: var(--radius-input);
-  background: #f9fafb;
-  color: var(--text);
+  background: #f8fafc;
+  color: var(--text-muted);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
-  transition: background .15s, border-color .15s;
+  transition: background .15s, border-color .15s, color .15s;
 }
 .toggle-btn:hover {
-  background: #f3f4f6;
-  border-color: #9ca3af;
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: var(--text);
 }
 .toggle-btn:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--ring);
+  box-shadow: 0 0 0 4px var(--ring);
 }
 
 /* ── Error ── */
 .login-error {
   margin-bottom: 16px;
-  padding: 11px 14px;
-  border-radius: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
   border: 1.5px solid var(--error-border);
   background: var(--error-bg);
   color: var(--error-text);
@@ -192,22 +208,22 @@ body {
 /* ── Botón principal ── */
 .btn-primary {
   width: 100%;
-  height: 50px;
+  height: 52px;
   border-radius: var(--radius-btn);
   border: none;
-  background: var(--brand);
+  background: linear-gradient(180deg, #2f6ef0 0%, var(--brand-dark) 100%);
   color: #fff;
   font-size: 16px;
   font-weight: 700;
   letter-spacing: .2px;
   cursor: pointer;
-  box-shadow: 0 4px 14px rgba(37,99,235,.30);
-  transition: background .15s, box-shadow .15s, transform .05s;
+  box-shadow: 0 8px 20px rgba(37,99,235,.28);
+  transition: filter .15s, box-shadow .15s, transform .05s;
   margin-bottom: 10px;
 }
 .btn-primary:hover {
-  background: var(--brand-dark);
-  box-shadow: 0 6px 18px rgba(37,99,235,.35);
+  filter: brightness(1.06);
+  box-shadow: 0 10px 26px rgba(37,99,235,.34);
 }
 .btn-primary:active { transform: translateY(1px); }
 .btn-primary:disabled {
@@ -215,16 +231,17 @@ body {
   cursor: not-allowed;
   transform: none;
   box-shadow: none;
+  filter: none;
 }
 .btn-primary:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--ring);
+  box-shadow: 0 0 0 4px var(--ring), 0 8px 20px rgba(37,99,235,.28);
 }
 
 /* ── Botón ghost (Cambiar empresa) ── */
 .btn-ghost {
   width: 100%;
-  height: 44px;
+  height: 46px;
   border-radius: var(--radius-btn);
   border: 1.5px solid var(--border);
   background: transparent;
@@ -235,14 +252,14 @@ body {
   transition: background .15s, border-color .15s, color .15s;
 }
 .btn-ghost:hover {
-  background: #f9fafb;
-  border-color: #9ca3af;
+  background: #f8fafc;
+  border-color: #cbd5e1;
   color: var(--text);
 }
 .btn-ghost:disabled { opacity: .5; cursor: not-allowed; }
 .btn-ghost:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--ring);
+  box-shadow: 0 0 0 4px var(--ring);
 }
 
 /* ── Selector de empresa (CompanySelect) ── */
@@ -255,25 +272,25 @@ body {
 
 .company-btn {
   width: 100%;
-  height: 52px;
+  height: 54px;
   border-radius: var(--radius-btn);
   border: none;
-  background: var(--brand);
+  background: linear-gradient(180deg, #2f6ef0 0%, var(--brand-dark) 100%);
   color: #fff;
   font-size: 16px;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 4px 14px rgba(37,99,235,.25);
-  transition: background .15s, box-shadow .15s, transform .05s;
+  box-shadow: 0 8px 20px rgba(37,99,235,.24);
+  transition: filter .15s, box-shadow .15s, transform .05s;
 }
 .company-btn:hover {
-  background: var(--brand-dark);
-  box-shadow: 0 6px 18px rgba(37,99,235,.30);
+  filter: brightness(1.06);
+  box-shadow: 0 10px 26px rgba(37,99,235,.30);
 }
 .company-btn:active { transform: translateY(1px); }
 .company-btn:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--ring);
+  box-shadow: 0 0 0 4px var(--ring);
 }
 
 /* ── Badges ISO ── */
@@ -291,28 +308,29 @@ body {
 
 /* ── Responsive ── */
 @media (max-width: 480px) {
-  .login-card { padding: 28px 20px 22px; }
+  .login-card { padding: 30px 22px 24px; }
   .iso-badges { left: 10px; bottom: 10px; width: min(150px, 38vw); }
 }
 @media (max-width: 360px) {
-  .login-card { padding: 22px 16px 18px; }
-  .brand-logo { width: 130px; }
-  .btn-primary, .company-btn { height: 48px; font-size: 15px; }
+  .login-card { padding: 24px 18px 20px; }
+  .brand-logo { width: 132px; }
+  .btn-primary, .company-btn { height: 50px; font-size: 15px; }
   .iso-badges { width: min(120px, 42vw); }
 }
 @media (max-height: 680px) {
-  .login-card { padding: 20px 24px 18px; }
+  .login-card { padding: 22px 26px 20px; }
   .login-logo-wrap { margin-bottom: 16px; }
-  .brand-logo { width: 120px; }
+  .brand-logo { width: 122px; }
   .login-header-text { margin-bottom: 18px; }
   .login-fields { gap: 12px; margin-bottom: 16px; }
-  .input, .toggle-btn { height: 44px; }
-  .btn-primary { height: 46px; }
+  .input, .toggle-btn { height: 46px; }
+  .btn-primary { height: 48px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
 .brand-logo-pazar {
   width: 200px !important;
   border-radius: 12px;
