@@ -1,0 +1,48 @@
+/* ui-kit-nav.css — Linear en selector, services y nav. Importar último. */
+:root{--uk-radius:8px;--uk-radius-sm:6px;--uk-border:#e4e4e7;--uk-shadow:0 1px 2px rgba(0,0,0,.04),0 1px 3px rgba(0,0,0,.06);--uk-shadow-hover:0 2px 6px rgba(0,0,0,.06),0 4px 12px rgba(0,0,0,.05);}
+
+/* ===== Selector empresa / rol ===== */
+.role-select .service-card,
+.company-btn{border-radius:var(--uk-radius)!important;}
+.role-select .service-card{
+  border:1px solid var(--uk-border)!important;
+  box-shadow:var(--uk-shadow)!important;
+  transition:box-shadow .15s ease,border-color .15s ease,transform .1s ease;
+}
+.role-select .service-card:hover{
+  transform:translateY(-1px);
+  box-shadow:var(--uk-shadow-hover)!important;
+  border-color:#d4d4d8!important;
+}
+.company-btn{
+  background:#18181b!important;border:1px solid #18181b!important;
+  box-shadow:var(--uk-shadow)!important;
+}
+.company-btn:hover{background:#27272a!important;filter:none!important;box-shadow:var(--uk-shadow-hover)!important;}
+
+/* ===== Services (catalog service-card ya cubierto; refuerzo) ===== */
+.catalog .service-card{border-radius:var(--uk-radius)!important;}
+.catalog .pill--assigned{border-radius:var(--uk-radius-sm)!important;}
+
+/* ===== Nav / topbar ===== */
+.topbar{
+  border-bottom:1px solid rgba(255,255,255,.08);
+  box-shadow:0 1px 3px rgba(0,0,0,.2)!important;
+}
+.topbar .ghost,.topbar .btn-out{
+  border-radius:var(--uk-radius-sm)!important;
+  border-color:rgba(255,255,255,.2)!important;
+  transition:background .12s ease,border-color .12s ease;
+}
+.topbar .ghost:hover,.topbar .btn-out:hover{background:rgba(255,255,255,.08)!important;}
+.appbar-right .pill{border-radius:var(--uk-radius-sm)!important;}
+.appbar-right .pill.active,
+.appbar-right [aria-current="page"]{
+  background:rgba(255,255,255,.14)!important;
+  border-color:rgba(255,255,255,.5)!important;
+}
+.service-menu .select{border-radius:var(--uk-radius-sm)!important;}
+
+@media (prefers-reduced-motion:reduce){
+  .role-select .service-card{transition:none!important;transform:none!important;}
+}

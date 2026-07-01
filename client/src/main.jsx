@@ -13,7 +13,7 @@ import "./styles/a11y-boost.css";
 import "./styles/ui-polish.css";
 import "./styles/ui-kit.css";
 import "./styles/ui-kit-full.css";
-
+import "./styles/ui-kit-nav.css";
 /** Exportar el componente evita el warning de react-refresh */
 export function Boot({ children }) {
   useEffect(() => {
