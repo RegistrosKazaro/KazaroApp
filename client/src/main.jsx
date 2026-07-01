@@ -12,6 +12,7 @@ import { ensureCsrf } from "./api/client";
 import "./styles/a11y-boost.css";
 import "./styles/ui-polish.css";
 import "./styles/ui-kit.css";
+import "./styles/ui-kit-full.css";
 
 /** Exportar el componente evita el warning de react-refresh */
 export function Boot({ children }) {
