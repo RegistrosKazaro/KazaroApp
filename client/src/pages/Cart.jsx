@@ -237,7 +237,7 @@ export default function Cart() {
       </section>
 
       {/* Plantillas de pedidos */}
-      <section className="state" style={{ marginBottom: 12 }}>
+      <section className="state" style={{ marginBottom: 12, display: "none" }}>
         <div style={{ fontWeight: 700, marginBottom: 8 }}>Plantillas de pedidos</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
           <input
