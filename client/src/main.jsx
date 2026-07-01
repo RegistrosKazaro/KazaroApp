@@ -10,6 +10,7 @@ import CartProvider from "./context/CartProvider.jsx";
 import "./styles/global.css";
 import { ensureCsrf } from "./api/client";
 import "./styles/a11y-boost.css";
+import "./styles/ui-polish.css";
 
 /** Exportar el componente evita el warning de react-refresh */
 export function Boot({ children }) {

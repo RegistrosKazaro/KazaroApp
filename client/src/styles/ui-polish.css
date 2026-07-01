@@ -1,0 +1,118 @@
+/* ============================================================
+   ui-polish.css — Rediseño estético suave y global
+   Importar DESPUÉS de a11y-boost.css en main.jsx.
+   Solo pule superficie: tipografía, sombras, radios, spacing.
+   No cambia estructura ni breakpoints: seguro para mobile.
+   ============================================================ */
+
+/* ---- Tipografía base más agradable ---- */
+body {
+  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ---- Fondo general con leve calidez ---- */
+.appmain { background: #f4f6fb; }
+
+/* ---- Barra superior con un poco más de presencia ---- */
+.appbar {
+  box-shadow: 0 2px 12px rgba(11, 18, 32, 0.12);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.appbar .pill {
+  transition: background .15s ease, border-color .15s ease, transform .06s ease;
+}
+.appbar .pill:hover { background: rgba(255, 255, 255, 0.10); transform: translateY(-1px); }
+
+/* ---- Cards de producto: sombra suave y hover pulido ---- */
+.product-card {
+  border: 1px solid #e6e9f2 !important;
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 4px 14px rgba(16, 24, 40, 0.05);
+  transition: transform .12s ease, box-shadow .15s ease, border-color .15s ease;
+}
+.product-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 22px rgba(16, 24, 40, 0.10);
+  border-color: #c9d4ee !important;
+}
+
+/* ---- Inputs / selects: bordes suaves en vez de negro duro ---- */
+.catalog .select,
+.catalog .input,
+.catalog .qty-input,
+.catalog .input.search {
+  border: 1.5px solid #d7deea !important;
+  border-radius: 12px;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.catalog .select:focus-visible,
+.catalog .input:focus-visible,
+.catalog .qty-input:focus-visible {
+  border-color: #2563eb !important;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18) !important;
+}
+
+/* ---- Botones primarios: gradiente sutil y sombra ---- */
+.catalog .btn,
+.btn-primary,
+.company-btn {
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.22);
+  transition: transform .06s ease, box-shadow .15s ease, filter .15s ease;
+}
+.catalog .btn:hover,
+.btn-primary:hover,
+.company-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.28);
+}
+
+/* ---- Login card: sombra más elegante ---- */
+.login-card {
+  box-shadow: 0 24px 60px rgba(11, 18, 32, 0.12), 0 6px 16px rgba(11, 18, 32, 0.06);
+  border-radius: 22px;
+}
+
+/* ---- Panel admin: tabs y cards con más aire ---- */
+.admin-panel .srv-card {
+  border-radius: 18px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05), 0 12px 32px rgba(15, 23, 42, 0.06);
+}
+.admin-panel .tabs {
+  box-shadow: inset 0 0 0 1px #cfe0ff, 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.admin-panel .tab-btn { transition: background .15s ease, color .15s ease, transform .06s ease; }
+.admin-panel .tab-btn.is-active { box-shadow: 0 6px 18px rgba(37, 99, 235, 0.35); }
+
+/* ---- Tablas admin: encabezado y filas más prolijas ---- */
+.admin-panel .table.like { border-radius: 14px; border-color: #e4e8f1; }
+.admin-panel .t-head { letter-spacing: .05em; }
+.admin-panel .t-row { transition: background .12s ease; }
+
+/* ---- Estados / mensajes: bordes redondeados coherentes ---- */
+.state { border-radius: 12px; }
+
+/* ---- Pills genéricos con transición ---- */
+.pill { transition: background .15s ease, border-color .15s ease, transform .06s ease; }
+
+/* ---- Deposito y reports: cards uniformes ---- */
+.deposito-card,
+.deposito-summary-card,
+.reports-section,
+.reports-summary-card {
+  border-radius: 14px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05), 0 6px 18px rgba(15, 23, 42, 0.05);
+}
+
+/* ---- Scrollbars sutiles (WebKit) ---- */
+* ::-webkit-scrollbar { width: 10px; height: 10px; }
+* ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+* ::-webkit-scrollbar-thumb:hover { background: #94a3b8; background-clip: padding-box; }
+
+/* ---- Respeta reduce motion ---- */
+@media (prefers-reduced-motion: reduce) {
+  .product-card, .catalog .btn, .btn-primary, .company-btn,
+  .appbar .pill, .admin-panel .tab-btn, .pill { transition: none !important; transform: none !important; }
+}
