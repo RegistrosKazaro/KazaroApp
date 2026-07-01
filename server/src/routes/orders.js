@@ -330,7 +330,29 @@ router.get("/mis-pedidos", requireAuth, async (req, res) => {
     return res.status(500).json({ error: "Error interno" });
   }
 });
+router.get("/templates", requireAuth, (req, res) => {
+  const rows = db.prepare(
+    "SELECT id, nombre, items_json, created_at FROM order_templates WHERE empleado_id = ? AND (empresa_id = ? OR empresa_id IS NULL) ORDER BY id DESC"
+  ).all(req.user.id, req.user.empresaId ?? null);
+  res.json(rows.map(r => ({ id: r.id, nombre: r.nombre, items: JSON.parse(r.items_json), created_at: r.created_at })));
+});
 
+// Crear plantilla
+router.post("/templates", requireAuth, (req, res) => {
+  const { nombre, items } = req.body || {};
+  if (!nombre || !Array.isArray(items) || !items.length)
+    return res.status(400).json({ error: "Faltan nombre o items" });
+  const info = db.prepare(
+    "INSERT INTO order_templates (empresa_id, empleado_id, nombre, items_json) VALUES (?, ?, ?, ?)"
+  ).run(req.user.empresaId ?? null, req.user.id, String(nombre).trim(), JSON.stringify(items));
+  res.json({ ok: true, id: info.lastInsertRowid });
+});
+
+// Borrar plantilla
+router.delete("/templates/:id", requireAuth, (req, res) => {
+  db.prepare("DELETE FROM order_templates WHERE id = ? AND empleado_id = ?").run(Number(req.params.id), req.user.id);
+  res.json({ ok: true });
+});
 export default router;
 
 

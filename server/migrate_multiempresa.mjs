@@ -163,6 +163,20 @@ const tx = db.transaction(() => {
   addColIfMissing("Empleados", "totp_secret TEXT", "totp_secret");
   addColIfMissing("Empleados", "totp_enabled INTEGER NOT NULL DEFAULT 0", "totp_enabled");
 
+  // 12) Plantillas de pedidos
+  if (!tableExists("order_templates")) {
+    db.exec(`
+      CREATE TABLE order_templates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        empresa_id INTEGER,
+        empleado_id INTEGER NOT NULL,
+        nombre TEXT NOT NULL,
+        items_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_otpl_emp ON order_templates(empleado_id, empresa_id)`);
+    log("+ tabla order_templates");
+  }
 });
 
 tx();
