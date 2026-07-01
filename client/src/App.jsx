@@ -84,6 +84,7 @@ function Layout() {
 
   return (
     <div className="app">
+      <a href="#main-content" className="skip-link">Saltar al contenido</a>
       <nav className="appbar" role="navigation" aria-label="Navegación principal">
         {/* Brand muestra el nombre de la empresa activa */}
         <Link to={isAdmin ? `${base}/admin` : `${base}/cart`} className="brand">
@@ -123,7 +124,7 @@ function Layout() {
         </div>
       </nav>
 
-      <main className="appmain">
+      <main className="appmain" id="main-content" tabIndex={-1}>
         <Outlet />
       </main>
     </div>

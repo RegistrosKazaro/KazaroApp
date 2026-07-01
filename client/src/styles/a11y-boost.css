@@ -1,0 +1,80 @@
+/* ============================================================
+   a11y-boost.css — Mejoras de accesibilidad (WCAG AA)
+   Importar ÚLTIMO en main.jsx. Solo contraste/foco/skip-link.
+   No cambia tamaños ni layout: seguro para responsive mobile.
+   ============================================================ */
+
+/* ---- Skip link (saltar al contenido) ---- */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -60px;
+  z-index: 9999;
+  background: #0b1220;
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-weight: 700;
+  text-decoration: none;
+  transition: top .15s ease;
+}
+.skip-link:focus {
+  top: 8px;
+  outline: 3px solid #8fd3ff;
+  outline-offset: 2px;
+}
+
+/* ---- Contraste: textos grises que fallan AA ---- */
+.product-stock { color: #374151 !important; }        /* era #00000098 */
+.pager-info { color: #1f2937 !important; }
+.muted, .admin-panel .muted { color: #4b5563 !important; }
+.reports-page .rp-text-muted,
+.rp-metric-label, .rp-heatmap-label { color: #4b5563 !important; }
+.deposito-subtext, .deposito-footnote { color: #4b5563 !important; }
+
+/* ---- Placeholders con contraste suficiente ---- */
+.input::placeholder,
+.select::placeholder,
+.catalog-toolbar .input::placeholder { color: #565f6e !important; opacity: 1; }
+
+/* ---- Foco visible reforzado sobre barra oscura ---- */
+.appbar .pill:focus-visible,
+.appbar .brand:focus-visible,
+.appbar button:focus-visible {
+  outline: 3px solid #8fd3ff;
+  outline-offset: 2px;
+  border-radius: 999px;
+}
+
+/* ---- Foco global consistente para controles ---- */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid color-mix(in srgb, #1a73e8 60%, transparent);
+  outline-offset: 2px;
+}
+
+/* ---- Enlaces con mejor contraste (global.css usaba #0b5) ---- */
+a { color: #1d4ed8; }
+a:hover { color: #1e40af; }
+
+/* ---- nav activo (aria-current) más evidente ---- */
+[aria-current="page"] {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font-weight: 700;
+}
+
+/* ---- Target táctil mínimo en pills chicos de reportes/deposito ---- */
+@media (max-width: 480px) {
+  .reports-page .pill,
+  .deposito-page .pill { min-height: 40px; }
+}
+
+/* ---- Respeta reduce motion (refuerzo) ---- */
+@media (prefers-reduced-motion: reduce) {
+  .skip-link { transition: none !important; }
+}
