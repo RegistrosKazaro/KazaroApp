@@ -332,6 +332,21 @@ const onEdit = async (row) => {
     setStockEdit({ id: row.id, value: row.stock ?? 0 });
 
   const cancelStockEdit = () => setStockEdit(null);
+  const adjustStock = async (row) => {
+    const deltaStr = window.prompt(`Ajustar stock de "${row.name}" (stock actual: ${row.stock ?? 0}).\nEscribí la cantidad: positiva suma (devolución/ingreso), negativa resta (rotura/salida).`, "");
+    if (deltaStr === null) return;
+    const delta = parseInt(deltaStr, 10);
+    if (!Number.isFinite(delta) || delta === 0) { alert("Cantidad inválida"); return; }
+    const motivo = window.prompt("Motivo del ajuste (obligatorio):", "");
+    if (motivo === null || !motivo.trim()) { alert("El motivo es obligatorio"); return; }
+    try {
+      const { data } = await api.post(`/api/admin/products/${row.id}/adjust-stock`, { delta, motivo: motivo.trim(), tipo: delta > 0 ? "devolucion" : "ajuste_salida" });
+      setRows((prev) => prev.map((it) => it.id === row.id ? { ...it, stock: data.nuevo } : it));
+      setStatusMsg(`Stock ajustado: ${data.anterior} → ${data.nuevo}`);
+    } catch (e) {
+      setErr(e?.response?.data?.error || "No se pudo ajustar");
+    }
+  };
 
   const saveStock = async (e) => {
     if (e?.preventDefault) e.preventDefault();
@@ -859,6 +874,9 @@ const onEdit = async (row) => {
                   <>
                     <button className="pill" onClick={() => startStockEdit(r)}>
   Stock
+</button>
+<button className="pill" onClick={() => adjustStock(r)} title="Devolución / ajuste con motivo">
+  Ajustar
 </button>
 <button className="pill" onClick={() => onEdit(r)}>
   Editar
