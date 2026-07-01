@@ -51,7 +51,7 @@ function safeDateLabel(value) {
 export default function Cart() {
   const { role } = useParams();
   const { user } = useAuth();
-  const { items, update, remove, clear, total, service } = useCart();
+  const { items, add, update, remove, clear, total, service } = useCart();
 
   const [sending, setSending] = useState(false);
   const [errorSend, setErrorSend] = useState("");
@@ -60,6 +60,41 @@ export default function Cart() {
 
   // NUEVO: flag de éxito (para mostrar el cartel aunque falten campos del remito)
   const [orderOk, setOrderOk] = useState(false);
+
+  // Plantillas de pedidos
+  const [templates, setTemplates] = useState([]);
+  const [tplName, setTplName] = useState("");
+
+  useEffect(() => {
+    api.get("/orders/templates").then(({ data }) => setTemplates(data || [])).catch(() => {});
+  }, [orderOk]);
+
+  const saveTemplate = async () => {
+    const nombre = tplName.trim();
+    if (!nombre) return alert("Poné un nombre para la plantilla");
+    if (!items.length) return alert("El carrito está vacío");
+    try {
+      await api.post("/orders/templates", {
+        nombre,
+        items: items.map((it) => ({ productId: it.productId, name: it.name, price: it.price, qty: it.qty, categoryName: it.categoryName })),
+      });
+      setTplName("");
+      const { data } = await api.get("/orders/templates");
+      setTemplates(data || []);
+      alert("Plantilla guardada");
+    } catch { alert("No se pudo guardar la plantilla"); }
+  };
+
+  const loadTemplate = (tpl) => {
+    clear();
+    tpl.items.forEach((it) => add({ productId: it.productId, name: it.name, price: it.price, qty: it.qty, categoryName: it.categoryName }));
+  };
+
+  const deleteTemplate = async (id) => {
+    if (!confirm("¿Borrar esta plantilla?")) return;
+    await api.delete(`/orders/templates/${id}`);
+    setTemplates((prev) => prev.filter((t) => t.id !== id));
+  };
 
   // Modo supervisor según la URL (/app/supervisor/...)
   const isSupervisorRoute = useMemo(
@@ -197,6 +232,41 @@ export default function Cart() {
             <span className={`budget-chip ${overLimit ? "over" : "ok"}`}>
               {usagePct.toFixed(2)}%
             </span>
+          </div>
+        )}
+      </section>
+
+      {/* Plantillas de pedidos */}
+      <section className="state" style={{ marginBottom: 12 }}>
+        <div style={{ fontWeight: 700, marginBottom: 8 }}>Plantillas de pedidos</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+          <input
+            className="input"
+            placeholder="Nombre de la plantilla…"
+            value={tplName}
+            onChange={(e) => setTplName(e.target.value)}
+            style={{ flex: 1, minWidth: 180 }}
+          />
+          <button className="btn" onClick={saveTemplate} disabled={!items.length}>
+            Guardar carrito como plantilla
+          </button>
+        </div>
+        {templates.length === 0 ? (
+          <div style={{ fontSize: 13, opacity: 0.7 }}>No tenés plantillas guardadas.</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {templates.map((tpl) => (
+              <div key={tpl.id} style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ minWidth: 0 }}>
+                  <strong>{tpl.nombre}</strong>{" "}
+                  <small style={{ opacity: 0.7 }}>({tpl.items?.length || 0} productos)</small>
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button className="pill" onClick={() => loadTemplate(tpl)}>Cargar</button>
+                  <button className="pill danger" onClick={() => deleteTemplate(tpl.id)}>Borrar</button>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </section>
