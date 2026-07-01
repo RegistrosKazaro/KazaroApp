@@ -177,6 +177,22 @@ const tx = db.transaction(() => {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_otpl_emp ON order_templates(empleado_id, empresa_id)`);
     log("+ tabla order_templates");
   }
+  if (!tableExists("notifications")) {
+    db.exec(`
+      CREATE TABLE notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        empresa_id INTEGER,
+        empleado_id INTEGER NOT NULL,
+        tipo TEXT,
+        titulo TEXT NOT NULL,
+        cuerpo TEXT,
+        leida INTEGER NOT NULL DEFAULT 0,
+        link TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_notif_emp ON notifications(empleado_id, leida)`);
+    log("+ tabla notifications");
+  }
 });
 
 tx();

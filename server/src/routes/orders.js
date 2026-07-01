@@ -353,6 +353,23 @@ router.delete("/templates/:id", requireAuth, (req, res) => {
   db.prepare("DELETE FROM order_templates WHERE id = ? AND empleado_id = ?").run(Number(req.params.id), req.user.id);
   res.json({ ok: true });
 });
+router.get("/notifications", requireAuth, (req, res) => {
+  const rows = db.prepare(
+    "SELECT id, tipo, titulo, cuerpo, leida, link, created_at FROM notifications WHERE empleado_id = ? ORDER BY id DESC LIMIT 50"
+  ).all(req.user.id);
+  const unread = rows.filter(r => !r.leida).length;
+  res.json({ rows, unread });
+});
+
+router.put("/notifications/:id/read", requireAuth, (req, res) => {
+  db.prepare("UPDATE notifications SET leida = 1 WHERE id = ? AND empleado_id = ?").run(Number(req.params.id), req.user.id);
+  res.json({ ok: true });
+});
+
+router.put("/notifications/read-all", requireAuth, (req, res) => {
+  db.prepare("UPDATE notifications SET leida = 1 WHERE empleado_id = ?").run(req.user.id);
+  res.json({ ok: true });
+});
 export default router;
 
 

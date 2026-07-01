@@ -415,7 +415,16 @@ router.put("/orders/:id/:action", mustWarehouse, async (req, res) => {
     params.push(id);
     const r = db.prepare(`UPDATE Pedidos SET ${sets.join(", ")} WHERE ${idCol} = ?`).run(...params);
     if (r.changes === 0) return res.status(404).json({ error: "Pedido no encontrado" });
-
+    if (action === "close") {
+      try {
+        const ped = db.prepare(`SELECT EmpleadoID, empresa_id FROM Pedidos WHERE ${idCol} = ?`).get(id);
+        if (ped?.EmpleadoID) {
+          db.prepare(
+            "INSERT INTO notifications (empresa_id, empleado_id, tipo, titulo, cuerpo, link) VALUES (?, ?, 'pedido_listo', ?, ?, ?)"
+          ).run(ped.empresa_id ?? null, ped.EmpleadoID, `Pedido #${String(id).padStart(7,"0")} listo para retiro`, "Tu pedido fue preparado y está listo para retirar.", "/app/supervisor/mis-pedidos");
+        }
+      } catch (e) { console.warn("[notif] close:", e?.message); }
+    }
     res.json({ ok: true, id });
 
     if (action === "close" && closedAt) {
