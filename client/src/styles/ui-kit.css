@@ -1,0 +1,128 @@
+/* ============================================================
+   ui-kit.css — Estilo Linear/Vercel (limpio, sobrio)
+   Importar ÚLTIMO en main.jsx.
+   Radios chicos, bordes sutiles, sombras mínimas.
+   No cambia layout ni breakpoints: seguro para mobile.
+   ============================================================ */
+
+:root {
+  --uk-radius: 8px;
+  --uk-radius-sm: 6px;
+  --uk-border: #e4e4e7;
+  --uk-border-strong: #d4d4d8;
+  --uk-shadow: 0 1px 2px rgba(0,0,0,.04), 0 1px 3px rgba(0,0,0,.06);
+  --uk-shadow-hover: 0 2px 6px rgba(0,0,0,.06), 0 4px 12px rgba(0,0,0,.05);
+}
+
+/* ---- Cards de producto ---- */
+.product-card {
+  border: 1px solid var(--uk-border) !important;
+  border-radius: var(--uk-radius) !important;
+  box-shadow: var(--uk-shadow) !important;
+  transition: box-shadow .15s ease, border-color .15s ease, transform .1s ease;
+}
+.product-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--uk-shadow-hover) !important;
+  border-color: var(--uk-border-strong) !important;
+}
+
+/* ---- Inputs / selects ---- */
+.catalog .select,
+.catalog .input,
+.catalog .qty-input,
+.catalog .input.search {
+  border: 1px solid var(--uk-border) !important;
+  border-radius: var(--uk-radius-sm) !important;
+  background: #fff !important;
+  transition: border-color .12s ease, box-shadow .12s ease;
+}
+.catalog .select:focus-visible,
+.catalog .input:focus-visible,
+.catalog .qty-input:focus-visible {
+  border-color: #2563eb !important;
+  box-shadow: 0 0 0 3px rgba(37,99,235,.15) !important;
+}
+
+/* ---- Botones (radios chicos, sin gradientes exagerados) ---- */
+.catalog .btn,
+.btn-primary,
+.company-btn {
+  border-radius: var(--uk-radius-sm) !important;
+  box-shadow: var(--uk-shadow) !important;
+  background: #2563eb !important;
+  border: 1px solid #1d4ed8 !important;
+  transition: background .12s ease, box-shadow .12s ease, transform .06s ease;
+}
+.catalog .btn:hover,
+.btn-primary:hover,
+.company-btn:hover {
+  background: #1d4ed8 !important;
+  box-shadow: var(--uk-shadow-hover) !important;
+  transform: none;
+  filter: none !important;
+}
+
+/* ---- Login card (menos redondeado) ---- */
+.login-card {
+  border-radius: 12px !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,.05), 0 8px 30px rgba(0,0,0,.08) !important;
+  border: 1px solid var(--uk-border) !important;
+}
+.login-title { letter-spacing: -.5px; }
+.login-header-text::after { display: none; }
+
+/* ---- Panel admin ---- */
+.admin-panel .srv-card {
+  border-radius: 10px !important;
+  box-shadow: var(--uk-shadow) !important;
+  border: 1px solid var(--uk-border);
+}
+.admin-panel .tabs {
+  border-radius: var(--uk-radius) !important;
+  background: #f4f4f5 !important;
+  box-shadow: inset 0 0 0 1px var(--uk-border) !important;
+}
+.admin-panel .tab-btn { border-radius: var(--uk-radius-sm) !important; }
+.admin-panel .tab-btn.is-active {
+  background: #18181b !important;
+  color: #fff !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+.admin-panel .btn.primary {
+  background: #18181b !important;
+  color: #fff !important;
+  box-shadow: var(--uk-shadow) !important;
+  border-radius: var(--uk-radius-sm) !important;
+}
+.admin-panel .btn.primary:hover { background: #27272a !important; }
+.admin-panel .table.like { border-radius: var(--uk-radius) !important; border-color: var(--uk-border); }
+
+/* ---- Estados / pills ---- */
+.state { border-radius: var(--uk-radius) !important; }
+.pill { border-radius: var(--uk-radius-sm) !important; }
+
+/* ---- Deposito / reports cards ---- */
+.deposito-card,
+.deposito-summary-card,
+.reports-section,
+.reports-summary-card {
+  border-radius: var(--uk-radius) !important;
+  box-shadow: var(--uk-shadow) !important;
+}
+
+/* ---- Barra superior sobria ---- */
+.appbar {
+  box-shadow: 0 1px 0 rgba(255,255,255,.05), 0 1px 3px rgba(0,0,0,.2) !important;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+
+/* ---- Scrollbars finos ---- */
+* ::-webkit-scrollbar { width: 8px; height: 8px; }
+* ::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 999px; }
+* ::-webkit-scrollbar-thumb:hover { background: #a1a1aa; }
+
+@media (prefers-reduced-motion: reduce) {
+  .product-card, .catalog .btn, .btn-primary, .company-btn { transition: none !important; transform: none !important; }
+}
