@@ -22,6 +22,7 @@ import ServiceBudgets from "./pages/ServiceBudgets";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import "./styles/app.css";
+import NotificationBell from "./components/NotificationBell";
 
 function Guarded() {
   const { user, loading } = useAuth();
@@ -100,6 +101,7 @@ function Layout() {
               <NavLink to={`${base}/cart`}          className={navClass}>
                 Carrito <span className="count">{count}</span>
               </NavLink>
+              <NotificationBell />
               <button type="button" className="pill danger" onClick={handleLogout}>Salir</button>
             </>
           ) : (
@@ -118,6 +120,7 @@ function Layout() {
               <NavLink to={`${base}/cart`} className={navClass}>
                 Carrito <span className="count">{count}</span>
               </NavLink>
+              <NotificationBell />
               <button type="button" className="pill danger" onClick={handleLogout}>Salir</button>
             </>
           )}
