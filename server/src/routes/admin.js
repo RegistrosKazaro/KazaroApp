@@ -1561,6 +1561,37 @@ router.get("/audit", mustBeAdmin, (req, res) => {
     console.error("[admin] GET /audit error:", e?.message || e);
     res.status(500).json({ error: "No se pudo cargar la auditoría" });
   }
+  router.post("/products/:id/adjust-stock", mustBeAdmin, (req, res) => {
+  try {
+    const sch = prodSchemaOrThrow();
+    const { products } = sch.tables;
+    const { prodId, prodName, prodStock, prodCode } = sch.cols;
+    const C_STOCK = prodStock ? qid(prodStock) : null;
+    if (!C_STOCK) return res.status(400).json({ error: "Sin columna de stock" });
+
+    const id = String(req.params.id);
+    const delta = Math.trunc(Number(req.body?.delta));
+    const motivo = String(req.body?.motivo || "").trim();
+    const tipo = String(req.body?.tipo || "ajuste_manual").trim();
+    if (!Number.isFinite(delta) || delta === 0) return res.status(400).json({ error: "Delta inválido" });
+    if (!motivo) return res.status(400).json({ error: "El motivo es obligatorio" });
+
+    const row = db.prepare(`SELECT ${qid(prodName)} AS nombre, ${qid(prodStock)} AS stock${prodCode ? `, ${qid(prodCode)} AS code` : ""} FROM Productos WHERE ${qid(prodId)} = ?`).get(id);
+    if (!row) return res.status(404).json({ error: "Producto no encontrado" });
+
+    const anterior = Number(row.stock ?? 0);
+    const nuevo = anterior + delta;
+    if (nuevo < 0) return res.status(400).json({ error: "El stock no puede quedar negativo" });
+
+    db.prepare(`UPDATE Productos SET ${C_STOCK} = ? WHERE ${qid(prodId)} = ?`).run(nuevo, id);
+    registrarCambioProducto({ productId: id, nombre: row.nombre, codigo: row.code ?? null, campo: "stock", anterior, nuevo, tipo: `${tipo}: ${motivo}`, usuario: req.user?.username || "admin" });
+
+    res.json({ ok: true, anterior, nuevo, delta });
+  } catch (e) {
+    console.error("[admin] adjust-stock:", e?.message || e);
+    res.status(500).json({ error: "No se pudo ajustar el stock" });
+  }
+});
 });
 router.use("/empresa", empresaRouter);
 export default router;
