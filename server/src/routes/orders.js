@@ -370,6 +370,95 @@ router.put("/notifications/read-all", requireAuth, (req, res) => {
   db.prepare("UPDATE notifications SET leida = 1 WHERE empleado_id = ?").run(req.user.id);
   res.json({ ok: true });
 });
+router.get("/:id/returnable", requireAuth, (req, res) => {
+  try {
+    const pedidoId = Number(req.params.id);
+    const items = db.prepare(`SELECT ProductoID AS productId, Nombre AS name, Codigo AS code, SUM(Cantidad) AS pedido FROM PedidoItems WHERE PedidoID = ? GROUP BY ProductoID, Nombre, Codigo`).all(pedidoId);
+    const dev = db.prepare(`SELECT producto_id, SUM(cantidad) AS devuelto FROM devoluciones WHERE pedido_id = ? AND estado IN ('pendiente','aprobada') GROUP BY producto_id`).all(pedidoId);
+    const devMap = new Map(dev.map((d) => [String(d.producto_id), d.devuelto]));
+    const rows = items.map((it) => {
+      const devuelto = Number(devMap.get(String(it.productId)) || 0);
+      return { ...it, pedido: Number(it.pedido), devuelto, disponible: Math.max(0, Number(it.pedido) - devuelto) };
+    });
+    res.json({ ok: true, items: rows });
+  } catch (e) {
+    console.error("[returnable]", e?.message || e);
+    res.status(500).json({ error: "No se pudo cargar el pedido" });
+  }
+});
+
+// Crear solicitud de devolución (supervisor) — NO toca stock
+router.post("/returns", requireAuth, (req, res) => {
+  try {
+    const { pedidoId, productoId, cantidad, motivo } = req.body || {};
+    const pid = Number(pedidoId), prod = Number(productoId), cant = Math.trunc(Number(cantidad));
+    if (!pid || !prod || !Number.isFinite(cant) || cant <= 0) return res.status(400).json({ error: "Datos inválidos" });
+    if (!String(motivo || "").trim()) return res.status(400).json({ error: "El motivo es obligatorio" });
+
+    const pedItem = db.prepare(`SELECT SUM(Cantidad) AS pedido FROM PedidoItems WHERE PedidoID = ? AND ProductoID = ?`).get(pid, prod);
+    const yaDev = db.prepare(`SELECT SUM(cantidad) AS d FROM devoluciones WHERE pedido_id = ? AND producto_id = ? AND estado IN ('pendiente','aprobada')`).get(pid, prod);
+    const disponible = Number(pedItem?.pedido || 0) - Number(yaDev?.d || 0);
+    if (cant > disponible) return res.status(400).json({ error: `Solo se pueden devolver ${disponible} unidades` });
+
+    const empresaId = req.user?.empresaId ?? null;
+    db.prepare(`INSERT INTO devoluciones (pedido_id, producto_id, cantidad, motivo, empresa_id, solicitante_id, estado) VALUES (?, ?, ?, ?, ?, ?, 'pendiente')`)
+      .run(pid, prod, cant, String(motivo).trim(), empresaId, req.user.id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[returns POST]", e?.message || e);
+    res.status(500).json({ error: "No se pudo registrar la devolución" });
+  }
+});
+
+// Listar devoluciones (depósito) — filtro por estado
+router.get("/returns", requireAuth, (req, res) => {
+  try {
+    const estado = String(req.query.estado || "").trim();
+    const empresaId = req.user?.empresaId ?? null;
+    let sql = `SELECT d.*, p.ProductName AS producto_nombre FROM devoluciones d LEFT JOIN Productos p ON p.ProductID = d.producto_id WHERE (d.empresa_id = ? OR d.empresa_id IS NULL)`;
+    const params = [empresaId];
+    if (estado) { sql += ` AND d.estado = ?`; params.push(estado); }
+    sql += ` ORDER BY d.id DESC LIMIT 500`;
+    res.json({ ok: true, rows: db.prepare(sql).all(...params) });
+  } catch (e) {
+    console.error("[returns GET]", e?.message || e);
+    res.status(500).json({ error: "No se pudieron cargar las devoluciones" });
+  }
+});
+
+// Aprobar devolución (depósito) — suma stock
+router.put("/returns/:id/approve", requireAuth, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const d = db.prepare(`SELECT * FROM devoluciones WHERE id = ?`).get(id);
+    if (!d) return res.status(404).json({ error: "Devolución no encontrada" });
+    if (d.estado !== "pendiente") return res.status(400).json({ error: "Ya fue resuelta" });
+
+    const prod = db.prepare(`SELECT Stock FROM Productos WHERE ProductID = ?`).get(d.producto_id);
+    const nuevo = Number(prod?.Stock || 0) + Number(d.cantidad);
+    db.prepare(`UPDATE Productos SET Stock = ? WHERE ProductID = ?`).run(nuevo, d.producto_id);
+    db.prepare(`UPDATE devoluciones SET estado = 'aprobada', aprobador_id = ?, fecha_resolucion = datetime('now') WHERE id = ?`).run(req.user.id, id);
+    res.json({ ok: true, nuevoStock: nuevo });
+  } catch (e) {
+    console.error("[returns approve]", e?.message || e);
+    res.status(500).json({ error: "No se pudo aprobar" });
+  }
+});
+
+// Rechazar devolución (depósito)
+router.put("/returns/:id/reject", requireAuth, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const d = db.prepare(`SELECT estado FROM devoluciones WHERE id = ?`).get(id);
+    if (!d) return res.status(404).json({ error: "No encontrada" });
+    if (d.estado !== "pendiente") return res.status(400).json({ error: "Ya fue resuelta" });
+    db.prepare(`UPDATE devoluciones SET estado = 'rechazada', aprobador_id = ?, fecha_resolucion = datetime('now') WHERE id = ?`).run(req.user.id, id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[returns reject]", e?.message || e);
+    res.status(500).json({ error: "No se pudo rechazar" });
+  }
+});
 export default router;
 
 

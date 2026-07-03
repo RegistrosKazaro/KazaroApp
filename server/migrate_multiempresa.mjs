@@ -193,6 +193,25 @@ const tx = db.transaction(() => {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_notif_emp ON notifications(empleado_id, leida)`);
     log("+ tabla notifications");
   }
+  if (!tableExists("devoluciones")) {
+    db.exec(`
+      CREATE TABLE devoluciones (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pedido_id INTEGER NOT NULL,
+        producto_id INTEGER NOT NULL,
+        cantidad INTEGER NOT NULL,
+        motivo TEXT,
+        empresa_id INTEGER,
+        solicitante_id INTEGER,
+        aprobador_id INTEGER,
+        estado TEXT NOT NULL DEFAULT 'pendiente',
+        fecha_solicitud TEXT NOT NULL DEFAULT (datetime('now')),
+        fecha_resolucion TEXT
+      )`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_dev_pedido ON devoluciones(pedido_id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_dev_estado ON devoluciones(estado, empresa_id)`);
+    log("+ tabla devoluciones");
+  }
 });
 
 tx();
