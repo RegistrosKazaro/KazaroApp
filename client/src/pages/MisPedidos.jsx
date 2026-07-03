@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
+import ReturnModal from "../components/ReturnModal";
 
 const API_BASE_URL = (import.meta?.env && import.meta.env.VITE_API_URL) || "http://localhost:4000";
 
@@ -84,6 +85,7 @@ export default function MisPedidos() {
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pdfErr, setPdfErr] = useState("");
   const [tabFilter, setTabFilter] = useState("activos");
+  const [returnOrder, setReturnOrder] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -382,6 +384,8 @@ export default function MisPedidos() {
           </div>
         </div>
       )}
+
+      {returnOrder && <ReturnModal order={returnOrder} onClose={() => setReturnOrder(null)} />}
     </div>
   );
 }
