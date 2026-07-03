@@ -810,7 +810,7 @@ const onEdit = async (row) => {
             <div style={{ flex: 2, textAlign: "right" }}>Precio</div>
             <div style={{ flex: 2, textAlign: "center" }}>Stock</div>
             <div style={{ flex: 2 }}>Código</div>
-            <div style={{ width: 160 }} />
+            <div style={{ width: 280 }} />
           </div>
 
           {rows.map((r) => (
@@ -851,10 +851,11 @@ const onEdit = async (row) => {
 
               <div
                 style={{
-                  width: 160,
+                  width: 280,
                   display: "flex",
                   gap: 6,
                   justifyContent: "flex-end",
+                  flexWrap: "wrap",
                 }}
               >
                 {stockEdit?.id === r.id ? (
