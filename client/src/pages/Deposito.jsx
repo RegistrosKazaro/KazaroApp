@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { api } from "../api/client";
 import "../styles/deposito.css";
+import DevolucionesPendientes from "../components/DevolucionesPendientes";
 
 function isoToday() { return new Date().toISOString().slice(0, 10); }
 function isoFirstOfMonth() {
@@ -408,6 +409,7 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
 
       {err && <div className="state error deposito-state">{err}</div>}
 
+      {tab === "devoluciones" ? <DevolucionesPendientes /> : (
       <div className="deposito-table-wrapper">
         <table className="deposito-table" aria-label="Pedidos del depósito">
           <thead>
@@ -561,8 +563,9 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
               );
             })}
           </tbody>
-        </table>
+         </table>
       </div>
+      )}
 
       {/* Vista previa del remito */}
       {(selected || previewErr) && (
