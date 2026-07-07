@@ -384,6 +384,7 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
           { key: "preparing", label: "En preparación" },
           { key: "closed",    label: "Listos para retirar" },
           { key: "retirado",  label: "Retirados" },
+          { key: "devoluciones", label: "Devoluciones" },
         ].map(({ key, label }) => (
           <button key={key} type="button"
             className={`pill pill--ghost${tab === key ? " is-active" : ""}`}
