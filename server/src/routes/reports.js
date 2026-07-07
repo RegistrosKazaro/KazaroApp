@@ -409,7 +409,11 @@ router.get("/traceability", mustBeAdmin, (req, res) => {
       productId: Number(r.productId || 0), code: String(r.code || ""), name: String(r.name || ""),
       pedidos: Number(r.pedidos || 0), qty: Number(r.qty || 0), amount: Number(r.amount || 0),
     }));
-
+    try {
+      const devs = db.prepare(`SELECT producto_id AS productId, COALESCE(SUM(cantidad),0) AS devuelto FROM devoluciones WHERE estado='aprobada' AND fecha_resolucion >= ? AND fecha_resolucion < ? GROUP BY producto_id`).all(start, end);
+      const devMap = new Map(devs.map(d => [Number(d.productId), Number(d.devuelto)]));
+      for (const row of outgoing) { const dev = devMap.get(Number(row.productId)) || 0; if (dev > 0) row.qty = Math.max(0, Number(row.qty) - dev); }
+    } catch { /* sin devoluciones */ }
     const totalOutgoing = outgoing.reduce((acc, row) => ({ qty: acc.qty + Number(row.qty || 0), amount: acc.amount + Number(row.amount || 0) }), { qty: 0, amount: 0 });
     const topUsed = [...outgoing].sort((a, b) => Number(b.qty || 0) - Number(a.qty || 0)).slice(0, top);
 
