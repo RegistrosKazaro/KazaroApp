@@ -103,6 +103,7 @@ function ProductsSection() {
     stock: "",
     code: "",
     catId: "",
+    imageUrl: "",
   });
   const [catTouched, setCatTouched] = useState(false);
   const [editingLoading, setEditingLoading] = useState(false);
@@ -261,7 +262,7 @@ const onEdit = async (row) => {
   const onCancel = () => {
     setEditingId(null);
     setCatTouched(false);
-    setDraft({ name: "", price: "", stock: "", code: "", catId: "" });
+    setDraft({ name: "", price: "", stock: "", code: "", catId: "", imageUrl: "" });
     setStatusMsg("");
     setErr("");
   };
@@ -275,6 +276,7 @@ const onEdit = async (row) => {
     price: draft.price === "" || draft.price === null ? null : Number(draft.price),
     stock: draft.stock === "" || draft.stock === null ? null : Number(draft.stock),
     code: draft.code === "" || draft.code === null ? null : String(draft.code),
+    imageUrl: draft.imageUrl === "" || draft.imageUrl === null ? null : String(draft.imageUrl).trim(),
   };
 
   if (!payload.name) {
@@ -658,7 +660,21 @@ const onEdit = async (row) => {
                 }
               />
             </label>
-
+            <label>
+              <span>URL de foto (opcional)</span>
+              <input
+                className="input"
+                type="url"
+                placeholder="https://…/foto.jpg"
+                value={draft.imageUrl}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, imageUrl: e.target.value }))
+                }
+              />
+              {draft.imageUrl ? (
+                <img src={draft.imageUrl} alt="Vista previa" style={{ marginTop: 6, width: 90, height: 90, objectFit: "cover", borderRadius: 8, border: "1px solid #e5e7eb" }} onError={(e) => { e.currentTarget.style.display = "none"; }} />
+              ) : null}
+            </label>
             <label>
               <span>Categoría</span>
               <select

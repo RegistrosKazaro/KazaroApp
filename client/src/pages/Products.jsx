@@ -333,6 +333,15 @@ function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
 
   return (
     <article className="product-card">
+      {p.imageUrl ? (
+        <img
+          src={p.imageUrl}
+          alt={p.name}
+          loading="lazy"
+          style={{ width: "100%", height: 130, objectFit: "cover", borderRadius: 8, marginBottom: 8, background: "#f1f5f9" }}
+          onError={(e) => { e.currentTarget.style.display = "none"; }}
+        />
+      ) : null}
       <h3 className="product-title">{p.name}</h3>
       <div className="product-code">{p.code || "\u00A0"}</div>
       {p.price != null && <div className="product-price">{priceText}</div>}
