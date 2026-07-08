@@ -118,23 +118,18 @@ router.post("/", requireAuth, async (req, res) => {
       }
     }
 
-    let pedidoId;
-    try {
-      pedidoId = createOrder({ empleadoId, servicioId, nota, items, asRole: rolEfectivo, maxTotalAllowed });
-    } catch (err) {
-      if (err?.message === "ORDER_OVER_LIMIT") {
-        const pct = Number(budgetSettings.maxPct ?? DEFAULT_SERVICE_PCT);
-        return res.status(400).json({ error: `El pedido excede el ${pct}% del presupuesto del servicio` });
-      }
-      throw err;
-    }
-
+    const createRes = createOrder({ empleadoId, servicioId, nota, items, asRole: rolEfectivo, maxTotalAllowed });
+    const pedidoId = createRes.pedidoId;
+    const excedePresupuesto = createRes.excedePresupuesto;
     // Guardar rol y empresa en el pedido
     const hasEmpresaCol = db.prepare("PRAGMA table_info(Pedidos)").all().some((c) => c.name === "empresa_id");
     if (hasEmpresaCol && empresaId) {
       db.prepare("UPDATE Pedidos SET Rol = ?, empresa_id = ? WHERE PedidoID = ?").run(rolEfectivo, empresaId, Number(pedidoId));
     } else {
       db.prepare("UPDATE Pedidos SET Rol = ? WHERE PedidoID = ?").run(rolEfectivo, Number(pedidoId));
+    }
+    if (excedePresupuesto) {
+      return res.json({ ok: true, pedidoId, pendienteAprobacion: true, message: "Pedido enviado. Excede el presupuesto y quedó pendiente de aprobación del depósito." });
     }
 
     const pedido = getFullOrder(pedidoId);
