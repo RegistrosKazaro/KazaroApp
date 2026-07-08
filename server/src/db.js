@@ -1051,13 +1051,13 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
       insItem.run(pedidoId, pid, row.name, precio, cantidad, subtotal, row.code || "");
     }
 
-    const excedePresupuesto = Number.isFinite(maxTotalAllowed) && total > maxTotalAllowed;
-    if (excedePresupuesto) {
-      db.prepare(`UPDATE Pedidos SET Total = ?, Status = 'pendiente_aprobacion' WHERE PedidoID = ?`).run(total, pedidoId);
-    } else {
-      db.prepare(`UPDATE Pedidos SET Total = ? WHERE PedidoID = ?`).run(total, pedidoId);
+    if (Number.isFinite(maxTotalAllowed) && total > maxTotalAllowed) {
+      const err = new Error("ORDER_OVER_LIMIT");
+      err.code = "ORDER_OVER_LIMIT";
+      throw err;
     }
-    return { pedidoId, excedePresupuesto, total };
+    db.prepare(`UPDATE Pedidos SET Total = ? WHERE PedidoID = ?`).run(total, pedidoId);
+    return pedidoId;
   });
 
   return tx();
