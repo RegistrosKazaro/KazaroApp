@@ -685,7 +685,8 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
     hasPrice ? `p.${prodPrice} AS price` : `NULL AS price`,
     stockExpr,
     `COALESCE(inc.incoming, 0) AS incoming`,
-    `inc.nextEta AS nextEta`
+    `inc.nextEta AS nextEta`,
+    `p.image_url AS imageUrl`
   ].join(", ");
 
   const normRoles = []

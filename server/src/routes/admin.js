@@ -157,6 +157,7 @@ router.get("/products/export", mustBeAdmin, (_req, res) => {
              ${prodPrice ? `, p.${prodPrice} AS price` : `, NULL AS price`}
              ${prodStock ? `, p.${prodStock} AS stock` : `, NULL AS stock`}
              ${prodCat   ? `, p.${prodCat}   AS categoryId` : `, NULL AS categoryId`}
+             , p.image_url AS imageUrl
     `;
 
     if (prodCat && categories) {
@@ -510,6 +511,10 @@ router.post("/products", mustBeAdmin, (req, res) => {
       cols.push(C_CATNAME);
       vals.push(String(req.body.categoryName ?? "").trim() || null);
     }
+    if (req.body?.imageUrl !== undefined) {
+      cols.push('"image_url"');
+      vals.push(String(req.body.imageUrl ?? "").trim() || null);
+    }
 
     // empresa_id
     const prodCols   = db.prepare(`PRAGMA table_info(${products})`).all().map(c => c.name.toLowerCase());
@@ -570,7 +575,9 @@ router.put("/products/:id", mustBeAdmin, (req, res) => {
     } else if (!C_CAT && C_CATNAME && req.body?.categoryName !== undefined) {
       sets.push(`${C_CATNAME} = ?`); vals.push(String(req.body.categoryName ?? "").trim() || null);
     }
-
+    if (req.body?.imageUrl !== undefined) {
+      sets.push(`"image_url" = ?`); vals.push(String(req.body.imageUrl ?? "").trim() || null);
+    }
     if (!sets.length) return res.status(400).json({ error: "Nada para actualizar" });
 
     const info = db.prepare(`UPDATE ${T} SET ${sets.join(", ")} WHERE CAST(${C_ID} AS TEXT) = CAST(? AS TEXT)`).run(...vals, id);

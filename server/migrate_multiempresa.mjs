@@ -212,6 +212,7 @@ const tx = db.transaction(() => {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_dev_estado ON devoluciones(estado, empresa_id)`);
     log("+ tabla devoluciones");
   }
+  addColIfMissing("Productos", "image_url TEXT", "image_url");
 });
 
 tx();
