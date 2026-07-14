@@ -551,6 +551,7 @@ router.put("/products/:id", mustBeAdmin, (req, res) => {
     const C_CATNAME = !prodCat && prodCatName ? qid(prodCatName) : null;
 
     const id = req.params.id;
+    console.log("[PUT product] imageUrl recibido:", JSON.stringify(req.body?.imageUrl));
     const estadoAntes = leerEstadoActualProducto(id);
 
     const sets = [];
