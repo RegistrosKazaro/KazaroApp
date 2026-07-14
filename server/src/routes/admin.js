@@ -1042,6 +1042,31 @@ router.delete("/services/:id", mustBeAdmin, (req, res) => {
     return res.status(500).json({ error: e?.message || "No se pudo eliminar el servicio" });
   }
 });
+router.put("/services/:id", mustBeAdmin, (req, res) => {
+  try {
+    const id = req.params.id;
+    const name = String(req.body?.name ?? "").trim();
+    if (!name) return res.status(400).json({ error: "El nombre es obligatorio" });
+
+    const info = db.prepare(`PRAGMA table_info(Servicios)`).all();
+    const idCol = info.find(c => c.pk === 1)?.name || "ServiciosID";
+    const nameCol = info.some(c => c.name === "ServicioNombre")
+      ? "ServicioNombre"
+      : (info.find(c => /nombre|name/i.test(c.name))?.name || "ServicioNombre");
+
+    const r = db.prepare(`UPDATE Servicios SET ${nameCol} = ? WHERE ${idCol} = ?`).run(name, id);
+    if (r.changes === 0) return res.status(404).json({ error: "Servicio no encontrado" });
+
+    try {
+      audit({ empresaId: req.user?.empresaId ?? 1, usuario: req.user?.username || "admin", accion: "update", entidad: "Servicio", entidadId: String(id), detalle: `Nuevo nombre: ${name}` });
+    } catch { /* noop */ }
+
+    res.json({ ok: true, id, name });
+  } catch (e) {
+    console.error("PUT /admin/services/:id error:", e?.message || e);
+    res.status(500).json({ error: "No se pudo actualizar el servicio" });
+  }
+});
 
 router.post("/services-create", mustBeAdmin, (req, res) => {
   try {

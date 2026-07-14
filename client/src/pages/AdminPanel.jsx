@@ -2189,6 +2189,20 @@ function CreateServiceSection() {
       );
     }
   };
+  const editService = async (s) => {
+    const nuevo = window.prompt("Nuevo nombre del servicio:", s.name || "");
+    if (nuevo === null) return;
+    const name = nuevo.trim();
+    if (!name) { alert("El nombre no puede estar vacío"); return; }
+    setErr(""); setMsg("");
+    try {
+      await api.put(`/api/admin/services/${s.id}`, { name });
+      setMsg("Servicio actualizado.");
+      await loadAll();
+    } catch (e) {
+      setErr(e?.response?.data?.error || "No se pudo actualizar el servicio");
+    }
+  };
 
   const create = async () => {
     const clean = String(name || "").trim();
@@ -2288,7 +2302,14 @@ function CreateServiceSection() {
                 </div>
                 <div style={{ flex: 6 }}>{s.name}</div>
 
-                <div style={{ width: 140, textAlign: "right" }}>
+                <div style={{ width: 200, display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                  <button
+                    className="pill"
+                    onClick={() => editService(s)}
+                    aria-label={`Editar servicio ${s.name}`}
+                  >
+                    Editar
+                  </button>
                   <button
                     className="pill danger"
                     onClick={() => deleteService(s.id)}
