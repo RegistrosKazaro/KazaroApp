@@ -577,7 +577,12 @@ router.put("/products/:id", mustBeAdmin, (req, res) => {
       sets.push(`${C_CATNAME} = ?`); vals.push(String(req.body.categoryName ?? "").trim() || null);
     }
     if (req.body?.imageUrl !== undefined) {
-      sets.push(`"image_url" = ?`); vals.push(String(req.body.imageUrl ?? "").trim() || null);
+      const iu = String(req.body.imageUrl ?? "").trim();
+      if (iu && iu !== "undefined" && iu !== "null") {
+        sets.push(`"image_url" = ?`); vals.push(iu);
+      } else if (iu === "") {
+        sets.push(`"image_url" = ?`); vals.push(null);
+      }
     }
     if (!sets.length) return res.status(400).json({ error: "Nada para actualizar" });
 
