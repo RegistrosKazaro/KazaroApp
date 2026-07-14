@@ -278,7 +278,8 @@ export default function Products() {
 
 function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
   const [qtyText, setQtyText] = useState("1");
-  const [added, setAdded] = useState(false); // FIX: feedback visual
+  const [added, setAdded] = useState(false);
+  const [showImg, setShowImg] = useState(false); // FIX: feedback visual
 
   const priceText = useMemo(() => {
     if (p.price == null) return "";
@@ -333,15 +334,6 @@ function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
 
   return (
     <article className="product-card">
-      {p.imageUrl ? (
-        <img
-          src={p.imageUrl}
-          alt={p.name}
-          loading="lazy"
-          style={{ width: "100%", height: 130, objectFit: "cover", borderRadius: 8, marginBottom: 8, background: "#f1f5f9" }}
-          onError={(e) => { e.currentTarget.style.display = "none"; }}
-        />
-      ) : null}
       <h3 className="product-title">{p.name}</h3>
       <div className="product-code">{p.code || "\u00A0"}</div>
       {p.price != null && <div className="product-price">{priceText}</div>}
@@ -391,6 +383,33 @@ function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
           {added ? "✓ Agregado" : "Agregar"}
         </button>
       </div>
+      {p.imageUrl ? (
+        <button
+          type="button"
+          onClick={() => setShowImg(true)}
+          style={{ marginTop: 6, padding: "6px 12px", borderRadius: 8, border: "1px solid #1d4ed8", background: "#fff", color: "#1d4ed8", fontWeight: 600, fontSize: 13, cursor: "pointer" }}
+        >
+          Ver foto
+        </button>
+      ) : null}
+
+      {showImg && p.imageUrl ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Foto de ${p.name}`}
+          onClick={() => setShowImg(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.75)", display: "grid", placeItems: "center", zIndex: 300, padding: 16 }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 12, padding: 12, maxWidth: "90vw", maxHeight: "90vh", display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+              <strong style={{ fontSize: 14 }}>{p.name}</strong>
+              <button type="button" onClick={() => setShowImg(false)} aria-label="Cerrar" style={{ border: 0, background: "transparent", fontSize: 22, cursor: "pointer", color: "#64748b" }}>×</button>
+            </div>
+            <img src={p.imageUrl} alt={p.name} style={{ maxWidth: "100%", maxHeight: "75vh", objectFit: "contain", borderRadius: 8 }} />
+          </div>
+        </div>
+      ) : null}
     </article>
   );
 }
