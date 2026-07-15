@@ -214,27 +214,32 @@ const tx = db.transaction(() => {
   }
   addColIfMissing("Productos", "image_url TEXT", "image_url");
 
-  // 13) Flexxus: matcheo de códigos de producto entre Kazaro y Pazar
+  // 13) Flexxus: matcheo de códigos de producto de Kazaro contra Flexxus
+  // (versión anterior comparaba Kazaro vs Pazar por error; se recrea con el
+  // esquema correcto. No había datos manuales cargados todavía, es seguro.)
+  if (colExists("FlexxusProductMatch", "pazar_name")) {
+    db.exec(`DROP TABLE FlexxusProductMatch`);
+    log("~ tabla FlexxusProductMatch (esquema viejo Kazaro/Pazar) eliminada");
+  }
   if (!tableExists("FlexxusProductMatch")) {
     db.exec(`
       CREATE TABLE FlexxusProductMatch (
-        id                INTEGER PRIMARY KEY AUTOINCREMENT,
-        code              TEXT NOT NULL UNIQUE,
-        kazaro_product_id TEXT,
-        kazaro_name       TEXT,
-        kazaro_stock      REAL,
-        pazar_product_id  TEXT,
-        pazar_name        TEXT,
-        pazar_stock       REAL,
-        estado            TEXT NOT NULL,
-        flexxus_sku       TEXT,
-        flexxus_name      TEXT,
-        flexxus_stock     REAL,
-        ultima_sync       TEXT,
-        updated_at        TEXT NOT NULL
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        empresa_id    INTEGER NOT NULL DEFAULT 1,
+        code          TEXT NOT NULL,
+        product_id    TEXT,
+        product_name  TEXT,
+        app_stock     REAL,
+        estado        TEXT NOT NULL,
+        flexxus_sku   TEXT,
+        flexxus_name  TEXT,
+        flexxus_stock REAL,
+        ultima_sync   TEXT,
+        updated_at    TEXT NOT NULL,
+        UNIQUE(empresa_id, code)
       )`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_fpm_estado ON FlexxusProductMatch(estado)`);
-    log("+ tabla FlexxusProductMatch");
+    log("+ tabla FlexxusProductMatch (Kazaro vs Flexxus)");
   }
 });
 

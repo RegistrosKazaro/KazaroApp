@@ -1528,10 +1528,10 @@ function FlexxusMatchSection() {
 
   const ESTADO_LABELS = {
     ok: { label: "OK", color: "#166534", bg: "#dcfce7" },
-    falta_en_pazar: { label: "Falta en Pazar", color: "#b45309", bg: "#fef3c7" },
-    falta_en_kazaro: { label: "Falta en Kazaro", color: "#b45309", bg: "#fef3c7" },
+    pendiente_flexxus: { label: "Esperando datos de Flexxus", color: "#475569", bg: "#f1f5f9" },
     nombre_no_coincide: { label: "Nombre no coincide", color: "#7c3aed", bg: "#f3e8ff" },
-    no_encontrado: { label: "Ya no existe", color: "#6b7280", bg: "#f3f4f6" },
+    stock_no_coincide: { label: "Stock no coincide", color: "#b45309", bg: "#fef3c7" },
+    no_encontrado: { label: "Ya no existe en Kazaro", color: "#6b7280", bg: "#f3f4f6" },
   };
 
   const load = useCallback(async () => {
@@ -1574,11 +1574,11 @@ function FlexxusMatchSection() {
   return (
     <section className="srv-card" aria-labelledby="flexxus-heading">
       <div className="section-header">
-        <h3 id="flexxus-heading">Flexxus — matcheo de códigos</h3>
+        <h3 id="flexxus-heading">Flexxus — matcheo de stock (Kazaro)</h3>
         <p style={{ margin: "4px 0 0", fontSize: "0.85rem", color: "#6b7280" }}>
-          Compara los códigos de producto entre Kazaro y Pazar como base para la futura sincronización de stock con Flexxus.
-          Se actualiza solo cada 3hs (lun-vie, 8 a 20hs) — el botón sirve para forzar una actualización al toque.
-          Todavía no se conecta con la API de Flexxus, solo prepara el terreno.
+          Lista los productos de Kazaro con su código y stock actuales, listos para comparar contra Flexxus cuando exista la API
+          (columnas flexxus_sku / flexxus_name / flexxus_stock, hoy vacías). Se actualiza solo cada 3hs (lun-vie, 8 a 20hs) — el
+          botón sirve para forzar una actualización al toque. Pazar va a tener su propio cuadro más adelante.
         </p>
       </div>
 
@@ -1618,11 +1618,11 @@ function FlexxusMatchSection() {
       ) : rows.length === 0 ? (
         <div className="state">Sin resultados. Probá "Actualizar matcheo" si es la primera vez.</div>
       ) : (
-        <div className="table like" role="table" aria-label="Matcheo de códigos Flexxus">
+        <div className="table like" role="table" aria-label="Matcheo de stock Kazaro vs Flexxus">
           <div className="t-head" role="row">
             <div style={{ flex: 2 }}>Código</div>
-            <div style={{ flex: 3 }}>Kazaro</div>
-            <div style={{ flex: 3 }}>Pazar</div>
+            <div style={{ flex: 3 }}>Kazaro (app)</div>
+            <div style={{ flex: 3 }}>Flexxus</div>
             <div style={{ flex: 2 }}>Estado</div>
           </div>
 
@@ -1632,23 +1632,23 @@ function FlexxusMatchSection() {
               <div key={r.id} className="t-row" role="row">
                 <div style={{ flex: 2, fontWeight: 600 }}>{r.code}</div>
                 <div style={{ flex: 3, minWidth: 0 }}>
-                  {r.kazaro_name ? (
+                  {r.product_name ? (
                     <>
-                      <div className="truncate">{r.kazaro_name}</div>
-                      <div className="muted">Stock: {r.kazaro_stock ?? "—"}</div>
+                      <div className="truncate">{r.product_name}</div>
+                      <div className="muted">Stock: {r.app_stock ?? "—"}</div>
                     </>
                   ) : (
                     <span className="muted">—</span>
                   )}
                 </div>
                 <div style={{ flex: 3, minWidth: 0 }}>
-                  {r.pazar_name ? (
+                  {r.flexxus_name || r.flexxus_stock != null ? (
                     <>
-                      <div className="truncate">{r.pazar_name}</div>
-                      <div className="muted">Stock: {r.pazar_stock ?? "—"}</div>
+                      <div className="truncate">{r.flexxus_name || "—"}</div>
+                      <div className="muted">Stock: {r.flexxus_stock ?? "—"}</div>
                     </>
                   ) : (
-                    <span className="muted">—</span>
+                    <span className="muted">Sin datos todavía</span>
                   )}
                 </div>
                 <div style={{ flex: 2 }}>
