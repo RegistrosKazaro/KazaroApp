@@ -1,0 +1,48 @@
+/* nav-mobile.css — Responsive de la barra superior. Importar último. */
+
+@media (max-width: 720px) {
+  /* La barra permite scroll horizontal en vez de encimar todo */
+  .appbar {
+    gap: 8px;
+    padding: 8px 10px;
+  }
+  .appbar-right {
+    gap: 6px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex-wrap: nowrap;
+    padding-bottom: 2px;
+  }
+  .appbar-right::-webkit-scrollbar { display: none; }
+
+  /* Links y botones no se comprimen: mantienen su tamaño y se deslizan */
+  .appbar-right .pill,
+  .appbar-right a,
+  .appbar-right button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    font-size: 13px;
+    padding: 6px 10px;
+  }
+
+  /* La marca no se achica */
+  .appbar .brand {
+    flex: 0 0 auto;
+    font-size: 18px;
+  }
+
+  /* El nombre de usuario se oculta en pantallas muy chicas para dar aire */
+  .appbar-right .user {
+    display: none;
+  }
+}
+
+@media (max-width: 400px) {
+  .appbar-right .pill,
+  .appbar-right a,
+  .appbar-right button {
+    font-size: 12px;
+    padding: 5px 8px;
+  }
+}
