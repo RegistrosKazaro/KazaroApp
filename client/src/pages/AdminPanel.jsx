@@ -572,7 +572,7 @@ const onEdit = async (row) => {
             Descargar Excel
           </button>
 
-          <label className="pill" style={{ cursor: "pointer" }}>
+          <label className="btn" style={{ cursor: "pointer" }}>
             Subir Excel
             <input
               type="file"
@@ -2258,7 +2258,7 @@ function CreateServiceSection() {
           Descargar Excel
         </button>
 
-        <label className="pill" style={{ cursor: "pointer" }}>
+        <label className="btn" style={{ cursor: "pointer" }}>
           Subir Excel
           <input
             type="file"
