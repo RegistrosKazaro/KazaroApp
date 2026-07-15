@@ -561,6 +561,154 @@ export function leerEstadoActualProducto(id) {
   }
 }
 
+export function ensureFlexxusMatchTable() {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS FlexxusProductMatch (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        code              TEXT NOT NULL UNIQUE,
+        kazaro_product_id TEXT,
+        kazaro_name       TEXT,
+        kazaro_stock      REAL,
+        pazar_product_id  TEXT,
+        pazar_name        TEXT,
+        pazar_stock       REAL,
+        estado            TEXT NOT NULL,
+        flexxus_sku       TEXT,
+        flexxus_name      TEXT,
+        flexxus_stock     REAL,
+        ultima_sync       TEXT,
+        updated_at        TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_fpm_estado ON FlexxusProductMatch(estado);
+    `);
+  } catch (e) {
+    console.error("[db] ensureFlexxusMatchTable error:", e?.message || e);
+  }
+}
+
+// Recalcula la coincidencia de códigos de producto entre Kazaro (empresa_id=1)
+// y Pazar (empresa_id=2). Es la base para la futura sincronización de stock
+// con Flexxus: las columnas flexxus_* quedan intactas (se completan a mano
+// o cuando exista la integración real) y solo se refresca el lado Kazaro/Pazar.
+export function recomputeFlexxusMatch(usuario) {
+  ensureFlexxusMatchTable();
+
+  const sch = discoverCatalogSchema();
+  if (!sch?.ok) throw new Error(sch?.reason || "No hay esquema de productos");
+
+  const { products } = sch.tables;
+  const { prodId, prodName, prodStock, prodCode } = sch.cols;
+  if (!prodCode) throw new Error("La tabla de productos no tiene columna de código");
+
+  const rows = db.prepare(`
+    SELECT ${prodId} AS id, ${prodName} AS nombre, ${prodCode} AS codigo,
+           ${prodStock ? prodStock : "NULL"} AS stock, empresa_id AS empresaId
+    FROM ${products}
+    WHERE ${prodCode} IS NOT NULL AND TRIM(${prodCode}) != ''
+      AND empresa_id IN (1, 2)
+  `).all();
+
+  const byCode = new Map();
+  for (const r of rows) {
+    const code = String(r.codigo).trim();
+    if (!code) continue;
+    if (!byCode.has(code)) byCode.set(code, {});
+    const side = Number(r.empresaId) === 1 ? "kazaro" : "pazar";
+    byCode.get(code)[side] = {
+      id: r.id,
+      nombre: r.nombre,
+      stock: r.stock != null ? Number(r.stock) : null,
+    };
+  }
+
+  const now = new Date().toISOString();
+
+  const upsert = db.prepare(`
+    INSERT INTO FlexxusProductMatch
+      (code, kazaro_product_id, kazaro_name, kazaro_stock, pazar_product_id, pazar_name, pazar_stock, estado, updated_at)
+    VALUES (@code, @kazaroId, @kazaroName, @kazaroStock, @pazarId, @pazarName, @pazarStock, @estado, @updatedAt)
+    ON CONFLICT(code) DO UPDATE SET
+      kazaro_product_id = excluded.kazaro_product_id,
+      kazaro_name        = excluded.kazaro_name,
+      kazaro_stock        = excluded.kazaro_stock,
+      pazar_product_id    = excluded.pazar_product_id,
+      pazar_name          = excluded.pazar_name,
+      pazar_stock         = excluded.pazar_stock,
+      estado              = excluded.estado,
+      updated_at          = excluded.updated_at
+  `);
+
+  const markMissing = db.prepare(`
+    UPDATE FlexxusProductMatch
+    SET estado = 'no_encontrado', kazaro_product_id = NULL, kazaro_name = NULL, kazaro_stock = NULL,
+        pazar_product_id = NULL, pazar_name = NULL, pazar_stock = NULL, updated_at = ?
+    WHERE code = ?
+  `);
+
+  const tx = db.transaction(() => {
+    for (const [code, sides] of byCode.entries()) {
+      const k = sides.kazaro || null;
+      const p = sides.pazar || null;
+      let estado;
+      if (k && !p) estado = "falta_en_pazar";
+      else if (p && !k) estado = "falta_en_kazaro";
+      else if (String(k.nombre || "").trim().toLowerCase() !== String(p.nombre || "").trim().toLowerCase()) estado = "nombre_no_coincide";
+      else estado = "ok";
+
+      upsert.run({
+        code,
+        kazaroId: k?.id != null ? String(k.id) : null,
+        kazaroName: k?.nombre ?? null,
+        kazaroStock: k?.stock ?? null,
+        pazarId: p?.id != null ? String(p.id) : null,
+        pazarName: p?.nombre ?? null,
+        pazarStock: p?.stock ?? null,
+        estado,
+        updatedAt: now,
+      });
+    }
+
+    const existing = db.prepare(`SELECT code FROM FlexxusProductMatch`).all().map((r) => r.code);
+    for (const code of existing) {
+      if (!byCode.has(code)) markMissing.run(now, code);
+    }
+  });
+  tx();
+
+  const summary = db.prepare(`SELECT estado, COUNT(*) AS total FROM FlexxusProductMatch GROUP BY estado`).all();
+
+  try {
+    audit({ empresaId: null, usuario: usuario || "admin", accion: "flexxus_match_refresh", entidad: "FlexxusProductMatch", entidadId: null, detalle: `${byCode.size} códigos procesados` });
+  } catch {}
+
+  return { total: byCode.size, summary, updatedAt: now };
+}
+
+export function listFlexxusMatch({ q = "", estado = "" } = {}) {
+  ensureFlexxusMatchTable();
+  const where = [];
+  const params = [];
+  if (q && q.trim()) {
+    const like = `%${q.trim()}%`;
+    where.push(`(code LIKE ? OR kazaro_name LIKE ? OR pazar_name LIKE ?)`);
+    params.push(like, like, like);
+  }
+  if (estado && estado !== "todos") {
+    where.push(`estado = ?`);
+    params.push(estado);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  return db.prepare(`
+    SELECT * FROM FlexxusProductMatch
+    ${whereSql}
+    ORDER BY
+      CASE estado WHEN 'ok' THEN 1 ELSE 0 END,
+      code ASC
+    LIMIT 1000
+  `).all(...params);
+}
+
 export function ensureIncomingStockTable() {
   try {
     db.exec(`

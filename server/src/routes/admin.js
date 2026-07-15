@@ -23,6 +23,8 @@ import {
   leerEstadoActualProducto,
   ensureProductHistorialTable,
   audit,
+  recomputeFlexxusMatch,
+  listFlexxusMatch,
 } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendMail } from "../utils/mailer.js";
@@ -1631,5 +1633,32 @@ router.get("/audit", mustBeAdmin, (req, res) => {
   }
 });
 });
+
+/* =========================
+   Flexxus (matcheo de códigos Kazaro/Pazar)
+   ========================= */
+
+router.get("/flexxus/match", mustBeAdmin, (req, res) => {
+  try {
+    const q = String(req.query.q ?? "");
+    const estado = String(req.query.estado ?? "");
+    const rows = listFlexxusMatch({ q, estado });
+    res.json({ ok: true, rows });
+  } catch (e) {
+    console.error("[admin] GET /flexxus/match error:", e?.message || e);
+    res.status(500).json({ error: "No se pudo cargar el matcheo" });
+  }
+});
+
+router.post("/flexxus/match/refresh", mustBeAdmin, (req, res) => {
+  try {
+    const result = recomputeFlexxusMatch(req.user?.username || "admin");
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error("[admin] POST /flexxus/match/refresh error:", e?.message || e);
+    res.status(500).json({ error: e?.message || "No se pudo recalcular el matcheo" });
+  }
+});
+
 router.use("/empresa", empresaRouter);
 export default router;

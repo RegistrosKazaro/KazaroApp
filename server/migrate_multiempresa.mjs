@@ -213,6 +213,29 @@ const tx = db.transaction(() => {
     log("+ tabla devoluciones");
   }
   addColIfMissing("Productos", "image_url TEXT", "image_url");
+
+  // 13) Flexxus: matcheo de códigos de producto entre Kazaro y Pazar
+  if (!tableExists("FlexxusProductMatch")) {
+    db.exec(`
+      CREATE TABLE FlexxusProductMatch (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        code              TEXT NOT NULL UNIQUE,
+        kazaro_product_id TEXT,
+        kazaro_name       TEXT,
+        kazaro_stock      REAL,
+        pazar_product_id  TEXT,
+        pazar_name        TEXT,
+        pazar_stock       REAL,
+        estado            TEXT NOT NULL,
+        flexxus_sku       TEXT,
+        flexxus_name      TEXT,
+        flexxus_stock     REAL,
+        ultima_sync       TEXT,
+        updated_at        TEXT NOT NULL
+      )`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_fpm_estado ON FlexxusProductMatch(estado)`);
+    log("+ tabla FlexxusProductMatch");
+  }
 });
 
 tx();

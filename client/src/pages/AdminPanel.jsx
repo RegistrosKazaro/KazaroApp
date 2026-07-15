@@ -1516,6 +1516,157 @@ function ServiceBudgetsSection() {
   );
 }
 
+function FlexxusMatchSection() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [err, setErr] = useState("");
+  const [msg, setMsg] = useState("");
+  const [q, setQ] = useState("");
+  const qDeb = useDebounced(q, 300);
+  const [estado, setEstado] = useState("todos");
+
+  const ESTADO_LABELS = {
+    ok: { label: "OK", color: "#166534", bg: "#dcfce7" },
+    falta_en_pazar: { label: "Falta en Pazar", color: "#b45309", bg: "#fef3c7" },
+    falta_en_kazaro: { label: "Falta en Kazaro", color: "#b45309", bg: "#fef3c7" },
+    nombre_no_coincide: { label: "Nombre no coincide", color: "#7c3aed", bg: "#f3e8ff" },
+    no_encontrado: { label: "Ya no existe", color: "#6b7280", bg: "#f3f4f6" },
+  };
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setErr("");
+    try {
+      const { data } = await api.get("/api/admin/flexxus/match", {
+        params: { q: String(qDeb || "").trim(), estado },
+      });
+      setRows(Array.isArray(data?.rows) ? data.rows : []);
+    } catch (e) {
+      setErr(e?.response?.data?.error || e.message || "No se pudo cargar el matcheo");
+    } finally {
+      setLoading(false);
+    }
+  }, [qDeb, estado]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    setErr("");
+    setMsg("");
+    try {
+      const { data } = await api.post("/api/admin/flexxus/match/refresh");
+      const summary = (data?.summary || [])
+        .map((s) => `${ESTADO_LABELS[s.estado]?.label || s.estado}: ${s.total}`)
+        .join(" · ");
+      setMsg(`Matcheo actualizado (${data?.total ?? 0} códigos). ${summary}`);
+      await load();
+    } catch (e) {
+      setErr(e?.response?.data?.error || e.message || "No se pudo actualizar el matcheo");
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  return (
+    <section className="srv-card" aria-labelledby="flexxus-heading">
+      <div className="section-header">
+        <h3 id="flexxus-heading">Flexxus — matcheo de códigos</h3>
+        <p style={{ margin: "4px 0 0", fontSize: "0.85rem", color: "#6b7280" }}>
+          Compara los códigos de producto entre Kazaro y Pazar como base para la futura sincronización de stock con Flexxus.
+          Todavía no se conecta con su API — esto solo prepara el terreno.
+        </p>
+      </div>
+
+      <div className="toolbar">
+        <input
+          className="input"
+          placeholder="Buscar por código o nombre…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          aria-label="Buscar en el matcheo"
+        />
+        <select
+          className="select"
+          value={estado}
+          onChange={(e) => setEstado(e.target.value)}
+          aria-label="Filtrar por estado"
+        >
+          <option value="todos">— Todos los estados —</option>
+          {Object.entries(ESTADO_LABELS).map(([k, v]) => (
+            <option key={k} value={k}>{v.label}</option>
+          ))}
+        </select>
+        <div style={{ flex: 1 }} />
+        <button className="btn primary" onClick={refresh} disabled={refreshing}>
+          {refreshing ? "Actualizando…" : "Actualizar matcheo"}
+        </button>
+      </div>
+
+      {(msg || err) && (
+        <div className={`state ${err ? "error" : "success"}`} role={err ? "alert" : "status"}>
+          {err || msg}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="state">Cargando…</div>
+      ) : rows.length === 0 ? (
+        <div className="state">Sin resultados. Probá "Actualizar matcheo" si es la primera vez.</div>
+      ) : (
+        <div className="table like" role="table" aria-label="Matcheo de códigos Flexxus">
+          <div className="t-head" role="row">
+            <div style={{ flex: 2 }}>Código</div>
+            <div style={{ flex: 3 }}>Kazaro</div>
+            <div style={{ flex: 3 }}>Pazar</div>
+            <div style={{ flex: 2 }}>Estado</div>
+          </div>
+
+          {rows.map((r) => {
+            const est = ESTADO_LABELS[r.estado] || { label: r.estado, color: "#374151", bg: "#f3f4f6" };
+            return (
+              <div key={r.id} className="t-row" role="row">
+                <div style={{ flex: 2, fontWeight: 600 }}>{r.code}</div>
+                <div style={{ flex: 3, minWidth: 0 }}>
+                  {r.kazaro_name ? (
+                    <>
+                      <div className="truncate">{r.kazaro_name}</div>
+                      <div className="muted">Stock: {r.kazaro_stock ?? "—"}</div>
+                    </>
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
+                </div>
+                <div style={{ flex: 3, minWidth: 0 }}>
+                  {r.pazar_name ? (
+                    <>
+                      <div className="truncate">{r.pazar_name}</div>
+                      <div className="muted">Stock: {r.pazar_stock ?? "—"}</div>
+                    </>
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
+                </div>
+                <div style={{ flex: 2 }}>
+                  <span
+                    className="pill"
+                    style={{ background: est.bg, color: est.color, cursor: "default" }}
+                  >
+                    {est.label}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function IncomingStockSection() {
   const [search, setSearch] = useState("");
   const searchDeb = useDebounced(search, 300);
@@ -2748,6 +2899,14 @@ export default function AdminPanel() {
         >
           Seguridad
         </button>
+        <button
+          className={`tab-btn ${tab === "flexxus" ? "is-active" : ""}`}
+          onClick={() => setTab("flexxus")}
+          role="tab"
+          aria-selected={tab === "flexxus"}
+        >
+          Flexxus
+        </button>
         <div style={{ flex: 1 }} />
       </div>
       {tab === "stockCritico" && <StockCriticoSection />}
@@ -2762,6 +2921,7 @@ export default function AdminPanel() {
       {tab === "historial" && <ProductHistorialSection />}
       {tab === "employees" && <EmployeesSection />}
       {tab === "twofa" && <TwoFactorSection />}
+      {tab === "flexxus" && <FlexxusMatchSection />}
     </div>
   );
 }
