@@ -1577,7 +1577,8 @@ function FlexxusMatchSection() {
         <h3 id="flexxus-heading">Flexxus — matcheo de códigos</h3>
         <p style={{ margin: "4px 0 0", fontSize: "0.85rem", color: "#6b7280" }}>
           Compara los códigos de producto entre Kazaro y Pazar como base para la futura sincronización de stock con Flexxus.
-          Todavía no se conecta con su API — esto solo prepara el terreno.
+          Se actualiza solo cada 3hs (lun-vie, 8 a 20hs) — el botón sirve para forzar una actualización al toque.
+          Todavía no se conecta con la API de Flexxus, solo prepara el terreno.
         </p>
       </div>
 
