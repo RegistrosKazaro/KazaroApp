@@ -59,7 +59,7 @@ export default function ReturnModal({ order, onClose, onDone }) {
       onClick={onClose}
     >
       <div
-        style={{ background: "#fff", borderRadius: 12, width: 560, maxWidth: "100%", maxHeight: "85vh", overflow: "auto", boxShadow: "0 20px 50px rgba(0,0,0,.3)" }}
+        style={{ background: "#fff", borderRadius: 12, width: 560, maxWidth: "calc(100vw - 24px)", maxHeight: "85vh", overflowY: "auto", overflowX: "hidden", boxShadow: "0 20px 50px rgba(0,0,0,.3)", boxSizing: "border-box" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: "1px solid #f1f5f9" }}>
@@ -103,7 +103,7 @@ export default function ReturnModal({ order, onClose, onDone }) {
                             style={{ width: 90, padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6 }}
                           />
                         </label>
-                        <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12, flex: 1, minWidth: 160 }}>
+                        <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12, flex: 1, minWidth: 120 }}>
                           Motivo
                           <input
                             type="text"
