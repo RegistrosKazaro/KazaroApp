@@ -466,7 +466,7 @@ router.post("/products/import", mustBeAdmin, upload.single("file"), (req, res) =
 router.get("/products/:id", mustBeAdmin, (req, res) => {
   const id = req.params.id;
   try {
-    const row = adminGetProductById(id);
+    const row = adminGetProductById(id, req.user?.empresaId ?? 1);
     if (!row) return res.status(404).json({ error: "Producto no encontrado" });
     res.json(row);
   } catch {
@@ -553,7 +553,15 @@ router.put("/products/:id", mustBeAdmin, (req, res) => {
     const C_CATNAME = !prodCat && prodCatName ? qid(prodCatName) : null;
 
     const id = req.params.id;
-  
+    const empresaId = req.user?.empresaId ?? 1;
+    const prodCols = db.prepare(`PRAGMA table_info(${T})`).all().map(c => c.name.toLowerCase());
+    const hasEmpresa = prodCols.includes("empresa_id");
+    if (hasEmpresa) {
+      const owner = db.prepare(`SELECT empresa_id FROM ${T} WHERE CAST(${C_ID} AS TEXT) = CAST(? AS TEXT)`).get(id);
+      if (!owner) return res.status(404).json({ error: "Producto no encontrado" });
+      if (Number(owner.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "Producto no encontrado" });
+    }
+
     const estadoAntes = leerEstadoActualProducto(id);
 
     const sets = [];
@@ -623,6 +631,13 @@ router.delete("/products/:id", mustBeAdmin, (req, res) => {
     const T = qid(products);
     const C_ID = qid(prodId);
     const id = req.params.id;
+    const empresaId = req.user?.empresaId ?? 1;
+    const prodCols = db.prepare(`PRAGMA table_info(${T})`).all().map(c => c.name.toLowerCase());
+    const hasEmpresa = prodCols.includes("empresa_id");
+    if (hasEmpresa) {
+      const owner = db.prepare(`SELECT empresa_id FROM ${T} WHERE CAST(${C_ID} AS TEXT) = CAST(? AS TEXT)`).get(id);
+      if (!owner || Number(owner.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "Producto no encontrado" });
+    }
 
     const info = db.prepare(`DELETE FROM ${T} WHERE CAST(${C_ID} AS TEXT) = CAST(? AS TEXT)`).run(id);
     if (!info.changes) return res.status(404).json({ error: "Producto no encontrado" });
@@ -646,6 +661,14 @@ router.patch("/products/:id/stock", mustBeAdmin, (req, res) => {
     const delta = Number(req.body?.delta ?? NaN);
     if (!Number.isFinite(delta)) return res.status(400).json({ error: "delta inválido" });
 
+    const empresaId = req.user?.empresaId ?? 1;
+    const prodCols = db.prepare(`PRAGMA table_info(${T})`).all().map(c => c.name.toLowerCase());
+    const hasEmpresa = prodCols.includes("empresa_id");
+    if (hasEmpresa) {
+      const owner = db.prepare(`SELECT empresa_id FROM ${T} WHERE CAST(${C_ID} AS TEXT) = CAST(? AS TEXT)`).get(id);
+      if (!owner || Number(owner.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "Producto no encontrado" });
+    }
+
     const r = db.prepare(`UPDATE ${T} SET ${C_STOCK} = COALESCE(${C_STOCK},0) + ? WHERE CAST(${C_ID} AS TEXT) = CAST(? AS TEXT)`).run(delta, id);
     if (!r.changes) return res.status(404).json({ error: "Producto no encontrado" });
 
@@ -660,6 +683,21 @@ router.patch("/products/:id/stock", mustBeAdmin, (req, res) => {
    IncomingStock
    ========================= */
 
+// IncomingStock no tiene empresa_id propio: la propiedad se deriva del
+// product_id al que apunta cada fila (Productos.empresa_id).
+function productBelongsToEmpresa(productId, empresaId) {
+  const row = db.prepare(`SELECT empresa_id FROM Productos WHERE CAST(ProductID AS TEXT) = CAST(? AS TEXT)`).get(productId);
+  return !!row && Number(row.empresa_id) === Number(empresaId);
+}
+function incomingBelongsToEmpresa(incomingId, empresaId) {
+  const row = db.prepare(`
+    SELECT p.empresa_id
+    FROM IncomingStock i
+    JOIN Productos p ON CAST(p.ProductID AS TEXT) = CAST(i.product_id AS TEXT)
+    WHERE i.id = ?
+  `).get(incomingId);
+  return !!row && Number(row.empresa_id) === Number(empresaId);
+}
 function listIncomingForProduct(productId) {
   return db.prepare(`SELECT id, product_id, qty, eta FROM IncomingStock WHERE CAST(product_id AS TEXT) = CAST(? AS TEXT) ORDER BY datetime(eta)`).all(productId);
 }
@@ -698,6 +736,7 @@ router.get("/products/:id/incoming", mustBeAdmin, (req, res) => {
   try {
     const pid = String(req.params.id || "").trim();
     if (!pid) return res.status(400).json({ error: "id de producto requerido" });
+    if (!productBelongsToEmpresa(pid, req.user?.empresaId ?? 1)) return res.status(404).json({ error: "Producto no encontrado" });
     res.json(listIncomingForProduct(pid));
   } catch (e) {
     console.error("GET /admin/products/:id/incoming error:", e);
@@ -709,6 +748,7 @@ router.post("/products/:id/incoming", mustBeAdmin, (req, res) => {
   try {
     const pid = String(req.params.id || "").trim();
     if (!pid) return res.status(400).json({ error: "id de producto requerido" });
+    if (!productBelongsToEmpresa(pid, req.user?.empresaId ?? 1)) return res.status(404).json({ error: "Producto no encontrado" });
     const qty = Number(req.body?.qty ?? req.body?.cantidad);
     if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ error: "Cantidad inválida" });
     let eta = String(req.body?.eta || "").trim();
@@ -736,6 +776,11 @@ router.put("/products/:id/roles", mustBeAdmin, (req, res) => {
   try {
     const id = String(req.params.id || "").trim();
     if (!id) return res.status(400).json({ error: "id de producto requerido" });
+
+    const empresaId = req.user?.empresaId ?? 1;
+    const owner = db.prepare(`SELECT empresa_id FROM Productos WHERE CAST(ProductID AS TEXT) = CAST(? AS TEXT)`).get(id);
+    if (!owner || Number(owner.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "Producto no encontrado" });
+
     const rolesRaw = req.body?.roles ?? req.body?.visibleRoles ?? [];
     const roles = Array.isArray(rolesRaw) ? rolesRaw.map((r) => String(r).toLowerCase().trim()).filter(Boolean) : [];
     const allowed = new Set(["administrativo", "supervisor", "admin"]);
@@ -759,6 +804,7 @@ router.delete("/incoming/:incomingId", mustBeAdmin, (req, res) => {
   try {
     const id = Number(req.params.incomingId);
     if (!id) return res.status(400).json({ error: "id inválido" });
+    if (!incomingBelongsToEmpresa(id, req.user?.empresaId ?? 1)) return res.status(404).json({ error: "Ingreso no encontrado" });
     if (!deleteIncomingById(id)) return res.status(404).json({ error: "Ingreso no encontrado" });
     res.json({ ok: true });
   } catch (e) {
@@ -771,6 +817,7 @@ router.post("/incoming/:incomingId/confirm", mustBeAdmin, (req, res) => {
   try {
     const id = Number(req.params.incomingId);
     if (!id) return res.status(400).json({ error: "id inválido" });
+    if (!incomingBelongsToEmpresa(id, req.user?.empresaId ?? 1)) return res.status(404).json({ error: "Ingreso no encontrado" });
     const result = confirmIncomingById(id);
     if (!result) return res.status(404).json({ error: "Ingreso no encontrado" });
     res.json({ ok: true, incoming: result.incoming, product: result.product });
@@ -784,6 +831,7 @@ router.get("/incoming-stock", mustBeAdmin, (req, res) => {
   try {
     const pid = String(req.query.productId || "").trim();
     if (!pid) return res.status(400).json({ error: "productId requerido" });
+    if (!productBelongsToEmpresa(pid, req.user?.empresaId ?? 1)) return res.status(404).json({ error: "Producto no encontrado" });
     res.json(listIncomingForProduct(pid));
   } catch (e) {
     console.error("GET /admin/incoming-stock error:", e);
@@ -795,6 +843,7 @@ router.get("/incoming-stock/:productId", mustBeAdmin, (req, res) => {
   try {
     const pid = String(req.params.productId || "").trim();
     if (!pid) return res.status(400).json({ error: "productId requerido" });
+    if (!productBelongsToEmpresa(pid, req.user?.empresaId ?? 1)) return res.status(404).json({ error: "Producto no encontrado" });
     res.json(listIncomingForProduct(pid));
   } catch (e) {
     console.error("GET /admin/incoming-stock/:productId error:", e);
@@ -806,6 +855,7 @@ router.post("/incoming-stock", mustBeAdmin, (req, res) => {
   try {
     const pid = String(req.body?.productId || "").trim();
     if (!pid) return res.status(400).json({ error: "productId requerido" });
+    if (!productBelongsToEmpresa(pid, req.user?.empresaId ?? 1)) return res.status(404).json({ error: "Producto no encontrado" });
     const qty = Number(req.body?.qty ?? req.body?.cantidad);
     if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ error: "Cantidad inválida" });
     let eta = String(req.body?.eta || "").trim();
@@ -848,7 +898,8 @@ router.get("/orders", mustBeAdmin, (req, res) => {
 
 router.delete("/orders/:id", mustBeAdmin, (req, res) => {
   try {
-    const r = db.prepare(`UPDATE Pedidos SET deleted_at = datetime('now') WHERE PedidoID = ? AND deleted_at IS NULL`).run(Number(req.params.id));
+    const empresaId = req.user?.empresaId ?? 1;
+    const r = db.prepare(`UPDATE Pedidos SET deleted_at = datetime('now') WHERE PedidoID = ? AND empresa_id = ? AND deleted_at IS NULL`).run(Number(req.params.id), empresaId);
     if (!r.changes) return res.status(404).json({ error: "Pedido no encontrado" });
     audit({ empresaId: req.user?.empresaId ?? null, usuario: req.user?.username || req.user?.email || null, accion: "delete", entidad: "Pedido", entidadId: req.params.id });
     res.json({ ok: true });
@@ -860,9 +911,10 @@ router.delete("/orders/:id", mustBeAdmin, (req, res) => {
 router.put("/orders/:id/price", mustBeAdmin, (req, res) => {
   try {
     const id = Number(req.params.id);
+    const empresaId = req.user?.empresaId ?? 1;
     const newPrice = Number(req.body?.newPrice ?? NaN);
     if (!Number.isFinite(newPrice)) return res.status(400).json({ error: "newPrice inválido" });
-    const r = db.prepare(`UPDATE Pedidos SET Total = ? WHERE PedidoID = ?`).run(newPrice, id);
+    const r = db.prepare(`UPDATE Pedidos SET Total = ? WHERE PedidoID = ? AND empresa_id = ?`).run(newPrice, id, empresaId);
     if (!r.changes) return res.status(404).json({ error: "Pedido no encontrado" });
     res.json({ ok: true });
   } catch {
@@ -1231,10 +1283,17 @@ router.put("/service-budgets/:id", mustBeAdmin, (req, res) => {
    Emails por servicio
    ========================= */
 
-router.get("/service-emails", mustBeAdmin, (_req, res) => {
+router.get("/service-emails", mustBeAdmin, (req, res) => {
   try {
     db.exec(`CREATE TABLE IF NOT EXISTS service_emails (service_id TEXT NOT NULL, email TEXT NOT NULL);`);
-    const rows = db.prepare(`SELECT service_id AS serviceId, email FROM service_emails ORDER BY CAST(service_id AS TEXT), email`).all();
+    const empresaId = req.user?.empresaId ?? 1;
+    const rows = db.prepare(`
+      SELECT se.service_id AS serviceId, se.email
+      FROM service_emails se
+      JOIN Servicios s ON CAST(s.ServiciosID AS TEXT) = CAST(se.service_id AS TEXT)
+      WHERE s.empresa_id = ?
+      ORDER BY CAST(se.service_id AS TEXT), se.email
+    `).all(empresaId);
     const map = new Map();
     for (const r of rows) {
       const k = String(r.serviceId);
@@ -1252,6 +1311,10 @@ router.put("/service-emails/:serviceId", mustBeAdmin, (req, res) => {
   const serviceId = String(req.params.serviceId || "").trim();
   const raw = String(req.body.emails || "").trim();
   try {
+    const empresaId = req.user?.empresaId ?? 1;
+    const owner = db.prepare(`SELECT empresa_id FROM Servicios WHERE CAST(ServiciosID AS TEXT) = CAST(? AS TEXT)`).get(serviceId);
+    if (!owner || Number(owner.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "Servicio no encontrado" });
+
     db.exec(`CREATE TABLE IF NOT EXISTS service_emails (service_id TEXT NOT NULL, email TEXT NOT NULL);`);
     const list = raw.split(/[,;]+/).map((s) => s.trim()).filter(Boolean);
     db.prepare(`DELETE FROM service_emails WHERE CAST(service_id AS TEXT) = CAST(? AS TEXT)`).run(serviceId);
@@ -1399,6 +1462,11 @@ router.put("/employees/:id", mustBeAdmin, async (req, res) => {
     `).get(username.trim(), email.trim(), id);
     if (existing) return res.status(409).json({ ok: false, error: "Ya existe otro empleado con ese username o email" });
 
+    if (hasEmpresa) {
+      const owner = db.prepare(`SELECT empresa_id FROM Empleados WHERE EmpleadosID = ?`).get(id);
+      if (!owner || Number(owner.empresa_id) !== Number(empresaId)) return res.status(404).json({ ok: false, error: "Empleado no encontrado" });
+    }
+
     const active = isActive === false || isActive === "false" || isActive === 0 ? 0 : 1;
 
     if (password?.trim()) {
@@ -1470,6 +1538,14 @@ router.delete("/employees/:id", mustBeAdmin, (req, res) => {
   try {
     const empId = Number(req.params.id);
     if (!Number.isFinite(empId) || empId <= 0) return res.status(400).json({ ok: false, error: "ID inválido" });
+
+    const empresaId = req.user?.empresaId ?? 1;
+    const empCols   = db.prepare("PRAGMA table_info(Empleados)").all().map(c => c.name.toLowerCase());
+    if (empCols.includes("empresa_id")) {
+      const owner = db.prepare(`SELECT empresa_id FROM Empleados WHERE EmpleadosID = ?`).get(empId);
+      if (!owner || Number(owner.empresa_id) !== Number(empresaId)) return res.status(404).json({ ok: false, error: "Empleado no encontrado" });
+    }
+
     const r = db.prepare("UPDATE Empleados SET is_active = 0 WHERE EmpleadosID = ?").run(empId);
     if (r.changes === 0) return res.status(404).json({ ok: false, error: "Empleado no encontrado" });
     return res.json({ ok: true });
@@ -1537,6 +1613,10 @@ router.post("/products/:productId/assign-all-services", requireAuth, requireRole
     const { productId } = req.params;
     const { srv, prod } = getSpCols();
     const empresaId = req.user?.empresaId ?? 1;
+
+    const ownerRow = db.prepare(`SELECT empresa_id FROM Productos WHERE CAST(ProductID AS TEXT) = CAST(? AS TEXT)`).get(productId);
+    if (!ownerRow || Number(ownerRow.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "Producto no encontrado" });
+
     const srvCols   = db.prepare("PRAGMA table_info(Servicios)").all().map(c => c.name.toLowerCase());
     const hasEmpresa = srvCols.includes("empresa_id");
     const eWhere    = hasEmpresa ? `WHERE empresa_id = ${Number(empresaId)}` : "";
@@ -1556,6 +1636,11 @@ router.post("/products/:productId/remove-all-services", requireAuth, requireRole
   try {
     const { productId } = req.params;
     const { prod } = getSpCols();
+    const empresaId = req.user?.empresaId ?? 1;
+
+    const ownerRow = db.prepare(`SELECT empresa_id FROM Productos WHERE CAST(ProductID AS TEXT) = CAST(? AS TEXT)`).get(productId);
+    if (!ownerRow || Number(ownerRow.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "Producto no encontrado" });
+
     const result = db.prepare(`DELETE FROM service_products WHERE CAST(${prod} AS TEXT) = CAST(? AS TEXT)`).run(String(productId));
     return res.json({ ok: true, removed: result.changes });
   } catch (e) {
@@ -1570,9 +1655,11 @@ router.put("/products/:id/toggle-active", mustBeAdmin, (req, res) => {
     const { products } = sch.tables;
     const { prodId } = sch.cols;
     const id = req.params.id;
+    const empresaId = req.user?.empresaId ?? 1;
 
-    const current = db.prepare(`SELECT is_active FROM ${products} WHERE CAST(${prodId} AS TEXT) = CAST(? AS TEXT) LIMIT 1`).get(id);
+    const current = db.prepare(`SELECT is_active, empresa_id FROM ${products} WHERE CAST(${prodId} AS TEXT) = CAST(? AS TEXT) LIMIT 1`).get(id);
     if (!current) return res.status(404).json({ error: "Producto no encontrado" });
+    if (current.empresa_id != null && Number(current.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "Producto no encontrado" });
 
     const newVal = current.is_active ? 0 : 1;
     db.prepare(`UPDATE ${products} SET is_active = ? WHERE CAST(${prodId} AS TEXT) = CAST(? AS TEXT)`).run(newVal, id);

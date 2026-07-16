@@ -14,7 +14,7 @@ import RoleSelect     from "./pages/RoleSelect";
 import Products       from "./pages/Products";
 import Cart           from "./pages/Cart";
 import Services       from "./pages/Services";
-import AdminPanel     from "./pages/AdminPanel";
+const AdminPanel = lazy(() => import("./pages/AdminPanel"));
 const Reports = lazy(() => import("./pages/Reports"));
 import Deposito       from "./pages/Deposito";
 import MisPedidos     from "./pages/MisPedidos";
@@ -152,7 +152,7 @@ export default function App() {
 
       <Route path="/app/:role" element={<Guarded />}>
         <Route element={<Layout />}>
-          <Route path="admin"         element={<AdminOnly><AdminPanel /></AdminOnly>} />
+          <Route path="admin"         element={<AdminOnly><Suspense fallback={<div className="state">Cargando…</div>}><AdminPanel /></Suspense></AdminOnly>} />
           <Route path="admin/budgets" element={<AdminOnly><ServiceBudgets /></AdminOnly>} />
           <Route path="reports"       element={<AdminOnly><Suspense fallback={<div className="state">Cargando…</div>}><Reports /></Suspense></AdminOnly>} />
           <Route path="products"      element={<Products />} />

@@ -1,8 +1,10 @@
 // server/src/routes/serviceProducts.js
 import { Router } from "express";
 import { db } from "../db.js";
+import { requireAuth, requireRole } from "../middleware/auth.js";
 
 const router = Router();
+const mustBeAdmin = [requireAuth, requireRole(["admin", "Admin"])];
 
 const uniq = (arr) =>
   Array.from(new Set((arr || []).map((x) => Number(x)).filter((n) => Number.isInteger(n))));
@@ -40,7 +42,7 @@ function searchServicesRaw(q) {
   return db.prepare(sql).all(term, like);
 }
 
-router.get(["/list", "/search"], (req, res) => {
+router.get(["/list", "/search"], mustBeAdmin, (req, res) => {
   const q = String(req.query.q ?? "");
   const items = searchServicesRaw(q).map((s) => ({
     id: s.id,
@@ -52,7 +54,7 @@ router.get(["/list", "/search"], (req, res) => {
 });
 
 
-router.post("/assign", (req, res) => {
+router.post("/assign", mustBeAdmin, (req, res) => {
   const supervisorId = Number(req.body?.supervisorId);
   const serviceIds = uniq(req.body?.serviceIds);
   if (!Number.isInteger(supervisorId) || !serviceIds.length) {
@@ -86,7 +88,7 @@ router.post("/assign", (req, res) => {
   res.json({ ok: true, updated, total: serviceIds.length, skipped: serviceIds.length - updated });
 });
 
-router.post("/reassign-bulk", (req, res) => {
+router.post("/reassign-bulk", mustBeAdmin, (req, res) => {
   const fromId = Number(req.body?.fromSupervisorId);
   const toId = Number(req.body?.toSupervisorId);
   const serviceIds = uniq(req.body?.serviceIds);

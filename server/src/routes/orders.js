@@ -1,6 +1,6 @@
 // server/src/routes/orders.js
 import { Router } from "express";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireRole } from "../middleware/auth.js";
 import {
   createOrder, getFullOrder, getEmployeeDisplayName,
   getServiceById, getServiceEmails, getServiceNameById,
@@ -250,14 +250,19 @@ router.get("/pdf/:id", requireAuth, async (req, res) => {
   if (!pedido) return res.status(404).end();
 
   try {
+    const ownerRow = db.prepare("SELECT empresa_id FROM Pedidos WHERE PedidoID = ? LIMIT 1").get(id);
+    const empresaId = req.user?.empresaId ?? 1;
+    if (ownerRow?.empresa_id != null && Number(ownerRow.empresa_id) !== Number(empresaId)) {
+      return res.status(404).end();
+    }
+
     const rol  = String(pedido.Rol || "").toLowerCase();
     const sid  = rol === "supervisor" ? String(pedido.ServicioID ?? "").trim() : "";
     const serviceName = rol === "supervisor" ? resolveServiceName(sid, pedido?.servicio?.name) : "";
 
     let empresaNombre = "Kazaro";
     try {
-      const row = db.prepare("SELECT empresa_id FROM Pedidos WHERE PedidoID = ? LIMIT 1").get(id);
-      if (row?.empresa_id) empresaNombre = resolveEmpresaNombre(row.empresa_id);
+      if (ownerRow?.empresa_id) empresaNombre = resolveEmpresaNombre(ownerRow.empresa_id);
     } catch {}
 
     const pedidoParaPdf = {
@@ -372,6 +377,12 @@ router.put("/notifications/read-all", requireAuth, (req, res) => {
 router.get("/:id/returnable", requireAuth, (req, res) => {
   try {
     const pedidoId = Number(req.params.id);
+
+    const empresaId = req.user?.empresaId ?? 1;
+    const owner = db.prepare(`SELECT empresa_id FROM Pedidos WHERE PedidoID = ? LIMIT 1`).get(pedidoId);
+    if (!owner) return res.status(404).json({ error: "Pedido no encontrado" });
+    if (owner.empresa_id != null && Number(owner.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "Pedido no encontrado" });
+
     const items = db.prepare(`SELECT ProductoID AS productId, Nombre AS name, Codigo AS code, SUM(Cantidad) AS pedido FROM PedidoItems WHERE PedidoID = ? GROUP BY ProductoID, Nombre, Codigo`).all(pedidoId);
     const dev = db.prepare(`SELECT producto_id, SUM(cantidad) AS devuelto FROM devoluciones WHERE pedido_id = ? AND estado IN ('pendiente','aprobada') GROUP BY producto_id`).all(pedidoId);
     const devMap = new Map(dev.map((d) => [String(d.producto_id), d.devuelto]));
@@ -394,12 +405,15 @@ router.post("/returns", requireAuth, (req, res) => {
     if (!pid || !prod || !Number.isFinite(cant) || cant <= 0) return res.status(400).json({ error: "Datos inválidos" });
     if (!String(motivo || "").trim()) return res.status(400).json({ error: "El motivo es obligatorio" });
 
+    const empresaId = req.user?.empresaId ?? 1;
+    const pedOwner = db.prepare(`SELECT empresa_id FROM Pedidos WHERE PedidoID = ?`).get(pid);
+    if (!pedOwner) return res.status(404).json({ error: "Pedido no encontrado" });
+    if (pedOwner.empresa_id != null && Number(pedOwner.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "Pedido no encontrado" });
+
     const pedItem = db.prepare(`SELECT SUM(Cantidad) AS pedido FROM PedidoItems WHERE PedidoID = ? AND ProductoID = ?`).get(pid, prod);
     const yaDev = db.prepare(`SELECT SUM(cantidad) AS d FROM devoluciones WHERE pedido_id = ? AND producto_id = ? AND estado IN ('pendiente','aprobada')`).get(pid, prod);
     const disponible = Number(pedItem?.pedido || 0) - Number(yaDev?.d || 0);
     if (cant > disponible) return res.status(400).json({ error: `Solo se pueden devolver ${disponible} unidades` });
-
-    const empresaId = req.user?.empresaId ?? null;
     db.prepare(`INSERT INTO devoluciones (pedido_id, producto_id, cantidad, motivo, empresa_id, solicitante_id, estado) VALUES (?, ?, ?, ?, ?, ?, 'pendiente')`)
       .run(pid, prod, cant, String(motivo).trim(), empresaId, req.user.id);
     res.json({ ok: true });
@@ -426,11 +440,13 @@ router.get("/returns", requireAuth, (req, res) => {
 });
 
 // Aprobar devolución (depósito) — suma stock
-router.put("/returns/:id/approve", requireAuth, (req, res) => {
+router.put("/returns/:id/approve", requireAuth, requireRole(["deposito", "admin"]), (req, res) => {
   try {
     const id = Number(req.params.id);
     const d = db.prepare(`SELECT * FROM devoluciones WHERE id = ?`).get(id);
     if (!d) return res.status(404).json({ error: "Devolución no encontrada" });
+    const empresaId = req.user?.empresaId ?? 1;
+    if (d.empresa_id != null && Number(d.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "Devolución no encontrada" });
     if (d.estado !== "pendiente") return res.status(400).json({ error: "Ya fue resuelta" });
 
     const prod = db.prepare(`SELECT Stock FROM Productos WHERE ProductID = ?`).get(d.producto_id);
@@ -445,11 +461,13 @@ router.put("/returns/:id/approve", requireAuth, (req, res) => {
 });
 
 // Rechazar devolución (depósito)
-router.put("/returns/:id/reject", requireAuth, (req, res) => {
+router.put("/returns/:id/reject", requireAuth, requireRole(["deposito", "admin"]), (req, res) => {
   try {
     const id = Number(req.params.id);
-    const d = db.prepare(`SELECT estado FROM devoluciones WHERE id = ?`).get(id);
+    const d = db.prepare(`SELECT estado, empresa_id FROM devoluciones WHERE id = ?`).get(id);
     if (!d) return res.status(404).json({ error: "No encontrada" });
+    const empresaId = req.user?.empresaId ?? 1;
+    if (d.empresa_id != null && Number(d.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "No encontrada" });
     if (d.estado !== "pendiente") return res.status(400).json({ error: "Ya fue resuelta" });
     db.prepare(`UPDATE devoluciones SET estado = 'rechazada', aprobador_id = ?, fecha_resolucion = datetime('now') WHERE id = ?`).run(req.user.id, id);
     res.json({ ok: true });
@@ -475,18 +493,35 @@ router.get("/pending-approval", requireAuth, (req, res) => {
     res.status(500).json({ error: "No se pudieron cargar los pedidos pendientes" });
   }
 });
-router.put("/pending-approval/:id/approve", requireAuth, async (req, res) => {
+router.put("/pending-approval/:id/approve", requireAuth, requireRole(["deposito", "admin"]), async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const p = db.prepare(`SELECT Status FROM Pedidos WHERE PedidoID = ?`).get(id);
+    const empresaId = req.user?.empresaId ?? 1;
+    const p = db.prepare(`SELECT Status, empresa_id FROM Pedidos WHERE PedidoID = ?`).get(id);
     if (!p) return res.status(404).json({ error: "Pedido no encontrado" });
+    if (p.empresa_id != null && Number(p.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "Pedido no encontrado" });
     if (p.Status !== "pendiente_aprobacion") return res.status(400).json({ error: "El pedido ya fue resuelto" });
 
     db.prepare(`UPDATE Pedidos SET Status = NULL WHERE PedidoID = ?`).run(id);
 
     try {
       const pedido = getFullOrder(id);
-      await enviarMailPedido(pedido, id);
+      const nro = pad7(id);
+      const sid = String(pedido?.ServicioID ?? "").trim();
+      const toArr = sid ? getServiceEmails(sid) || [] : [];
+      const usuario = pedido?.user || getUserById(pedido?.EmpleadoID);
+      if (toArr.length) {
+        await sendMail({
+          to: toArr.join(","),
+          subject: `Pedido #${nro} aprobado`,
+          text: `Tu pedido #${nro} fue aprobado y ya está en preparación.`,
+          displayAsUser: true,
+          userName: getEmployeeDisplayName(pedido?.EmpleadoID) || usuario?.email || "Sistema",
+          userEmail: usuario?.email || null,
+          empresaId,
+          empresaNombre: resolveEmpresaNombre(empresaId),
+        });
+      }
     } catch (e) { console.warn("[approve mail]", e?.message); }
 
     res.json({ ok: true });
@@ -497,11 +532,13 @@ router.put("/pending-approval/:id/approve", requireAuth, async (req, res) => {
 });
 
 // Rechazar pedido pendiente (soft-delete)
-router.put("/pending-approval/:id/reject", requireAuth, (req, res) => {
+router.put("/pending-approval/:id/reject", requireAuth, requireRole(["deposito", "admin"]), (req, res) => {
   try {
     const id = Number(req.params.id);
-    const p = db.prepare(`SELECT Status FROM Pedidos WHERE PedidoID = ?`).get(id);
+    const empresaId = req.user?.empresaId ?? 1;
+    const p = db.prepare(`SELECT Status, empresa_id FROM Pedidos WHERE PedidoID = ?`).get(id);
     if (!p) return res.status(404).json({ error: "Pedido no encontrado" });
+    if (p.empresa_id != null && Number(p.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "Pedido no encontrado" });
     if (p.Status !== "pendiente_aprobacion") return res.status(400).json({ error: "El pedido ya fue resuelto" });
     const hasDel = db.prepare("PRAGMA table_info(Pedidos)").all().some(c=>c.name==="deleted_at");
     if (hasDel) db.prepare(`UPDATE Pedidos SET Status = 'rechazado', deleted_at = datetime('now') WHERE PedidoID = ?`).run(id);

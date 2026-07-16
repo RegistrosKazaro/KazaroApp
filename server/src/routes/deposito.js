@@ -356,6 +356,12 @@ router.put("/orders/:id/pickup", mustWarehouse, (req, res) => {
       return res.status(500).json({ error: "No se puede registrar el retiro (columna no disponible)" });
     }
 
+    if (cols.includes("empresa_id")) {
+      const empresaId = req.user?.empresaId ?? 1;
+      const owner = db.prepare(`SELECT empresa_id FROM Pedidos WHERE ${idCol} = ?`).get(id);
+      if (!owner || Number(owner.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "Pedido no encontrado" });
+    }
+
     const retiroAt = new Date().toISOString();
 
     const r = db.prepare(
@@ -411,6 +417,12 @@ router.put("/orders/:id/:action", mustWarehouse, async (req, res) => {
     }
 
     if (!sets.length) return res.status(500).json({ error: "Sin columnas de estado" });
+
+    if (cols.includes("empresa_id")) {
+      const empresaId = req.user?.empresaId ?? 1;
+      const owner = db.prepare(`SELECT empresa_id FROM Pedidos WHERE ${idCol} = ?`).get(id);
+      if (!owner || Number(owner.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "Pedido no encontrado" });
+    }
 
     params.push(id);
     const r = db.prepare(`UPDATE Pedidos SET ${sets.join(", ")} WHERE ${idCol} = ?`).run(...params);

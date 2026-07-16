@@ -1738,7 +1738,7 @@ export function adminDeleteCategory(categoryId, empresaId = null) {
   return { id: existing.id, name: existing.name, deleted: true };
 }
 
-export function adminGetProductById(id) {
+export function adminGetProductById(id, empresaId) {
   const sch = discoverCatalogSchema();
   if (!sch.ok) throw new Error(sch.reason);
 
@@ -1750,6 +1750,10 @@ export function adminGetProductById(id) {
   const catExpr   = prodCat   ? `p.${prodCat}   AS categoryId` : (prodCatName ? `p.${prodCatName} AS categoryName` : `NULL AS categoryName`);
   const stockExpr = prodStock ? `COALESCE(p.${prodStock}, 0) AS stock` : `NULL AS stock`;
 
+  const prodCols = db.prepare(`PRAGMA table_info(${products})`).all().map(c => c.name.toLowerCase());
+  const hasEmpresa = prodCols.includes("empresa_id");
+  const empresaFilter = hasEmpresa && empresaId != null ? `AND p.empresa_id = @empresaId` : "";
+
   const sql = `
     SELECT
       p.${prodId}   AS id,
@@ -1759,10 +1763,10 @@ export function adminGetProductById(id) {
       ${codeExpr},
       ${catExpr}
     FROM ${products} p
-    WHERE CAST(p.${prodId} AS TEXT) = CAST(? AS TEXT) OR rowid = ?
+    WHERE (CAST(p.${prodId} AS TEXT) = CAST(@id AS TEXT) OR rowid = @id) ${empresaFilter}
     LIMIT 1
   `;
-  return db.prepare(sql).get(id, id);
+  return db.prepare(sql).get({ id, empresaId });
 }
 export function adminCreateProduct(fields = {}) {
   const sch = discoverCatalogSchema();
