@@ -466,6 +466,10 @@ router.get("/overview", mustWarehouse, (req, res) => {
 
     if (!prodStock) return res.json({ top: [], low: [] });
 
+    const empresaId = getEmpresaId(req);
+    const prodCols = db.prepare(`PRAGMA table_info(${products})`).all().map(c => c.name.toLowerCase());
+    const empresaFilter = prodCols.includes("empresa_id") ? `AND empresa_id = @empresaId` : "";
+
     const sql = `
       SELECT ${prodId}   AS productId,
              ${prodName} AS name,
@@ -473,7 +477,8 @@ router.get("/overview", mustWarehouse, (req, res) => {
              ${prodStock} AS stock
         FROM ${products}
        WHERE ${prodStock} IS NOT NULL
-         AND CAST(${prodStock} AS REAL) <= CAST(? AS REAL)
+         AND CAST(${prodStock} AS REAL) <= CAST(@threshold AS REAL)
+         ${empresaFilter}
        ORDER BY CAST(${prodStock} AS REAL) ASC,
                 ${prodName} COLLATE NOCASE
        LIMIT 500
@@ -481,7 +486,7 @@ router.get("/overview", mustWarehouse, (req, res) => {
 
     const low = db
       .prepare(sql)
-      .all(threshold)
+      .all({ threshold, empresaId })
       .map(row => ({
         ...row,
         stock: Number(row.stock ?? 0),
