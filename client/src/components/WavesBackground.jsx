@@ -1,7 +1,25 @@
 // client/src/components/WavesBackground.jsx
-// Fondo estático de olas (usado solo en la pantalla de selección de empresa).
+// Fondo estático de olas. variant="blue" (default, Kazaro) o "green" (Pazar).
 
-export default function WavesBackground() {
+const PALETTES = {
+  blue: {
+    base: ["#0d5aa0", "#0b4a8c", "#093f7d"],
+    a: ["#5fe6df", "#1f89bd"],
+    b: ["#3ecfd8", "#1a72ad"],
+    c: ["#2fb6c9", "#155f9d"],
+    d: ["#1f96b8", "#0f4f8f"],
+  },
+  green: {
+    base: ["#2f6f1e", "#1f5416", "#163f10"],
+    a: ["#d4ec7a", "#7cb342"],
+    b: ["#b8dd5a", "#6ba838"],
+    c: ["#9ccb45", "#5c9530"],
+    d: ["#7bb23a", "#4a7d28"],
+  },
+};
+
+export default function WavesBackground({ variant = "blue" }) {
+  const p = PALETTES[variant] || PALETTES.blue;
   return (
     <div className="login-waves" aria-hidden="true">
       <svg
@@ -11,25 +29,25 @@ export default function WavesBackground() {
       >
         <defs>
           <linearGradient id="wavesBase" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#0d5aa0" />
-            <stop offset="45%" stopColor="#0b4a8c" />
-            <stop offset="100%" stopColor="#093f7d" />
+            <stop offset="0%" stopColor={p.base[0]} />
+            <stop offset="45%" stopColor={p.base[1]} />
+            <stop offset="100%" stopColor={p.base[2]} />
           </linearGradient>
           <linearGradient id="wavesA" x1="0%" y1="0%" x2="100%" y2="60%">
-            <stop offset="0%" stopColor="#5fe6df" />
-            <stop offset="100%" stopColor="#1f89bd" />
+            <stop offset="0%" stopColor={p.a[0]} />
+            <stop offset="100%" stopColor={p.a[1]} />
           </linearGradient>
           <linearGradient id="wavesB" x1="0%" y1="0%" x2="100%" y2="60%">
-            <stop offset="0%" stopColor="#3ecfd8" />
-            <stop offset="100%" stopColor="#1a72ad" />
+            <stop offset="0%" stopColor={p.b[0]} />
+            <stop offset="100%" stopColor={p.b[1]} />
           </linearGradient>
           <linearGradient id="wavesC" x1="0%" y1="0%" x2="100%" y2="60%">
-            <stop offset="0%" stopColor="#2fb6c9" />
-            <stop offset="100%" stopColor="#155f9d" />
+            <stop offset="0%" stopColor={p.c[0]} />
+            <stop offset="100%" stopColor={p.c[1]} />
           </linearGradient>
           <linearGradient id="wavesD" x1="0%" y1="0%" x2="100%" y2="60%">
-            <stop offset="0%" stopColor="#1f96b8" />
-            <stop offset="100%" stopColor="#0f4f8f" />
+            <stop offset="0%" stopColor={p.d[0]} />
+            <stop offset="100%" stopColor={p.d[1]} />
           </linearGradient>
         </defs>
 

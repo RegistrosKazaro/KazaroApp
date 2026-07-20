@@ -85,7 +85,7 @@ export default function Login() {
 
   return (
     <div className="login-bg">
-      <WavesBackground />
+      <WavesBackground variant={isPazar ? "green" : "blue"} />
       <div className="login-container-split">
         <div className="login-split">
 
