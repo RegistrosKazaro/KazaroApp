@@ -75,8 +75,8 @@ export default function EmployeesSection() {
     setErr("");
     try {
       const [empData, rolesData] = await Promise.all([
-        apiFetch("/api/admin/employees"),
-        apiFetch("/api/admin/roles").catch(() => ({ roles: ROLES_CONOCIDOS })),
+        apiFetch("/admin/employees"),
+        apiFetch("/admin/roles").catch(() => ({ roles: ROLES_CONOCIDOS })),
       ]);
       setEmployees(empData.employees ?? []);
       if (rolesData.roles?.length) setRoles(rolesData.roles);
@@ -165,13 +165,13 @@ export default function EmployeesSection() {
       if (password.trim()) payload.password = password.trim();
 
       if (editing.mode === "create") {
-        await apiFetch("/api/admin/employees", {
+        await apiFetch("/admin/employees", {
           method: "POST",
           body: JSON.stringify(payload),
         });
         setMsg("✓ Empleado creado correctamente");
       } else {
-        await apiFetch(`/api/admin/employees/${editing.emp.id}`, {
+        await apiFetch(`/admin/employees/${editing.emp.id}`, {
           method: "PUT",
           body: JSON.stringify(payload),
         });
@@ -190,7 +190,7 @@ export default function EmployeesSection() {
   const handleDeactivate = async (emp) => {
     if (!window.confirm(`¿Desactivar a ${emp.nombre} ${emp.apellido}?`)) return;
     try {
-      await apiFetch(`/api/admin/employees/${emp.id}`, { method: "DELETE" });
+      await apiFetch(`/admin/employees/${emp.id}`, { method: "DELETE" });
       setMsg("Empleado desactivado");
       await load();
     } catch (e) {

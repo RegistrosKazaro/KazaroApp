@@ -70,7 +70,7 @@ export default function ServiceBudgets() {
 
   const load = useCallback(async () => {
     try {
-      const data = (await api.get("/api/admin/service-budgets")).data || [];
+      const data = (await api.get("/admin/service-budgets")).data || [];
       setRows(data);
       setDrafts({});
     } catch (e) {
@@ -109,7 +109,7 @@ export default function ServiceBudgets() {
       if (!Number.isFinite(maxPct) || maxPct <= 0) throw new Error("Porcentaje maximo invalido");
 
       // Persistimos en server
-      await api.put(`/api/admin/service-budgets/${id}`,{ presupuesto, maxPct});
+      await api.put(`/admin/service-budgets/${id}`,{ presupuesto, maxPct});
       setRows(prev => prev.map(r => (r.id === id ? { ...r, budget: presupuesto, maxPct } : r)));
 
       // Limpiamos el draft para que el input muestre el valor "oficial"

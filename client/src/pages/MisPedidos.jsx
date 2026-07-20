@@ -125,7 +125,7 @@ export default function MisPedidos() {
     setPdfErr("");
     if (pdfUrl) { URL.revokeObjectURL(pdfUrl); setPdfUrl(null); }
     try {
-      for (const path of [`/orders/pdf/${id}`, `/api/admin/orders/pdf/${id}`]) {
+      for (const path of [`/orders/pdf/${id}`, `/admin/orders/pdf/${id}`]) {
         try {
           const res = await api.get(path, { responseType: "blob", headers: { Accept: "application/pdf" } });
           const ct = (res.headers?.["content-type"] || "").toLowerCase();
