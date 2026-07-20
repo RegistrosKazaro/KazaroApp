@@ -20,7 +20,6 @@ function applyTheme(slug) {
     --brand-light:  #f0faf4;
     --border-focus: #2d8653;
     --ring:         rgba(45,134,83,.25);
-    --bg-page:      #f0faf4;
     --primary:      #2d8653;
 
     /* Service budgets */
@@ -76,14 +75,11 @@ function applyTheme(slug) {
   .sb-btn-primary { background: #2d8653 !important; border-color: #1a5c3a !important; color: #fff !important; }
 
   /* Login */
-  .login-bg { background: #f0faf4 !important; }
   .login-title { color: #1a5c3a !important; }
   .login-subtitle strong { color: #2d8653 !important; }
   .field-group label { color: #1a5c3a !important; }
   .btn-primary { background: #2d8653 !important; border-color: #1a5c3a !important; box-shadow: 0 4px 14px rgba(45,134,83,.30) !important; }
   .btn-primary:hover { background: #1a5c3a !important; }
-  .company-btn { background: #2d8653 !important; box-shadow: 0 4px 14px rgba(45,134,83,.25) !important; }
-  .company-btn:hover { background: #1a5c3a !important; }
   .input:focus { border-color: #2d8653 !important; box-shadow: 0 0 0 3px rgba(45,134,83,.25) !important; }
 
   /* Reports — pills y degradado */
@@ -271,7 +267,6 @@ function applyTheme(slug) {
         --brand-light:  #eff6ff;
         --border-focus: #2563eb;
         --ring:         rgba(37,99,235,.25);
-        --bg-page:      #f1f5f9;
         --primary:      #2563eb;
       }
     `;
