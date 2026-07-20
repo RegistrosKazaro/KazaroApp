@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useEmpresa } from "../hooks/useEmpresa";
-import isoBadges from "../assets/normasiso.png";
 import WavesBackground from "../components/WavesBackground";
 import "../styles/login.css";
 
@@ -83,8 +82,6 @@ export default function CompanySelect() {
 
         </div>
       </div>
-
-      <img src={isoBadges} className="iso-badges" alt="Certificaciones ISO" />
     </div>
   );
 }

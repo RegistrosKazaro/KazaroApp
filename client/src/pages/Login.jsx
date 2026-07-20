@@ -8,7 +8,6 @@ import "../styles/login.css";
 import logoSideKazaro from "../assets/LogoHorizWhite.png";
 import logoSmallKazaro from "../assets/LogoReducFull (1).png";
 import logoPazar from "../assets/LogoPazar.png";
-import isoBadges from "../assets/normasiso.png";
 
 const DocIcon = () => (
   <svg width="21" height="21" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -91,33 +90,35 @@ export default function Login() {
         <div className="login-split">
 
           {/* Panel lateral (marca + features) */}
-          <div className="login-side-panel">
+          <div className={isPazar ? "login-side-panel login-side-panel-pazar" : "login-side-panel"}>
             <div>
               <h1 className="login-side-title">
                 Insumos y servicios<br />
-                grupo <span className="login-side-accent">{empresa.nombre}</span>
+                grupo <span className={isPazar ? "login-side-accent login-side-accent-pazar" : "login-side-accent"}>{empresa.nombre}</span>
               </h1>
               <p className="login-side-subtitle">Acceso a la solicitud de insumos y servicios.</p>
 
               <div className="login-features">
                 <div className="login-feature">
-                  <div className="login-feature-icon"><DocIcon /></div>
+                  <div className={isPazar ? "login-feature-icon login-feature-icon-pazar" : "login-feature-icon"}><DocIcon /></div>
                   <div className="login-feature-text">Creá y hacé seguimiento de tus pedidos.</div>
                 </div>
                 <div className="login-feature">
-                  <div className="login-feature-icon"><ChartIcon /></div>
+                  <div className={isPazar ? "login-feature-icon login-feature-icon-pazar" : "login-feature-icon"}><ChartIcon /></div>
                   <div className="login-feature-text">Métricas de consumo por servicio y supervisor.</div>
                 </div>
                 <div className="login-feature">
-                  <div className="login-feature-icon"><StockIcon /></div>
+                  <div className={isPazar ? "login-feature-icon login-feature-icon-pazar" : "login-feature-icon"}><StockIcon /></div>
                   <div className="login-feature-text">Control de stock y devoluciones.</div>
                 </div>
               </div>
             </div>
 
-            <div className={isPazar ? "login-side-logo login-side-logo-pazar" : "login-side-logo"}>
-              <img src={isPazar ? logoPazar : logoSideKazaro} alt={empresa.nombre} />
-            </div>
+            {!isPazar && (
+              <div className="login-side-logo">
+                <img src={logoSideKazaro} alt={empresa.nombre} />
+              </div>
+            )}
           </div>
 
           {/* Formulario */}
@@ -234,8 +235,6 @@ export default function Login() {
           </form>
         </div>
       </div>
-
-      <img src={isoBadges} className="iso-badges" alt="Certificaciones ISO y Empresa B" />
     </div>
   );
 }
