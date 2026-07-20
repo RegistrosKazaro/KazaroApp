@@ -3,10 +3,34 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { useEmpresa } from "../hooks/useEmpresa";
+import WavesBackground from "../components/WavesBackground";
 import "../styles/login.css";
-import logo from "../assets/LogoVertFull.png";
+import logoSideKazaro from "../assets/LogoHorizWhite.png";
+import logoSmallKazaro from "../assets/LogoReducFull (1).png";
 import logoPazar from "../assets/LogoPazar.png";
 import isoBadges from "../assets/normasiso.png";
+
+const DocIcon = () => (
+  <svg width="21" height="21" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M6 2h9l5 5v15H6V2Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+    <path d="M14 2v5h5M9 13h6M9 17h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
+const ChartIcon = () => (
+  <svg width="21" height="21" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M4 20V10M11 20V4M18 20v-7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+  </svg>
+);
+const StockIcon = () => (
+  <svg width="21" height="21" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M3 10.5 12 3l9 7.5M5 9v11h14V9" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+  </svg>
+);
+const ShieldIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M12 2 4 5v6c0 5 3.4 8.7 8 10 4.6-1.3 8-5 8-10V5l-8-3Z" stroke="#94a3b8" strokeWidth="1.8" strokeLinejoin="round" />
+  </svg>
+);
 
 export default function Login() {
   const nav         = useNavigate();
@@ -58,27 +82,63 @@ export default function Login() {
 
   if (!empresa) return null;
 
+  const isPazar = empresa?.slug === "pazar";
+
   return (
     <div className="login-bg">
-      <div className="login-container">
-        <form onSubmit={onSubmit} className="login-card">
+      <WavesBackground />
+      <div className="login-container-split">
+        <div className="login-split">
 
-          {/* Logo */}
-          <div className="login-logo-wrap">
-            <img
-              src={empresa?.slug === "pazar" ? logoPazar : logo}
-              className={empresa?.slug === "pazar" ? "brand-logo brand-logo-pazar" : "brand-logo"}
-              alt={empresa.nombre}
-            />
+          {/* Panel lateral (marca + features) */}
+          <div className="login-side-panel">
+            <div>
+              <h1 className="login-side-title">
+                Insumos y servicios<br />
+                grupo <span className="login-side-accent">{empresa.nombre}</span>
+              </h1>
+              <p className="login-side-subtitle">Acceso a la solicitud de insumos y servicios.</p>
+
+              <div className="login-features">
+                <div className="login-feature">
+                  <div className="login-feature-icon"><DocIcon /></div>
+                  <div className="login-feature-text">Creá y hacé seguimiento de tus pedidos.</div>
+                </div>
+                <div className="login-feature">
+                  <div className="login-feature-icon"><ChartIcon /></div>
+                  <div className="login-feature-text">Métricas de consumo por servicio y supervisor.</div>
+                </div>
+                <div className="login-feature">
+                  <div className="login-feature-icon"><StockIcon /></div>
+                  <div className="login-feature-text">Control de stock y devoluciones.</div>
+                </div>
+              </div>
+            </div>
+
+            <div className={isPazar ? "login-side-logo login-side-logo-pazar" : "login-side-logo"}>
+              <img src={isPazar ? logoPazar : logoSideKazaro} alt={empresa.nombre} />
+            </div>
           </div>
 
-          {/* Título */}
-          <div className="login-header-text">
-            <h1 className="login-title">Bienvenido</h1>
-            <p className="login-subtitle">Ingresá a <strong>{empresa.nombre}</strong></p>
-          </div>
+          {/* Formulario */}
+          <form onSubmit={onSubmit} className="login-card login-card-split">
 
-          {/* Campos */}
+            {/* Logo */}
+            <div className="login-logo-wrap">
+              <img
+                src={isPazar ? logoPazar : logoSmallKazaro}
+                className={isPazar ? "brand-logo-small brand-logo-small-pazar" : "brand-logo-small"}
+                alt={empresa.nombre}
+              />
+            </div>
+
+            {/* Título */}
+            <div className="login-header-text">
+              <h2 className="login-title">Iniciar sesión</h2>
+              <p className="login-subtitle">Ingresando a <strong>{empresa.nombre}</strong></p>
+            </div>
+
+            {/* Campos */}
           <div className="login-fields">
             <div className="field-group">
               <label htmlFor="lUsername">Usuario</label>
@@ -166,7 +226,13 @@ export default function Login() {
             ← Cambiar empresa
           </button>
 
-        </form>
+            <div className="login-secure-footer">
+              <ShieldIcon />
+              <span>Acceso seguro al sistema de gestión</span>
+            </div>
+
+          </form>
+        </div>
       </div>
 
       <img src={isoBadges} className="iso-badges" alt="Certificaciones ISO y Empresa B" />
