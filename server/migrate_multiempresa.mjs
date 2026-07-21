@@ -241,6 +241,13 @@ const tx = db.transaction(() => {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_fpm_estado ON FlexxusProductMatch(estado)`);
     log("+ tabla FlexxusProductMatch (Kazaro vs Flexxus)");
   }
+
+  // 14) Índice en PedidoItems.PedidoID (la tabla se consulta siempre por PedidoID
+  // — reportes, mis-pedidos, devoluciones — y no tenía ningún índice: table scan).
+  if (tableExists("PedidoItems")) {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_peditems_pedido ON PedidoItems(PedidoID)`);
+    log("+ índice idx_peditems_pedido en PedidoItems(PedidoID)");
+  }
 });
 
 tx();

@@ -1688,7 +1688,9 @@ router.get("/audit", mustBeAdmin, (req, res) => {
     console.error("[admin] GET /audit error:", e?.message || e);
     res.status(500).json({ error: "No se pudo cargar la auditoría" });
   }
-  router.post("/products/:id/adjust-stock", mustBeAdmin, (req, res) => {
+});
+
+router.post("/products/:id/adjust-stock", mustBeAdmin, (req, res) => {
   try {
     const sch = prodSchemaOrThrow();
     const { products } = sch.tables;
@@ -1697,14 +1699,18 @@ router.get("/audit", mustBeAdmin, (req, res) => {
     if (!C_STOCK) return res.status(400).json({ error: "Sin columna de stock" });
 
     const id = String(req.params.id);
+    const empresaId = req.user?.empresaId ?? 1;
     const delta = Math.trunc(Number(req.body?.delta));
     const motivo = String(req.body?.motivo || "").trim();
     const tipo = String(req.body?.tipo || "ajuste_manual").trim();
     if (!Number.isFinite(delta) || delta === 0) return res.status(400).json({ error: "Delta inválido" });
     if (!motivo) return res.status(400).json({ error: "El motivo es obligatorio" });
 
-    const row = db.prepare(`SELECT ${qid(prodName)} AS nombre, ${qid(prodStock)} AS stock${prodCode ? `, ${qid(prodCode)} AS code` : ""} FROM Productos WHERE ${qid(prodId)} = ?`).get(id);
+    const prodCols = db.prepare(`PRAGMA table_info(${products})`).all().map(c => c.name.toLowerCase());
+    const hasEmpresa = prodCols.includes("empresa_id");
+    const row = db.prepare(`SELECT ${qid(prodName)} AS nombre, ${qid(prodStock)} AS stock${prodCode ? `, ${qid(prodCode)} AS code` : ""}${hasEmpresa ? ", empresa_id" : ""} FROM Productos WHERE ${qid(prodId)} = ?`).get(id);
     if (!row) return res.status(404).json({ error: "Producto no encontrado" });
+    if (hasEmpresa && row.empresa_id != null && Number(row.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "Producto no encontrado" });
 
     const anterior = Number(row.stock ?? 0);
     const nuevo = anterior + delta;
@@ -1718,7 +1724,6 @@ router.get("/audit", mustBeAdmin, (req, res) => {
     console.error("[admin] adjust-stock:", e?.message || e);
     res.status(500).json({ error: "No se pudo ajustar el stock" });
   }
-});
 });
 
 /* =========================

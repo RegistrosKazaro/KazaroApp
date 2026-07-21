@@ -38,4 +38,8 @@ export const env = {
 
   DEBUG_AUTH: bool(process.env.DEBUG_AUTH, false),
   JWT_SECRET: process.env.JWT_SECRET,
+
+  // Confianza en proxy inverso (Nginx/ALB). Se lee tal cual: "1" => 1 salto,
+  // o valores de Express como "loopback". index.js lo aplica con app.set.
+  TRUST_PROXY: process.env.TRUST_PROXY,
 };
