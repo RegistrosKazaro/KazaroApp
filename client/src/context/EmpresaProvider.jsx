@@ -37,10 +37,11 @@ function applyTheme(slug) {
     --rp-bg:            #f0faf4;
   }
 
-  /* Navbar */
+  /* Navbar — acotado a .appbar: sin eso se filtraba a las pills de las tablas
+     (Eliminar del panel, Borrar del carrito) y las pintaba de rojo sólido. */
   .appbar { background: #1a5c3a !important; }
-  .pill.active { background: #2d8653 !important; border-color: #2d8653 !important; }
-  .pill.danger { background: #b91c1c !important; border-color: #b91c1c !important; }
+  .appbar .pill.active { background: #2d8653 !important; border-color: #2d8653 !important; }
+  .appbar .pill.danger { background: #b91c1c !important; border-color: #b91c1c !important; }
 
   /* Botones generales app.css */
   .btn { background: #2d8653 !important; border-color: #1a5c3a !important; }
