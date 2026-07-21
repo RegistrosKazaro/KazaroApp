@@ -83,6 +83,26 @@ const tx = db.transaction(() => {
              ON Servicios(ServicioNombre, empresa_id) WHERE ServicioNombre IS NOT NULL AND ServicioNombre != ''`);
     log("= índice ux_servicios_nombre (ServicioNombre, empresa_id)");
   }
+  // El username pasa a ser único POR empresa: el mismo usuario puede existir en
+  // Kazaro y en Pazar. Es más permisivo que el índice global, así que no afecta
+  // a los empleados ya cargados. El login ya resuelve por empresa.
+  if (colExists("Empleados", "empresa_id")) {
+    const dups = db.prepare(`
+      SELECT COUNT(*) AS n FROM (
+        SELECT 1 FROM Empleados
+        WHERE username IS NOT NULL AND trim(username) != ''
+        GROUP BY lower(trim(username)), empresa_id HAVING COUNT(*) > 1
+      )
+    `).get().n;
+    if (dups > 0) {
+      log(`! ${dups} username(s) duplicados dentro de una misma empresa: no se toca ux_empleados_username`);
+    } else {
+      db.exec(`DROP INDEX IF EXISTS ux_empleados_username`);
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_empleados_username
+               ON Empleados(username, empresa_id) WHERE username IS NOT NULL AND username != ''`);
+      log("= índice ux_empleados_username (username, empresa_id)");
+    }
+  }
 
   // 6) Categorías de Pazar (solo si no existen aún para empresa 2)
   if (colExists("Categorias", "empresa_id")) {
