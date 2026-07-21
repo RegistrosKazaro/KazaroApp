@@ -46,14 +46,13 @@ function applyTheme(slug) {
   .btn { background: #2d8653 !important; border-color: #1a5c3a !important; }
   .btn:hover { background: #1a5c3a !important; }
 
-  /* Tabs del admin panel */
-  .admin-panel .tabs { background: #dcfce7 !important; box-shadow: inset 0 0 0 1px #86efac !important; }
-  .admin-panel .tab-btn { color: #14532d !important; }
-  .admin-panel .tab-btn:hover { background: #bbf7d0 !important; }
-  .admin-panel .tab-btn.is-active {
+  /* Lateral del admin panel */
+  .admin-panel .admin-side-title { color: #4d7c60 !important; }
+  .admin-panel .admin-side-link { color: #14532d !important; }
+  .admin-panel .admin-side-link:hover { background: #dcfce7 !important; color: #052e16 !important; }
+  .admin-panel .admin-side-link.is-active {
     background: #2d8653 !important;
     color: #f0fdf4 !important;
-    box-shadow: 0 6px 16px rgba(45,134,83,.35) !important;
   }
   .admin-panel { background: #f0faf4 !important; }
 

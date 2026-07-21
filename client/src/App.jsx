@@ -94,14 +94,10 @@ function Layout() {
 
         <div className="appbar-right">
           {isAdmin ? (
+            /* El admin navega desde el lateral del panel: acá quedan sólo Admin y Salir.
+               Carrito y notificaciones siguen en la barra del resto de los roles. */
             <>
-              <NavLink to={`${base}/admin`}         className={navClass}>Admin</NavLink>
-              <NavLink to={`${base}/admin/budgets`} className={navClass}>Presupuestos</NavLink>
-              <NavLink to={`${base}/reports`}       className={navClass}>Informes</NavLink>
-              <NavLink to={`${base}/cart`}          className={navClass}>
-                Carrito <span className="count">{count}</span>
-              </NavLink>
-              <NotificationBell />
+              <NavLink to={`${base}/admin`} className={navClass}>Admin</NavLink>
               <button type="button" className="pill danger" onClick={handleLogout}>Salir</button>
             </>
           ) : (

@@ -1,6 +1,6 @@
 // client/src/pages/AdminPanel.jsx
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
 import "../styles/admin-panel.css";
@@ -2764,8 +2764,76 @@ function ProductHistorialSection() {
   );
 }
 
+// Navegación del panel. Los items con `id` cambian de sección acá dentro; los
+// que tienen `to` llevan a una página aparte. Los ids son los mismos de antes
+// para no romper el deep-link con ?tab=.
+const NAV_GROUPS = [
+  {
+    title: "Inventario",
+    items: [
+      { id: "products",      label: "Productos" },
+      { id: "stockCritico",  label: "Stock crítico" },
+      { id: "incomingStock", label: "Ingresos programados" },
+      { id: "flexxus",       label: "Flexxus" },
+    ],
+  },
+  {
+    title: "Servicios",
+    items: [
+      { id: "services",        label: "Asignar servicios" },
+      { id: "createService",   label: "Crear servicio" },
+      { id: "serviceProducts", label: "Servicio ↔ Productos" },
+      { id: "massReassign",    label: "Reasignación masiva" },
+    ],
+  },
+  {
+    title: "Operación",
+    items: [
+      { id: "orders",    label: "Pedidos" },
+      { id: "historial", label: "Historial" },
+      { to: "/admin/budgets", icon: "budgets", label: "Presupuestos" },
+      { to: "/reports",       icon: "reports", label: "Informes" },
+    ],
+  },
+  {
+    title: "Accesos",
+    items: [
+      { id: "employees", label: "Empleados" },
+      { id: "twofa",     label: "Seguridad" },
+    ],
+  },
+];
+
+const NAV_ICONS = {
+  products:        ["M21 8 12 3 3 8v8l9 5 9-5Z", "M3 8l9 5 9-5M12 13v8"],
+  stockCritico:    ["M10.3 3.9 2.4 17.5A2 2 0 0 0 4.1 20.5h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z", "M12 9v4M12 17h.01"],
+  incomingStock:   ["M3 7h11v9H3zM14 10h4l3 3v3h-7z", "M7 20a2 2 0 1 1 0-4 2 2 0 0 1 0 4M17 20a2 2 0 1 1 0-4 2 2 0 0 1 0 4"],
+  flexxus:         ["M9 3v5M15 3v5M6 8h12v4a6 6 0 0 1-12 0zM12 18v3"],
+  services:        ["M2.5 20a6.5 6.5 0 0 1 13 0M17 11h5M19.5 8.5V14", "M9 4.8a3.2 3.2 0 1 1 0 6.4 3.2 3.2 0 0 1 0-6.4"],
+  createService:   ["M12 5v14M5 12h14"],
+  serviceProducts: ["M4 6h7M4 12h7M4 18h7M15 6h5M15 12h5M15 18h5"],
+  massReassign:    ["M4 8h13l-3-3M20 16H7l3 3"],
+  orders:          ["M9 4h6v3H9zM7 5H5v15h14V5h-2M9 12h6M9 16h4"],
+  historial:       ["M3 12a9 9 0 1 0 3-6.7L3 8", "M3 4v4h4M12 7v5l3 2"],
+  budgets:         ["M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z", "M14 3v5h5M9 13h6M9 17h4"],
+  reports:         ["M4 20V10M10 20V4M16 20v-7M22 20H2"],
+  employees:       ["M3 5h18v14H3z", "M9 8.8a2.2 2.2 0 1 1 0 4.4 2.2 2.2 0 0 1 0-4.4M5.8 16.5a3.6 3.6 0 0 1 6.4 0M15 10h4M15 14h3"],
+  twofa:           ["M4 10h16v10H4z", "M8 10V7a4 4 0 0 1 8 0v3"],
+};
+
+function NavIcon({ name }) {
+  const paths = NAV_ICONS[name] || [];
+  return (
+    <svg className="admin-side-ico" viewBox="0 0 24 24" aria-hidden="true">
+      {paths.map((d, i) => <path key={i} d={d} />)}
+    </svg>
+  );
+}
+
 export default function AdminPanel() {
   const nav = useNavigate();
+  const { role } = useParams();
+  const base = `/app/${role}`;
   const { user, loading } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -2804,125 +2872,60 @@ export default function AdminPanel() {
         <h2>Panel de administración</h2>
       </header>
 
-      <div className="tabs" role="tablist" aria-label="Secciones de administración">
-        <button
-          className={`tab-btn ${tab === "stockCritico" ? "is-active" : ""}`}
-          onClick={() => setTab("stockCritico")}
-          role="tab"
-          aria-selected={tab === "stockCritico"}
-        >
-          Stock crítico
-        </button>
-        <button
-          className={`tab-btn ${tab === "products" ? "is-active" : ""}`}
-          onClick={() => setTab("products")}
-          role="tab"
-          aria-selected={tab === "products"}
-        >
-          Productos
-        </button>
+      <div className="admin-shell">
+        <nav className="admin-side" aria-label="Secciones de administración">
+          {NAV_GROUPS.map((grupo) => (
+            <div className="admin-side-group" key={grupo.title}>
+              <p className="admin-side-title">{grupo.title}</p>
+              <ul>
+                {grupo.items.map((item) =>
+                  item.to ? (
+                    <li key={item.to}>
+                      {/* Presupuestos e Informes siguen siendo páginas aparte */}
+                      <a
+                        className="admin-side-link"
+                        href={`${base}${item.to}`}
+                        onClick={(e) => { e.preventDefault(); nav(`${base}${item.to}`); }}
+                      >
+                        <NavIcon name={item.icon} />
+                        <span>{item.label}</span>
+                      </a>
+                    </li>
+                  ) : (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        className={`admin-side-link ${tab === item.id ? "is-active" : ""}`}
+                        onClick={() => setTab(item.id)}
+                        aria-current={tab === item.id ? "page" : undefined}
+                      >
+                        <NavIcon name={item.id} />
+                        <span>{item.label}</span>
+                      </button>
+                    </li>
+                  )
+                )}
+              </ul>
+            </div>
+          ))}
+        </nav>
 
-        <button
-          className={`tab-btn ${tab === "services" ? "is-active" : ""}`}
-          onClick={() => setTab("services")}
-          role="tab"
-          aria-selected={tab === "services"}
-        >
-          Asignar servicios
-        </button>
-
-        <button
-          className={`tab-btn ${tab === "createService" ? "is-active" : ""}`}
-          onClick={() => setTab("createService")}
-          role="tab"
-          aria-selected={tab === "createService"}
-        >
-          Crear servicio
-        </button>
-
-        <button
-          className={`tab-btn ${tab === "serviceProducts" ? "is-active" : ""}`}
-          onClick={() => setTab("serviceProducts")}
-          role="tab"
-          aria-selected={tab === "serviceProducts"}
-        >
-          Servicio ↔ Productos
-        </button>
-
-        <button
-          className={`tab-btn ${tab === "incomingStock" ? "is-active" : ""}`}
-          onClick={() => setTab("incomingStock")}
-          role="tab"
-          aria-selected={tab === "incomingStock"}
-        >
-          Ingresos programados
-        </button>
-
-        <button
-          className={`tab-btn ${tab === "massReassign" ? "is-active" : ""}`}
-          onClick={() => setTab("massReassign")}
-          role="tab"
-          aria-selected={tab === "massReassign"}
-        >
-          Reasignación masiva
-        </button>
-
-        <button
-          className={`tab-btn ${tab === "orders" ? "is-active" : ""}`}
-          onClick={() => setTab("orders")}
-          role="tab"
-          aria-selected={tab === "orders"}
-        >
-          Pedidos
-        </button>
-
-        <button
-          className={`tab-btn ${tab === "historial" ? "is-active" : ""}`}
-          onClick={() => setTab("historial")}
-          role="tab"
-          aria-selected={tab === "historial"}
-        >
-          Historial
-        </button>
-        <button
-          className={`tab-btn ${tab === "employees" ? "is-active" : ""}`}
-          onClick={() => setTab("employees")}
-          role="tab"
-          aria-selected={tab === "employees"}
-        >
-          Empleados
-        </button>
-        <button
-          className={`tab-btn ${tab === "twofa" ? "is-active" : ""}`}
-          onClick={() => setTab("twofa")}
-          role="tab"
-          aria-selected={tab === "twofa"}
-        >
-          Seguridad
-        </button>
-        <button
-          className={`tab-btn ${tab === "flexxus" ? "is-active" : ""}`}
-          onClick={() => setTab("flexxus")}
-          role="tab"
-          aria-selected={tab === "flexxus"}
-        >
-          Flexxus
-        </button>
-        <div style={{ flex: 1 }} />
+        <div className="admin-content">
+          {tab === "stockCritico" && <StockCriticoSection />}
+          {tab === "products" && <ProductsSection />}
+          {tab === "services" && <AssignServicesSection />}
+          {tab === "createService" && <CreateServiceSection />}
+          {tab === "serviceProducts" && <ServiceProductsSection />}
+          {tab === "budgets" && <ServiceBudgetsSection />}
+          {tab === "incomingStock" && <IncomingStockSection />}
+          {tab === "massReassign" && <MassReassignServicesSection />}
+          {tab === "orders" && <OrdersSection />}
+          {tab === "historial" && <ProductHistorialSection />}
+          {tab === "employees" && <EmployeesSection />}
+          {tab === "twofa" && <TwoFactorSection />}
+          {tab === "flexxus" && <FlexxusMatchSection />}
+        </div>
       </div>
-      {tab === "stockCritico" && <StockCriticoSection />}
-      {tab === "products" && <ProductsSection />}
-      {tab === "services" && <AssignServicesSection />}
-      {tab === "createService" && <CreateServiceSection />}
-      {tab === "serviceProducts" && <ServiceProductsSection />}
-      {tab === "budgets" && <ServiceBudgetsSection />}
-      {tab === "incomingStock" && <IncomingStockSection />}
-      {tab === "massReassign" && <MassReassignServicesSection />}
-      {tab === "orders" && <OrdersSection />}
-      {tab === "historial" && <ProductHistorialSection />}
-      {tab === "employees" && <EmployeesSection />}
-      {tab === "twofa" && <TwoFactorSection />}
-      {tab === "flexxus" && <FlexxusMatchSection />}
     </div>
   );
 }

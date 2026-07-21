@@ -4,13 +4,124 @@
 .admin-panel {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: #0f172a;
-  max-width: 1200px;
+  max-width: 1600px;
   margin: 0 auto;
   padding: 1.5rem 1.25rem 2rem;
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
   background: #f1f5f9;
+}
+
+/* =====================  LATERAL DE SECCIONES  ===================== */
+
+.admin-panel .admin-shell {
+  display: grid;
+  grid-template-columns: 224px minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+
+.admin-panel .admin-content {
+  min-width: 0;
+}
+
+.admin-panel .admin-side {
+  position: sticky;
+  top: 16px;
+}
+
+.admin-panel .admin-side-group + .admin-side-group {
+  margin-top: 20px;
+}
+
+.admin-panel .admin-side-title {
+  margin: 0 0 7px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.admin-panel .admin-side ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.admin-panel .admin-side-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #475569;
+  font: inherit;
+  font-size: 0.9rem;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.admin-panel .admin-side-link:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.admin-panel .admin-side-link:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: -2px;
+}
+
+.admin-panel .admin-side-link.is-active {
+  background: #2563eb;
+  color: #fff;
+  font-weight: 500;
+}
+
+.admin-panel .admin-side-ico {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Debajo de 1080px el lateral se acuesta arriba del contenido */
+@media (max-width: 1080px) {
+  .admin-panel .admin-shell {
+    grid-template-columns: 1fr;
+  }
+  .admin-panel .admin-side {
+    position: static;
+  }
+  .admin-panel .admin-side-group + .admin-side-group {
+    margin-top: 12px;
+  }
+  .admin-panel .admin-side ul {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .admin-panel .admin-side-link {
+    width: auto;
+    border-radius: 999px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-panel .admin-side-link { transition: none; }
 }
 
 /* Título principal */
