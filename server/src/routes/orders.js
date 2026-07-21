@@ -11,6 +11,7 @@ import { getWarehouseForChildService } from "../warehouses.js";
 import { generateRemitoPDFBuffer } from "../utils/remitoPdf.js";
 import { sendMail } from "../utils/mailer.js";
 import { listEmpresas, getMailConfigValue } from "../utils/empresa.js";
+import { toISO } from "../utils/fechas.js";
 
 // Mail que recibe copia de TODOS los pedidos de servicios hijos de un depósito.
 const DEPOSITO_CC_FALLBACK = "gustavo.bacur@kazaro.com.ar";
@@ -18,14 +19,10 @@ const DEPOSITO_CC_FALLBACK = "gustavo.bacur@kazaro.com.ar";
 const router = Router();
 const pad7 = (n) => String(n ?? "").padStart(7, "0");
 
+// La base guarda UTC. Antes esto le agregaba "-03:00" al string, o sea que lo
+// interpretaba como hora argentina, y devolvía el instante adelantado 3 horas.
 function sqlLocalToISO(sqlTs) {
-  if (!sqlTs) return new Date().toISOString();
-  try {
-    const base = String(sqlTs).replace(" ", "T");
-    const d = new Date(base + "-03:00");
-    if (Number.isNaN(d.getTime())) return new Date().toISOString();
-    return d.toISOString();
-  } catch { return new Date().toISOString(); }
+  return toISO(sqlTs) || new Date().toISOString();
 }
 
 function primaryRole(userId) {

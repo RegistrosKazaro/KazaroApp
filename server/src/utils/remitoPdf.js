@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import PDFDocument from "pdfkit";
 import { getEmployeeDisplayName, getServiceNameById, db } from "../db.js";
+import { fmtAr } from "./fechas.js";
 import { PassThrough } from "stream";
 
 /* ================= Helpers ================= */
@@ -20,49 +21,13 @@ const money = (n) => {
 };
 
 // ─── ZONA HORARIA ────────────────────────────────────────────
-// Siempre interpreta los strings de la DB como hora de Argentina (UTC-3).
-// SQLite guarda con datetime('now','localtime') pero en servidores Linux
-// "localtime" puede ser UTC. Esta función normaliza sin importar eso.
-const AR_OFFSET_MS = -3 * 60 * 60 * 1000; // UTC-3 fijo (Argentina no tiene DST)
-
-function sqlToArDate(s) {
-  if (!s) return new Date(Date.now() + AR_OFFSET_MS);
-  try {
-    // "YYYY-MM-DD HH:MM:SS" o "YYYY-MM-DDTHH:MM:SS"
-    const clean = String(s).trim().replace("T", " ");
-    const [datePart, timePart = "00:00:00"] = clean.split(" ");
-    const [Y, M, D] = datePart.split("-").map(Number);
-    const [h = 0, m = 0, sec = 0] = timePart.split(":").map(Number);
-    // Construimos el instante como si fuera UTC-3 directamente
-    return new Date(Date.UTC(Y, M - 1, D, h + 3, m, sec)); // +3 para convertir AR→UTC
-  } catch {
-    return new Date(Date.now() + AR_OFFSET_MS);
-  }
-}
-
-function fmtDateTime(s) {
-  const d = sqlToArDate(s);
-  return d.toLocaleString("es-AR", {
-    timeZone: "America/Argentina/Buenos_Aires",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-}
+// La conversión vive en utils/fechas.js. Antes esta función asumía que la base
+// guardaba hora argentina y le sumaba 3 horas; en realidad SQLite guarda UTC,
+// así que el remito salía con la hora adelantada 3 horas.
+const fmtDateTime = (s) => fmtAr(s);
 
 function nowLocal() {
-  return new Date().toLocaleString("es-AR", {
-    timeZone: "America/Argentina/Buenos_Aires",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  return fmtAr(new Date().toISOString());
 }
 // ─────────────────────────────────────────────────────────────
 
