@@ -17,6 +17,7 @@ import supervisorRoutes from "./routes/supervisor.js";
 import serviceProductsRoutes from "./routes/serviceProducts.js";
 import reportsRoutes from "./routes/reports.js";
 import depositoRoutes from "./routes/deposito.js";
+import apiPublicaRoutes from "./routes/apiPublica.js";
 
 import { verifyTransport as verifyMailerTransport } from "./utils/mailer.js";
 import { createCorsMiddleware } from "./utils/corsConfig.js";
@@ -68,6 +69,15 @@ app.get("/csrf-token", (req, res) => {
 // 2) HEALTHCHECK
 // =========================
 app.get("/_health", (_req, res) => res.json({ ok: true }));
+
+// =========================
+// 2.b) API PÚBLICA DE SÓLO LECTURA (para otras áreas)
+// =========================
+// Va ANTES del CSRF a propósito: es una API servidor-a-servidor que se
+// autentica con un token fijo (Authorization: Bearer), no con cookies, así que
+// un consumidor externo no tiene ni puede tener un token CSRF. No usa sesión,
+// sólo acepta GET y el token determina de qué empresa son los datos.
+app.use("/v1", apiPublicaRoutes);
 
 // =========================
 // 3) CSRF VALIDATION REAL
