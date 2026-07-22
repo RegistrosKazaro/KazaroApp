@@ -28,6 +28,7 @@ import {
 } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendMail } from "../utils/mailer.js";
+import { toISO, fmtAr, diaAr } from "../utils/fechas.js";
 import empresaRouter from "./admin_empresa_addon.js";
 
 const router = Router();
@@ -893,6 +894,133 @@ router.get("/orders", mustBeAdmin, (req, res) => {
     res.json(enriched);
   } catch {
     res.status(500).json({ error: "Error al listar pedidos" });
+  }
+});
+
+/**
+ * Listado detallado de pedidos: fecha y hora, servicio, e insumos con cantidad,
+ * precio y subtotal. Es el contrato que después va a consumir la API externa,
+ * así que la forma de la respuesta se mantiene estable y explícita.
+ *
+ * Query params (todos opcionales):
+ *   desde, hasta  aaaa-mm-dd, inclusive, interpretados como DÍA ARGENTINO
+ *   servicioId    filtra por servicio
+ *   q             busca en nombre de servicio, nota, o nombre/código de insumo
+ *   estado        "abierto" | "cerrado"
+ *   sinServicio   "1" para traer sólo los que no tienen servicio (administrativos)
+ *   page, limit   paginado; limit máximo 500
+ */
+router.get("/pedidos", mustBeAdmin, (req, res) => {
+  try {
+    const empresaId = Number(req.user?.empresaId ?? 1);
+
+    const page  = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 50));
+    const offset = (page - 1) * limit;
+
+    const where = ["p.deleted_at IS NULL", "p.empresa_id = @empresaId"];
+    const params = { empresaId, limit, offset };
+
+    // Argentina es UTC-3, así que el día local arranca a las 03:00 UTC. Comparar
+    // contra el string crudo daría mal para los pedidos hechos después de las 21.
+    const dia = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "").trim()) ? String(v).trim() : null);
+    const desde = dia(req.query.desde);
+    const hasta = dia(req.query.hasta);
+    if (desde) { where.push("p.Fecha >= @desdeUtc"); params.desdeUtc = `${desde} 03:00:00`; }
+    if (hasta) {
+      // fin del día argentino = 03:00 UTC del día siguiente
+      const d = new Date(`${hasta}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + 1);
+      params.hastaUtc = `${d.toISOString().slice(0, 10)} 03:00:00`;
+      where.push("p.Fecha < @hastaUtc");
+    }
+
+    if (req.query.servicioId) { where.push("p.ServicioID = @servicioId"); params.servicioId = Number(req.query.servicioId); }
+    if (String(req.query.sinServicio) === "1") where.push("p.ServicioID IS NULL");
+
+    const estado = String(req.query.estado || "").toLowerCase();
+    if (estado === "cerrado") where.push("(p.closedat IS NOT NULL OR LOWER(COALESCE(p.Status,'')) = 'closed')");
+    if (estado === "abierto") where.push("(p.closedat IS NULL AND LOWER(COALESCE(p.Status,'')) <> 'closed')");
+
+    const q = String(req.query.q || "").trim();
+    if (q.length >= 2) {
+      params.q = `%${q.toLowerCase()}%`;
+      where.push(`(
+        LOWER(COALESCE(s.ServicioNombre,'')) LIKE @q
+        OR LOWER(COALESCE(p.Nota,'')) LIKE @q
+        OR EXISTS (SELECT 1 FROM PedidoItems i WHERE i.PedidoID = p.PedidoID
+                   AND (LOWER(COALESCE(i.Nombre,'')) LIKE @q OR LOWER(COALESCE(i.Codigo,'')) LIKE @q))
+      )`);
+    }
+
+    const whereSql = `WHERE ${where.join(" AND ")}`;
+    const fromSql  = `FROM Pedidos p LEFT JOIN Servicios s ON s.ServiciosID = p.ServicioID`;
+
+    const { total } = db.prepare(`SELECT COUNT(*) AS total ${fromSql} ${whereSql}`).get(params);
+
+    const rows = db.prepare(`
+      SELECT p.PedidoID AS id, p.Fecha AS fecha, p.Total AS total, p.Rol AS rol,
+             p.Nota AS nota, p.EmpleadoID AS empleadoId, p.Status AS status,
+             p.closedat AS closedAt, p.retiro_at AS retiroAt,
+             p.ServicioID AS servicioId, s.ServicioNombre AS servicioNombre
+      ${fromSql} ${whereSql}
+      ORDER BY p.Fecha DESC, p.PedidoID DESC
+      LIMIT @limit OFFSET @offset
+    `).all(params);
+
+    const stmtItems = db.prepare(`
+      SELECT Codigo AS codigo, Nombre AS nombre, Cantidad AS cantidad,
+             Precio AS precio, Subtotal AS subtotal
+      FROM PedidoItems WHERE PedidoID = ? ORDER BY PedidoItemID
+    `);
+
+    const pedidos = rows.map((r) => {
+      const items = stmtItems.all(r.id).map((i) => ({
+        codigo: i.codigo || null,
+        nombre: i.nombre || "",
+        cantidad: Number(i.cantidad || 0),
+        precio: Number(i.precio || 0),
+        subtotal: Number(i.subtotal ?? (Number(i.precio || 0) * Number(i.cantidad || 0))),
+      }));
+      const cerrado = r.closedAt != null || String(r.status || "").toLowerCase() === "closed";
+      return {
+        id: r.id,
+        numero: String(r.id).padStart(7, "0"),
+        fecha: toISO(r.fecha),
+        fechaAr: fmtAr(r.fecha),
+        diaAr: diaAr(r.fecha),
+        servicio: r.servicioId ? { id: r.servicioId, nombre: r.servicioNombre || "" } : null,
+        solicitante: r.empleadoId ? getEmployeeDisplayName(r.empleadoId) : "",
+        rol: r.rol || null,
+        estado: cerrado ? "cerrado" : "abierto",
+        nota: r.nota || null,
+        cantidadItems: items.reduce((a, i) => a + i.cantidad, 0),
+        total: Number(r.total || 0),
+        items,
+      };
+    });
+
+    res.json({ total, page, limit, desde: desde || null, hasta: hasta || null, pedidos });
+  } catch (e) {
+    console.error("[admin/pedidos]", e?.message);
+    res.status(500).json({ error: "Error al listar pedidos" });
+  }
+});
+
+/** Servicios que tienen al menos un pedido: alimenta el filtro de la pantalla. */
+router.get("/pedidos/servicios", mustBeAdmin, (req, res) => {
+  try {
+    const empresaId = Number(req.user?.empresaId ?? 1);
+    const rows = db.prepare(`
+      SELECT s.ServiciosID AS id, s.ServicioNombre AS nombre, COUNT(*) AS pedidos
+      FROM Pedidos p JOIN Servicios s ON s.ServiciosID = p.ServicioID
+      WHERE p.deleted_at IS NULL AND p.empresa_id = ?
+      GROUP BY s.ServiciosID, s.ServicioNombre
+      ORDER BY s.ServicioNombre COLLATE NOCASE
+    `).all(empresaId);
+    res.json(rows);
+  } catch {
+    res.status(500).json({ error: "Error al listar servicios con pedidos" });
   }
 });
 

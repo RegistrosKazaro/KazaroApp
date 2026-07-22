@@ -1,5 +1,5 @@
 // client/src/pages/AdminPanel.jsx
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
@@ -1874,63 +1874,97 @@ function IncomingStockSection() {
 
 function OrdersSection() {
   const [orders, setOrders] = useState([]);
+  const [total, setTotal] = useState(0);
   const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  // Filtros. desde/hasta son días argentinos; el backend los convierte al
+  // rango UTC correcto (el día argentino arranca a las 03:00 UTC).
+  const [q, setQ] = useState("");
+  const [servicioId, setServicioId] = useState("");
+  const [desde, setDesde] = useState("");
+  const [hasta, setHasta] = useState("");
+  const [servicios, setServicios] = useState([]);
+  const [page, setPage] = useState(1);
+  const LIMIT = 50;
+
+  const [abiertos, setAbiertos] = useState(() => new Set());
 
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [pdfUrl, setPdfUrl] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewErr, setPreviewErr] = useState("");
 
-  const isClosed = (o) => {
-    if (!o) return false;
-
-    const status = String(o.status ?? o.Status ?? "").toLowerCase();
-    const estado = String(o.estado ?? o.Estado ?? "").toLowerCase();
-    const closedAt = o.closedAt ?? o.ClosedAt ?? o.closed_at ?? null;
-
-    const flagFields = [o.isClosed, o.is_closed, o.cerrado, o.Cerrado];
-    const flagTrue = flagFields.some((v) => {
-      if (v === 1 || v === true) return true;
-      if (v === "1") return true;
-      if (typeof v === "string" && v.toLowerCase() === "true") return true;
-      return false;
-    });
-
-    return (
-      status === "closed" ||
-      estado === "cerrado" ||
-      estado === "completado" ||
-      estado === "completo" ||
-      flagTrue ||
-      closedAt != null
-    );
-  };
-
   const load = useCallback(async () => {
     setErr("");
+    setLoading(true);
     try {
-      const { data } = await api.get("/deposito/orders", {
-        params: { status: "closed" },
+      const { data } = await api.get("/admin/pedidos", {
+        params: {
+          q: q.trim() || undefined,
+          servicioId: servicioId || undefined,
+          desde: desde || undefined,
+          hasta: hasta || undefined,
+          page,
+          limit: LIMIT,
+        },
         withCredentials: true,
       });
-      const arr = Array.isArray(data) ? data : data?.rows || [];
-      setOrders(arr.filter(isClosed));
-    } catch (e1) {
-      console.warn("Fallo /deposito/orders, intento /admin/orders", e1?.message);
-      try {
-        const { data } = await api.get("/admin/orders", {
-          params: { status: "closed" },
-          withCredentials: true,
-        });
-        const arr = Array.isArray(data) ? data : data?.rows || [];
-        setOrders(arr.filter(isClosed));
-      } catch (e2) {
-        console.error("No se pudieron cargar los pedidos cerrados", e2);
-        setErr("No se pudieron cargar los pedidos cerrados");
-        setOrders([]);
+      setOrders(Array.isArray(data?.pedidos) ? data.pedidos : []);
+      setTotal(Number(data?.total || 0));
+    } catch (e) {
+      console.error("No se pudieron cargar los pedidos", e);
+      setErr("No se pudieron cargar los pedidos");
+      setOrders([]);
+      setTotal(0);
+    } finally {
+      setLoading(false);
+    }
+  }, [q, servicioId, desde, hasta, page]);
+
+  useEffect(() => {
+    let vivo = true;
+    api.get("/admin/pedidos/servicios", { withCredentials: true })
+      .then(({ data }) => { if (vivo) setServicios(Array.isArray(data) ? data : []); })
+      .catch(() => { if (vivo) setServicios([]); });
+    return () => { vivo = false; };
+  }, []);
+
+  const limpiarFiltros = () => {
+    setQ(""); setServicioId(""); setDesde(""); setHasta(""); setPage(1);
+  };
+
+  const toggleDetalle = (id) => {
+    setAbiertos((prev) => {
+      const s = new Set(prev);
+      if (s.has(id)) s.delete(id); else s.add(id);
+      return s;
+    });
+  };
+
+  const exportarCsv = () => {
+    const cab = ["Pedido", "Fecha y hora", "Servicio", "Solicitante", "Estado",
+                 "Codigo", "Insumo", "Cantidad", "Precio unitario", "Subtotal", "Total del pedido"];
+    const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const filas = [cab.map(esc).join(";")];
+    for (const p of orders) {
+      const base = [p.numero, p.fechaAr, p.servicio?.nombre ?? "(sin servicio)", p.solicitante, p.estado];
+      if (!p.items?.length) {
+        filas.push([...base, "", "", "", "", "", p.total].map(esc).join(";"));
+      } else {
+        for (const i of p.items) {
+          filas.push([...base, i.codigo ?? "", i.nombre, i.cantidad, i.precio, i.subtotal, p.total].map(esc).join(";"));
+        }
       }
     }
-  }, []);
+    const blob = new Blob(["﻿" + filas.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `pedidos_${desde || "inicio"}_a_${hasta || "hoy"}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 const onDeleteOrder = useCallback(async (o) => {
     if (!window.confirm(`¿Eliminar el pedido #${String(o.id).padStart(7, "0")}? Se ocultará del listado y los reportes (recuperable).`)) return;
     try {
@@ -1955,23 +1989,9 @@ const onDeleteOrder = useCallback(async (o) => {
     }
   }, [orders, selectedOrder, pdfUrl]);
 
-  const formatFecha = (raw) => {
-    if (!raw) return "";
-    try {
-      const base = String(raw).replace(" ", "T");
-      const d = new Date(base + "-03:00");
-      return d.toLocaleString("es-AR", {
-        timeZone: "America/Argentina/Cordoba",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-    } catch {
-      return raw;
-    }
-  };
+  // La fecha ya viene formateada en hora argentina desde el backend (campo
+  // fechaAr). Antes acá se reparseaba asumiendo que la base guardaba hora
+  // local y se le sumaban 3 horas, el mismo error que tenían los remitos.
 
   const isPdfBlob = async (blob) => {
     try {
@@ -2109,65 +2129,165 @@ const onDeleteOrder = useCallback(async (o) => {
 
   return (
     <section className="srv-card" aria-labelledby="orders-heading">
-      <h3 id="orders-heading">Pedidos (cerrados)</h3>
+      <div className="section-header">
+        <h3 id="orders-heading">Pedidos</h3>
+
+        <div className="toolbar">
+          <input
+            className="input"
+            placeholder="Buscar por servicio, insumo, código o nota…"
+            value={q}
+            onChange={(e) => { setQ(e.target.value); setPage(1); }}
+            onKeyDown={(e) => { if (e.key === "Enter") load(); }}
+            aria-label="Buscar pedidos"
+          />
+
+          <select
+            className="select"
+            value={servicioId}
+            onChange={(e) => { setServicioId(e.target.value); setPage(1); }}
+            aria-label="Filtrar por servicio"
+          >
+            <option value="">— Todos los servicios —</option>
+            {servicios.map((s) => (
+              <option key={s.id} value={String(s.id)}>{s.nombre} ({s.pedidos})</option>
+            ))}
+          </select>
+
+          <label className="select-row" style={{ minWidth: 0 }}>
+            <span className="muted">Desde</span>
+            <input type="date" className="select" value={desde}
+              onChange={(e) => { setDesde(e.target.value); setPage(1); }} />
+          </label>
+
+          <label className="select-row" style={{ minWidth: 0 }}>
+            <span className="muted">Hasta</span>
+            <input type="date" className="select" value={hasta}
+              onChange={(e) => { setHasta(e.target.value); setPage(1); }} />
+          </label>
+
+          <button className="btn" type="button" onClick={load} disabled={loading}>
+            {loading ? "Buscando…" : "Buscar"}
+          </button>
+          <button className="btn ghost" type="button" onClick={limpiarFiltros}>
+            Limpiar filtros
+          </button>
+          <button className="btn" type="button" onClick={exportarCsv} disabled={!orders.length}>
+            Exportar CSV
+          </button>
+        </div>
+
+        <div className="hint">
+          {loading ? "Cargando…" : `${total} pedido${total === 1 ? "" : "s"}`}
+          {total > LIMIT && ` · mostrando ${orders.length} (página ${page} de ${Math.ceil(total / LIMIT)})`}
+        </div>
+      </div>
+
       {err && <div className="state error">{err}</div>}
 
       <div className="table like">
         <div className="t-head">
-          <div style={{ flex: 1 }}>#</div>
-          <div style={{ flex: 2 }}>Empleado</div>
-          <div style={{ flex: 2 }}>Rol</div>
-          <div style={{ flex: 2 }}>Fecha</div>
-          <div style={{ flex: 2, textAlign: "right" }}>Total</div>
-          <div style={{ width: 220 }} />
+          <div style={{ width: 34 }} />
+          <div style={{ width: 88 }}>Pedido</div>
+          <div style={{ width: 140 }}>Fecha y hora</div>
+          <div style={{ flex: 2 }}>Servicio</div>
+          <div style={{ flex: 1.4 }}>Solicitante</div>
+          <div style={{ width: 70, textAlign: "right" }}>Ítems</div>
+          <div style={{ width: 110, textAlign: "right" }}>Total</div>
+          <div style={{ width: 190 }} />
         </div>
 
+        {!loading && !orders.length && (
+          <div className="t-row"><div className="muted">No hay pedidos con esos filtros.</div></div>
+        )}
+
         {orders.map((o) => (
-          <div key={o.id} className="t-row">
-            <div style={{ flex: 1 }}>{String(o.id).padStart(7, "0")}</div>
-            <div style={{ flex: 2 }}>{o.empleadoId}</div>
-            <div style={{ flex: 2 }}>{o.rol}</div>
-            <div style={{ flex: 2 }}>{formatFecha(o.fecha)}</div>
-            <div style={{ flex: 2, textAlign: "right" }}>
-              {o.total == null ? "—" : money(o.total)}
+          <Fragment key={o.id}>
+            <div className="t-row">
+              <div style={{ width: 34 }}>
+                <button
+                  className="pill"
+                  style={{ padding: "2px 8px" }}
+                  onClick={() => toggleDetalle(o.id)}
+                  aria-expanded={abiertos.has(o.id)}
+                  aria-label={abiertos.has(o.id) ? "Ocultar insumos" : "Ver insumos"}
+                  title={abiertos.has(o.id) ? "Ocultar insumos" : "Ver insumos"}
+                >
+                  {abiertos.has(o.id) ? "−" : "+"}
+                </button>
+              </div>
+              <div style={{ width: 88, fontVariantNumeric: "tabular-nums" }}>{o.numero}</div>
+              <div style={{ width: 140, fontVariantNumeric: "tabular-nums" }}>{o.fechaAr}</div>
+              <div style={{ flex: 2 }} className="truncate" title={o.servicio?.nombre || ""}>
+                {o.servicio?.nombre || <span className="muted">Sin servicio ({o.rol || "—"})</span>}
+              </div>
+              <div style={{ flex: 1.4 }} className="truncate">{o.solicitante || "—"}</div>
+              <div style={{ width: 70, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                {o.cantidadItems}
+              </div>
+              <div style={{ width: 110, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                {o.total == null ? "—" : money(o.total)}
+              </div>
+              <div style={{ width: 190, display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                <button
+                  className="pill"
+                  onClick={() => onPreviewRemito(o)}
+                  disabled={previewLoading && selectedOrder?.id === o.id}
+                >
+                  {previewLoading && selectedOrder?.id === o.id ? "Cargando…" : "Ver remito"}
+                </button>
+                <button className="pill danger" onClick={() => onDeleteOrder(o)}>
+                  Eliminar
+                </button>
+              </div>
             </div>
-            <div
-              style={{
-                width: 220,
-                display: "flex",
-                gap: 6,
-                justifyContent: "flex-end",
-              }}
-            >
-              <button
-                className="pill"
-                onClick={() => onPreviewRemito(o)}
-                disabled={previewLoading && selectedOrder?.id === o.id}
-              >
-                {previewLoading && selectedOrder?.id === o.id ? "Cargando…" : "Ver remito"}
-              </button>
-              <button
-                className="pill"
-                style={{ background: "#fee2e2", color: "#b91c1c" }}
-                onClick={() => onDeleteOrder(o)}
-              >
-                Eliminar
-              </button>
-            </div>
-          </div>
+
+            {abiertos.has(o.id) && (
+              <div className="t-row" style={{ display: "block", background: "#f8fafc" }}>
+                <div style={{ padding: "2px 0 6px 34px" }}>
+                  <div className="t-head" style={{ padding: "6px 0", background: "transparent", borderBottom: "1px solid #e2e8f0" }}>
+                    <div style={{ width: 110 }}>Código</div>
+                    <div style={{ flex: 2 }}>Insumo</div>
+                    <div style={{ width: 80, textAlign: "right" }}>Cantidad</div>
+                    <div style={{ width: 110, textAlign: "right" }}>Precio unit.</div>
+                    <div style={{ width: 120, textAlign: "right" }}>Subtotal</div>
+                  </div>
+                  {o.items.map((i, idx) => (
+                    <div key={idx} style={{ display: "flex", gap: "0.5rem", padding: "6px 0", fontSize: "0.88rem" }}>
+                      <div style={{ width: 110, fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: "0.8rem" }}>
+                        {i.codigo || <span className="muted">—</span>}
+                      </div>
+                      <div style={{ flex: 2 }} className="truncate" title={i.nombre}>{i.nombre}</div>
+                      <div style={{ width: 80, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{i.cantidad}</div>
+                      <div style={{ width: 110, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money(i.precio)}</div>
+                      <div style={{ width: 120, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money(i.subtotal)}</div>
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", gap: "0.5rem", padding: "8px 0 2px", borderTop: "1px solid #e2e8f0", fontWeight: 500 }}>
+                    <div style={{ flex: 1 }}>{o.nota ? <span className="muted">Nota: {o.nota}</span> : null}</div>
+                    <div style={{ width: 120, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money(o.total)}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </Fragment>
         ))}
 
-        {orders.length === 0 && (
-          <div className="t-row">
-            <div style={{ flex: 1 }}>—</div>
-            <div style={{ flex: 2 }}>Sin pedidos cerrados</div>
-            <div style={{ flex: 2 }} />
-            <div style={{ flex: 2 }} />
-            <div style={{ flex: 2 }} />
-            <div style={{ width: 220 }} />
-          </div>
-        )}
       </div>
+
+      {total > LIMIT && (
+        <div className="actions-row" style={{ justifyContent: "center", gap: 10, marginTop: 10 }}>
+          <button className="btn ghost" type="button" disabled={page <= 1 || loading}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}>
+            ← Anterior
+          </button>
+          <span className="muted">Página {page} de {Math.ceil(total / LIMIT)}</span>
+          <button className="btn ghost" type="button" disabled={page >= Math.ceil(total / LIMIT) || loading}
+            onClick={() => setPage((p) => p + 1)}>
+            Siguiente →
+          </button>
+        </div>
+      )}
 
       {(selectedOrder || previewErr) && (
         <div className="card" style={{ marginTop: 12 }}>
@@ -2175,9 +2295,10 @@ const onDeleteOrder = useCallback(async (o) => {
             {selectedOrder ? (
               <div className="muted">
                 Remito del pedido{" "}
-                <strong>#{String(selectedOrder.id).padStart(7, "0")}</strong> — Empleado{" "}
-                <strong>{selectedOrder.empleadoId}</strong> — Rol{" "}
-                <strong>{selectedOrder.rol}</strong>
+                <strong>#{selectedOrder.numero ?? String(selectedOrder.id).padStart(7, "0")}</strong>
+                {" — "}<strong>{selectedOrder.fechaAr}</strong>
+                {selectedOrder.servicio?.nombre && <> — <strong>{selectedOrder.servicio.nombre}</strong></>}
+                {selectedOrder.solicitante && <> — {selectedOrder.solicitante}</>}
               </div>
             ) : (
               <div className="muted">Detalle de remito</div>
