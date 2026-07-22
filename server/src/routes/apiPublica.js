@@ -57,9 +57,7 @@ function requiereToken(req, res, next) {
     });
   }
 
-  const auth = String(req.get("authorization") || "");
-  const bearer = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : null;
-  const recibido = bearer || req.get("x-api-key") || "";
+  const recibido = tokenDelRequest(req);
 
   if (!recibido) {
     return res.status(401).json({
@@ -77,12 +75,32 @@ function requiereToken(req, res, next) {
   next();
 }
 
+/** Extrae el token del header, sea Bearer o X-API-Key. */
+function tokenDelRequest(req) {
+  const auth = String(req.get("authorization") || "");
+  const bearer = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : null;
+  return bearer || req.get("x-api-key") || "";
+}
+
 const limitador = rateLimit({
   windowMs: 60 * 1000,
   max: 60,
-  standardHeaders: true,
+  standardHeaders: true, // devuelve RateLimit-Limit / -Remaining / -Reset
   legacyHeaders: false,
-  message: { error: "demasiadas_consultas", mensaje: "Máximo 60 consultas por minuto." },
+  // Se cuenta POR TOKEN, no por IP (que es el default de express-rate-limit).
+  // Así cada consumidor tiene su propio presupuesto: no compite con la otra
+  // empresa aunque compartan la instancia, ni consigo mismo si sale por varias
+  // IPs o por un NAT compartido. El token se hashea para no dejarlo en las
+  // claves del store en memoria.
+  keyGenerator: (req) => {
+    const token = tokenDelRequest(req);
+    if (token) return "tok:" + crypto.createHash("sha256").update(token).digest("hex");
+    return "ip:" + (req.ip || "desconocida");
+  },
+  message: {
+    error: "demasiadas_consultas",
+    mensaje: "Máximo 60 consultas por minuto por token. Reintentá en unos segundos.",
+  },
 });
 
 // Sólo lectura: cualquier método que no sea GET se rechaza.
