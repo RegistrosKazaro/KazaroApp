@@ -1354,13 +1354,55 @@ export function unassignService({ id, EmpleadoID, ServicioID }) {
   }
   return false;
 }
+// Empresas donde el supervisor ve TODOS los servicios, sin asignación previa.
+// En Pazar los supervisores rotan entre servicios, así que atarlos a uno fijo
+// no sirve. No se resuelve cargando todo en supervisor_services porque esa
+// tabla tiene un índice único por ServicioID (ux_supervisor_services_service):
+// cada servicio admite un solo supervisor, y ensureSupervisorPivotExclusive()
+// borra los duplicados en cada arranque. Además, así los servicios nuevos
+// quedan disponibles solos, sin tener que asignarlos uno por uno.
+const EMPRESAS_TODOS_LOS_SERVICIOS = new Set([2]); // 2 = Pazar
+
+/** true si en esa empresa los supervisores ven todos los servicios. */
+export function empresaVeTodosLosServicios(empresaId) {
+  return empresaId != null && EMPRESAS_TODOS_LOS_SERVICIOS.has(Number(empresaId));
+}
+
+function empresaDeEmpleado(userId) {
+  try {
+    const row = db.prepare(
+      `SELECT empresa_id FROM Empleados WHERE CAST(EmpleadosID AS TEXT) = CAST(? AS TEXT) LIMIT 1`
+    ).get(userId);
+    return row?.empresa_id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function listServicesByUser(userId, empresaId = null) {
   ensureSupervisorPivotExclusive();
   const spec = resolveServicesTable();
   const srvInfo = tinfo("Servicios");
   const hasEmpresa = srvInfo.some(c => c.name === "empresa_id");
-  const empresaFilter = (hasEmpresa && empresaId != null)
-    ? `AND s.empresa_id = ${Number(empresaId)}`
+  const hasDeleted = srvInfo.some(c => c.name === "deleted_at");
+
+  // La mayoría de las llamadas no pasan empresaId, así que se deduce del empleado.
+  const empresa = empresaId != null ? Number(empresaId) : empresaDeEmpleado(userId);
+
+  if (hasEmpresa && empresa != null && EMPRESAS_TODOS_LOS_SERVICIOS.has(Number(empresa))) {
+    const rows = db.prepare(`
+      SELECT s.${spec.idCol} AS sid,
+             ${spec.nameExpr} AS sname
+      FROM ${spec.table} s
+      WHERE s.empresa_id = ?
+      ${hasDeleted ? "AND s.deleted_at IS NULL" : ""}
+      ORDER BY sname COLLATE NOCASE
+    `).all(Number(empresa));
+    return rows.map(r => ({ id: Number(r.sid), name: String(r.sname) }));
+  }
+
+  const empresaFilter = (hasEmpresa && empresa != null)
+    ? `AND s.empresa_id = ${Number(empresa)}`
     : "";
   const rows = db.prepare(`
     SELECT s.${spec.idCol} AS sid,

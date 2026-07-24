@@ -1,7 +1,7 @@
 // server/src/routes/supervisor.js  ← REEMPLAZA el archivo actual
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.js";
-import { db, tinfo } from "../db.js";
+import { db, tinfo, empresaVeTodosLosServicios } from "../db.js";
 
 const router = Router();
 
@@ -32,6 +32,23 @@ function getServiceCols() {
 
 function listAssignedServicesFor(empleadoId, empresaId) {
   const { SRV_ID, SRV_NAME, hasEmpresa } = getServiceCols();
+
+  // En Pazar los supervisores rotan entre servicios, así que ven todos los de
+  // la empresa sin asignación previa. No se resuelve cargando supervisor_services
+  // porque esa tabla tiene un índice único por ServicioID: cada servicio admite
+  // un solo supervisor, y ensureSupervisorPivotExclusive() borra los duplicados
+  // en cada arranque. Así, además, los servicios nuevos aparecen solos.
+  if (hasEmpresa && empresaVeTodosLosServicios(empresaId)) {
+    const srvInfo = tinfo("Servicios");
+    const hasDeleted = srvInfo.some((c) => c.name === "deleted_at");
+    return db.prepare(`
+      SELECT s.${SRV_ID} AS id, s.${SRV_NAME} AS name
+      FROM Servicios s
+      WHERE s.empresa_id = ?
+      ${hasDeleted ? "AND s.deleted_at IS NULL" : ""}
+      ORDER BY ${SRV_NAME} COLLATE NOCASE
+    `).all(Number(empresaId));
+  }
 
   const pivotInfo = tinfo("supervisor_services");
   if (!pivotInfo.length) return [];
