@@ -83,6 +83,11 @@ const LIGHT_GRAY = "#F3F4F6";
 const BORDER_GRAY = "#E5E7EB";
 const TEXT_MUTED = "#6B7280";
 
+// Espacio que hay que dejar libre al final de cada hoja para el pie.
+const PIE_RESERVA = 18;
+// Alto del bloque de observaciones, cuando el pedido trae nota.
+const NOTA_ALTO = 80;
+
 function drawHeader(doc, nro, fecha, total) {
   const contentW = doc.page.width - M * 2;
   doc.save().rect(0, 0, doc.page.width, 70).fill("#F9FAFB").restore();
@@ -155,7 +160,7 @@ function drawMeta(doc, y, { empleado, rol, fecha, servicio }) {
   return yOut + 10;
 }
 
-function drawItemsTable(doc, y, rows, total) {
+function drawItemsTable(doc, y, rows, total, tieneNota = false) {
   const contentW = doc.page.width - M * 2;
   const W_CODE = 70, W_QTY = 45, W_PRICE = 75, W_SUB = 80;
   const W_DESC = contentW - (W_CODE + W_QTY + W_PRICE + W_SUB);
@@ -184,7 +189,11 @@ function drawItemsTable(doc, y, rows, total) {
 
   y = drawHeader(y);
 
-  const bottomReserve = 120;
+  // Lo que hay que reservar debajo de la última fila: el recuadro del TOTAL, el
+  // bloque de observaciones si el pedido trae nota, y el pie. Antes eran 120
+  // fijos, que sobrestimaban el espacio cuando no había nota y cortaban la
+  // tabla varias filas antes de tiempo.
+  const bottomReserve = (rowH + 14) + (tieneNota ? NOTA_ALTO : 0) + PIE_RESERVA;
 
   for (let i = 0; i < rows.length; i++) {
     const it = rows[i];
@@ -246,22 +255,49 @@ function drawItemsTable(doc, y, rows, total) {
 
 function drawNote(doc, y, nota) {
   if (!nota) return y;
+
+  const ALTO_CAJA = 60;
+  const ALTO_BLOQUE = 12 + ALTO_CAJA + 8; // etiqueta + caja + aire
+
+  // Si el bloque no entra en lo que queda de hoja, se pasa a la siguiente de
+  // forma explícita. Si no, el texto se dibujaría fuera del margen y PDFKit
+  // agregaría la página igual, pero partiendo la caja al medio.
+  if (y + ALTO_BLOQUE > doc.page.height - M - PIE_RESERVA) {
+    doc.addPage();
+    y = M;
+  }
+
   doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827").text("Observaciones", M, y);
   y += 12;
-  doc.save().roundedRect(M, y - 4, doc.page.width - M * 2, 60, 6).strokeColor("#E5E7EB").lineWidth(0.8).stroke().restore();
+  doc.save().roundedRect(M, y - 4, doc.page.width - M * 2, ALTO_CAJA, 6).strokeColor("#E5E7EB").lineWidth(0.8).stroke().restore();
+  // height + ellipsis: una nota larga se recorta en vez de desbordar la caja
+  // y arrastrar una hoja extra.
   doc.font("Helvetica").fontSize(9).fillColor("#374151")
-    .text(String(nota || ""), M + 8, y, { width: doc.page.width - (M + 8) * 2 });
-  return y + 68;
+    .text(String(nota || ""), M + 8, y, {
+      width: doc.page.width - (M + 8) * 2,
+      height: ALTO_CAJA - 8,
+      ellipsis: true,
+    });
+  return y + ALTO_CAJA + 8;
 }
 
 function drawFooter(doc) {
+  // El pie va deliberadamente en el borde inferior, por debajo del margen.
+  // PDFKit agrega una página automáticamente cuando se dibuja texto ahí, y eso
+  // hacía que todo remito terminara con una hoja extra que sólo tenía esta
+  // línea. Se baja el margen mientras se dibuja y después se restaura.
+  const margenOriginal = doc.page.margins.bottom;
+  doc.page.margins.bottom = 0;
+
   const y = doc.page.height - M + 2;
   doc.moveTo(M, y).lineTo(doc.page.width - M, y).strokeColor(BORDER_GRAY).lineWidth(0.5).stroke();
   doc.font("Helvetica").fontSize(8).fillColor(TEXT_MUTED)
     .text(
       `Generado por Kazaro — ${nowLocal()}  |  Este documento es válido sin firma ni sello.`,
-      M, y + 6, { width: doc.page.width - M * 2, align: "center" }
+      M, y + 6, { width: doc.page.width - M * 2, align: "center", lineBreak: false }
     );
+
+  doc.page.margins.bottom = margenOriginal;
 }
 
 /* ─── Helper interno para armar el objeto pedido normalizado ─── */
@@ -320,7 +356,7 @@ export async function generateRemitoPDF({ pedido, outDir = path.resolve(process.
 
   let y = drawHeader(doc, nro, fecha, total);
   y = drawMeta(doc, y, { empleado, rol, fecha, servicio: servicioNombre });
-  y = drawItemsTable(doc, y, items, total);
+  y = drawItemsTable(doc, y, items, total, Boolean(nota));
   y = drawNote(doc, y + 4, nota);
   drawFooter(doc);
 
@@ -349,7 +385,7 @@ export async function generateRemitoPDFBuffer({ pedido }) {
 
   let y = drawHeader(doc, nro, fecha, total);
   y = drawMeta(doc, y, { empleado, rol, fecha, servicio: servicioNombre });
-  y = drawItemsTable(doc, y, items, total);
+  y = drawItemsTable(doc, y, items, total, Boolean(nota));
   y = drawNote(doc, y + 4, nota);
   drawFooter(doc);
 
