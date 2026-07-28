@@ -1,6 +1,8 @@
 // client/src/pages/Deposito.jsx
 import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { Navigate } from "react-router-dom";
 import { api } from "../api/client";
+import { useAuth } from "../hooks/useAuth";
 import "../styles/deposito.css";
 import DevolucionesPendientes from "../components/DevolucionesPendientes";
 
@@ -205,16 +207,25 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
   const [q, setQ] = useState("");
   const qDeb = useDebounced(q, 250);
   const [sort, setSort] = useState("fecha_desc");
+  const [servicioFilter, setServicioFilter] = useState("");
+  const [desde, setDesde] = useState("");
+  const [hasta, setHasta] = useState("");
   const [selected, setSelected] = useState(null);
   const [pdfUrl, setPdfUrl] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewErr, setPreviewErr] = useState("");
   const [expandedOrders, setExpandedOrders] = useState(new Set());
 
+  // La base guarda UTC. Antes esto hacía new Date(str + "-03:00"), es decir lo
+  // interpretaba como hora argentina y adelantaba 3 horas, el mismo bug que
+  // tenían los remitos. Un string plano "YYYY-MM-DD HH:MM:SS" se lee como UTC.
   const parseDbDateToMs = (raw) => {
     if (!raw) return NaN;
-    try { return new Date(String(raw).replace(" ", "T") + "-03:00").getTime(); }
-    catch { return NaN; }
+    try {
+      const s = String(raw).trim();
+      const conZona = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(s);
+      return new Date(s.replace(" ", "T") + (conZona ? "" : "Z")).getTime();
+    } catch { return NaN; }
   };
 
   const formatFechaAr = (raw) => {
@@ -225,6 +236,13 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
       year: "numeric", month: "2-digit", day: "2-digit",
       hour: "2-digit", minute: "2-digit",
     });
+  };
+
+  // aaaa-mm-dd del día argentino, para filtrar por rango sin el corrimiento UTC.
+  const diaArDe = (raw) => {
+    const t = parseDbDateToMs(raw);
+    if (Number.isNaN(t)) return "";
+    return new Date(t).toLocaleDateString("en-CA", { timeZone: "America/Argentina/Cordoba" });
   };
 
   const list = useCallback(async () => {
@@ -255,6 +273,16 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
     });
   };
 
+  // Servicios presentes en los pedidos cargados, para armar el desplegable.
+  const serviciosDisponibles = useMemo(() => {
+    const set = new Set();
+    for (const o of orders) {
+      const n = String(o.servicioNombre || "").trim();
+      if (n) set.add(n);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "es"));
+  }, [orders]);
+
   const filtered = useMemo(() => {
     let arr = orders.slice();
     const t = String(qDeb || "").trim().toLowerCase();
@@ -269,6 +297,11 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
         return idStr.includes(tId) || remito.includes(t) || empleado.includes(t) || rol.includes(t) || servicio.includes(t);
       });
     }
+    if (servicioFilter) {
+      arr = arr.filter(o => String(o.servicioNombre || "").trim() === servicioFilter);
+    }
+    if (desde) arr = arr.filter(o => { const d = diaArDe(o.fecha); return d && d >= desde; });
+    if (hasta) arr = arr.filter(o => { const d = diaArDe(o.fecha); return d && d <= hasta; });
     arr.sort((a, b) => {
       switch (sort) {
         case "fecha_asc":  return parseDbDateToMs(a.fecha) - parseDbDateToMs(b.fecha);
@@ -280,7 +313,9 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
       }
     });
     return arr;
-  }, [orders, qDeb, sort]);
+    // parseDbDateToMs/diaArDe son estables por render; no hace falta listarlas.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders, qDeb, sort, servicioFilter, desde, hasta]);
 
   const remitoNum = (o) => o.remitoDisplay ?? o.remito ?? o.remitoNumber ?? o.remito_numero ?? "-";
 
@@ -407,6 +442,37 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
           </select>
         </label>
       </div>
+
+      {/* Filtros de control por servicio y fecha */}
+      {tab !== "devoluciones" && (
+        <div className="deposito-header-actions" style={{ gap: 8, marginBottom: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <label className="deposito-field" style={{ minWidth: 240, flex: "1 1 240px" }}>
+            <span>Servicio</span>
+            <select value={servicioFilter} onChange={e => setServicioFilter(e.target.value)} className="deposito-select">
+              <option value="">Todos los servicios</option>
+              {serviciosDisponibles.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </label>
+          <label className="deposito-field">
+            <span>Desde</span>
+            <input type="date" value={desde} onChange={e => setDesde(e.target.value)} className="deposito-select" />
+          </label>
+          <label className="deposito-field">
+            <span>Hasta</span>
+            <input type="date" value={hasta} onChange={e => setHasta(e.target.value)} className="deposito-select" />
+          </label>
+          {(servicioFilter || desde || hasta || q) && (
+            <button type="button" className="pill pill--ghost"
+              onClick={() => { setServicioFilter(""); setDesde(""); setHasta(""); setQ(""); }}>
+              Limpiar filtros
+            </button>
+          )}
+          <div style={{ flex: 1 }} />
+          <span className="muted" style={{ fontSize: "0.85rem" }}>
+            {filtered.length} de {orders.length} pedido{orders.length === 1 ? "" : "s"}
+          </span>
+        </div>
+      )}
 
       {err && <div className="state error deposito-state">{err}</div>}
 
@@ -601,6 +667,10 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
 
 
 export default function Deposito() {
+  const { user } = useAuth();
+  const roles = (user?.roles || []).map(r => String(r).toLowerCase());
+  const puedeVer = roles.includes("deposito");
+
   const [start, setStart] = useState(isoFirstOfMonth());
   const [end, setEnd] = useState(isoToday());
   const [thresholdInput, setThresholdInput] = useState("10");
@@ -619,7 +689,10 @@ export default function Deposito() {
   const [sortTop, setSortTop] = useState({ field: "total", dir: "desc" });
   const [sortLow, setSortLow] = useState({ field: "stock", dir: "asc" });
 
-  const [activeView, setActiveView] = useState("overview");
+  // El panel abre directo en Pedidos. La vista "Stock y alertas" queda en el
+  // código pero sin botón que la active. Para reactivarla, cambiar este valor
+  // inicial a "overview" y volver a mostrar el switcher del topbar.
+  const [activeView] = useState("pedidos");
 
   const threshold = useMemo(() => {
     const p = parseInt(thresholdInput, 10);
@@ -635,6 +708,8 @@ export default function Deposito() {
   const fechaInvalida = useMemo(() => !!start && !!end && start > end, [start, end]);
 
   useEffect(() => {
+    // La vista de stock está oculta: no traer overview salvo que se reactive.
+    if (activeView !== "overview") return;
     if (fechaInvalida) return;
     let alive = true;
     async function fetchOverview() {
@@ -662,7 +737,7 @@ export default function Deposito() {
     }
     fetchOverview();
     return () => { alive = false; };
-  }, [start, end, threshold, fechaInvalida]);
+  }, [start, end, threshold, fechaInvalida, activeView]);
 
   const setQuickRange = (type) => {
     const today = isoToday();
@@ -782,27 +857,19 @@ export default function Deposito() {
     a.click();
   };
 
+  // Solo el rol depósito ve este panel. (El backend sigue permitiendo también a
+  // admin porque el "Stock crítico" del panel admin usa /deposito/overview.)
+  if (user && !puedeVer) return <Navigate to="/app" replace />;
+
   return (
     <section className="admin-panel deposito-page">
       <div className="dep-topbar">
         <h1 className="deposito-title">Panel de Depósito</h1>
-        <div className="dep-view-tabs">
-          <button type="button"
-            className={`pill${activeView === "overview" ? "" : " pill--ghost"}`}
-            onClick={() => setActiveView("overview")}
-          >
-            Stock y alertas
-          </button>
-          <button type="button"
-            className={`pill${activeView === "pedidos" ? "" : " pill--ghost"}`}
-            onClick={() => setActiveView("pedidos")}
-          >
-            Pedidos
-          </button>
-        </div>
       </div>
 
-      {/* Filtros globales */}
+      {/* Filtros globales de stock: ocultos mientras la vista es Pedidos.
+          Se muestran solo si se reactiva la vista "Stock y alertas". */}
+      {activeView === "overview" && (
       <div className="filters deposito-filters">
         <label className="deposito-field">
           <span>Fecha desde</span>
@@ -831,6 +898,7 @@ export default function Deposito() {
           </div>
         </div>
       </div>
+      )}
 
       {fechaInvalida && <div className="state error deposito-state">El rango de fechas es inválido: la fecha de inicio debe ser anterior a la fecha de fin.</div>}
       {loading && <div className="deposito-state">Cargando datos…</div>}
