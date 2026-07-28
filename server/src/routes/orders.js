@@ -403,9 +403,17 @@ router.post("/returns", requireAuth, (req, res) => {
     if (!String(motivo || "").trim()) return res.status(400).json({ error: "El motivo es obligatorio" });
 
     const empresaId = req.user?.empresaId ?? 1;
-    const pedOwner = db.prepare(`SELECT empresa_id FROM Pedidos WHERE PedidoID = ?`).get(pid);
+    const pedOwner = db.prepare(`SELECT empresa_id, Status, retiro_at FROM Pedidos WHERE PedidoID = ?`).get(pid);
     if (!pedOwner) return res.status(404).json({ error: "Pedido no encontrado" });
     if (pedOwner.empresa_id != null && Number(pedOwner.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "Pedido no encontrado" });
+
+    // La devolución recién se habilita cuando el depósito dejó el pedido listo
+    // para retirar (Status 'closed') o ya fue retirado (retiro_at seteado).
+    // Coincide con el frontend, que muestra "Devolver" sólo en esos estados.
+    const listoParaRetirar = String(pedOwner.Status || "").toLowerCase() === "closed" || pedOwner.retiro_at != null;
+    if (!listoParaRetirar) {
+      return res.status(400).json({ error: "El pedido debe estar listo para retirar antes de poder devolver insumos." });
+    }
 
     const pedItem = db.prepare(`SELECT SUM(Cantidad) AS pedido FROM PedidoItems WHERE PedidoID = ? AND ProductoID = ?`).get(pid, prod);
     const yaDev = db.prepare(`SELECT SUM(cantidad) AS d FROM devoluciones WHERE pedido_id = ? AND producto_id = ? AND estado IN ('pendiente','aprobada')`).get(pid, prod);

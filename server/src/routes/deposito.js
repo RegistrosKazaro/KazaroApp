@@ -12,6 +12,7 @@ import {
   getFullOrder,
 } from "../db.js";
 import { sendMail } from "../utils/mailer.js";
+import { getMailConfigValue } from "../utils/empresa.js";
 
 const router = Router();
 console.log("[deposito] Router cargado: Modo Seguro (JS JOIN)");
@@ -190,8 +191,16 @@ async function notifyOrderReady(orderId, closedAt) {
       ? `PEDIDO #${nro} LISTO PARA RETIRAR — ${servicioNombre}`
       : `PEDIDO #${nro} LISTO PARA RETIRAR`;
 
+    // Copia fija a nicolas.barcena (configurable con MAIL_ALWAYS por empresa).
+    // El aviso de "listo para retirar" va sólo al supervisor y a esta copia.
+    const copiaFija = getMailConfigValue(empresaId, "MAIL_ALWAYS", "nicolas.barcena@kazaro.com.ar");
+    const cc = copiaFija && copiaFija.trim().toLowerCase() !== supervisorEmail.trim().toLowerCase()
+      ? copiaFija.trim()
+      : undefined;
+
     await sendMail({
       to: supervisorEmail,
+      cc,
       subject,
       text,
       html,
@@ -200,7 +209,7 @@ async function notifyOrderReady(orderId, closedAt) {
       empresaId,
     });
 
-    console.log(`[deposito] Notificación enviada a ${supervisorEmail} — pedido #${nro}`);
+    console.log(`[deposito] Notificación enviada a ${supervisorEmail}${cc ? ` (cc ${cc})` : ""} — pedido #${nro}`);
   } catch (e) {
     console.warn("[deposito] notifyOrderReady error:", e?.message || e);
   }
