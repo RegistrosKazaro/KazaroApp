@@ -8,6 +8,38 @@ import { getMailConfigForEmpresa } from "./empresa.js";
 
 const _transporters = new Map();
 
+// ─── PAUSA DE MAILS (para pruebas) ───────────────────────────────
+// Estado en memoria: se pausa por una cantidad de minutos y se reanuda sola al
+// vencer. Vive sólo en este proceso: un reinicio del servidor la borra, así que
+// nunca queda pausado para siempre por olvido. pm2 corre en fork de 1 instancia.
+const MAIL_PAUSE_MAX_MIN = 8 * 60; // tope de 8 horas
+let _mailPausedUntil = 0; // epoch ms; 0 = activo
+
+export function pauseMail(minutes) {
+  const m = Math.min(MAIL_PAUSE_MAX_MIN, Math.max(1, Math.floor(Number(minutes) || 0)));
+  _mailPausedUntil = Date.now() + m * 60 * 1000;
+  return getMailPauseState();
+}
+
+export function resumeMail() {
+  _mailPausedUntil = 0;
+  return getMailPauseState();
+}
+
+export function isMailPaused() {
+  return _mailPausedUntil > Date.now();
+}
+
+export function getMailPauseState() {
+  const paused = isMailPaused();
+  return {
+    paused,
+    hasta: paused ? new Date(_mailPausedUntil).toISOString() : null,
+    minutosRestantes: paused ? Math.ceil((_mailPausedUntil - Date.now()) / 60000) : 0,
+  };
+}
+// ─────────────────────────────────────────────────────────────────
+
 const EMAIL_RE = /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/i;
 function isValidEmail(s) { return EMAIL_RE.test(String(s || "").trim()); }
 
@@ -105,6 +137,14 @@ export async function sendMail({
   empresaNombre = null,
   overrideTo = false,
 }) {
+  // Pausa activa: no se envía nada. Se registra como "paused" para dejar rastro
+  // y se devuelve sin error, para no romper los flujos que llaman a sendMail.
+  if (isMailPaused()) {
+    safeLog({ entityType, entityId, to: String(to || ""), subject, status: "paused", providerId: null, error: null });
+    console.log(`[mailer] PAUSADO — mail no enviado: "${subject}" (${getMailPauseState().minutosRestantes} min restantes)`);
+    return { paused: true, skipped: true };
+  }
+
   const cfg      = resolveMailConfig(empresaId);
   const cacheKey = empresaId ?? "global";
   const t        = getTransporter(cfg, cacheKey);

@@ -2951,6 +2951,65 @@ function NavIcon({ name }) {
   );
 }
 
+// Control de pausa de mails (para pruebas). La pausa se reanuda sola al vencer.
+function MailPauseControl() {
+  const [estado, setEstado] = useState({ paused: false, minutosRestantes: 0 });
+  const [busy, setBusy] = useState(false);
+
+  const cargar = useCallback(async () => {
+    try {
+      const { data } = await api.get("/admin/mail-pause");
+      setEstado(data || { paused: false, minutosRestantes: 0 });
+    } catch { /* silencioso */ }
+  }, []);
+
+  useEffect(() => {
+    cargar();
+    // Refresca cada 30s para que el contador y el auto-reanudado se reflejen.
+    const t = setInterval(cargar, 30000);
+    return () => clearInterval(t);
+  }, [cargar]);
+
+  const pausar = async (minutos) => {
+    setBusy(true);
+    try { const { data } = await api.post("/admin/mail-pause", { minutos }); setEstado(data); }
+    catch (e) { alert(e?.response?.data?.error || "No se pudo pausar"); }
+    finally { setBusy(false); }
+  };
+
+  const reanudar = async () => {
+    setBusy(true);
+    try { const { data } = await api.post("/admin/mail-resume"); setEstado(data); }
+    catch { alert("No se pudo reanudar"); }
+    finally { setBusy(false); }
+  };
+
+  if (estado.paused) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 999, padding: "4px 6px 4px 14px" }}>
+        <span style={{ fontSize: "0.85rem", color: "#92400e", fontWeight: 600 }}>
+            Mails en pausa · {estado.minutosRestantes} min
+        </span>
+        <button type="button" className="pill" onClick={reanudar} disabled={busy}
+          style={{ background: "#16a34a", borderColor: "#15803d", color: "#fff" }}>
+          Reanudar
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>Pausar mails:</span>
+      {[["30 min", 30], ["2 h", 120], ["4 h", 240]].map(([lbl, min]) => (
+        <button key={min} type="button" className="pill pill--ghost" onClick={() => pausar(min)} disabled={busy}>
+          {lbl}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function AdminPanel() {
   const nav = useNavigate();
   const { role } = useParams();
@@ -2989,8 +3048,9 @@ export default function AdminPanel() {
 
   return (
     <div className="admin-panel">
-      <header className="page-header">
+      <header className="page-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <h2>Panel de administración</h2>
+        <MailPauseControl />
       </header>
 
       <div className="admin-shell">

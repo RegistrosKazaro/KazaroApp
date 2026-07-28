@@ -27,7 +27,7 @@ import {
   listFlexxusMatch,
 } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
-import { sendMail } from "../utils/mailer.js";
+import { sendMail, pauseMail, resumeMail, getMailPauseState } from "../utils/mailer.js";
 import { toISO, fmtAr, diaAr } from "../utils/fechas.js";
 import empresaRouter from "./admin_empresa_addon.js";
 
@@ -35,6 +35,22 @@ const router = Router();
 const mustBeAdmin = [requireAuth, requireRole(["admin", "Admin"])];
 
 const upload = multer({ storage: multer.memoryStorage() });
+
+/* ===== Pausa de mails (para pruebas) ===== */
+// Estado global en memoria; se reanuda sola al vencer. Solo admin.
+router.get("/mail-pause", mustBeAdmin, (_req, res) => {
+  res.json(getMailPauseState());
+});
+router.post("/mail-pause", mustBeAdmin, (req, res) => {
+  const minutos = Number(req.body?.minutos);
+  if (!Number.isFinite(minutos) || minutos < 1) {
+    return res.status(400).json({ error: "Indicá los minutos a pausar (mínimo 1)." });
+  }
+  res.json(pauseMail(minutos));
+});
+router.post("/mail-resume", mustBeAdmin, (_req, res) => {
+  res.json(resumeMail());
+});
 
 function prodSchemaOrThrow() {
   const sch = discoverCatalogSchema();
