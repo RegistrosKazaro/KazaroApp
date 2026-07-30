@@ -223,7 +223,7 @@ function RevisionOrderEditor({ order, onDone }) {
   useEffect(() => {
     let vivo = true;
     if (!qDeb || qDeb.trim().length < 2) { setResultados([]); return; }
-    api.get("/catalog/products", { params: { q: qDeb.trim(), serviceId: order.servicioId || undefined } })
+    api.get("/deposito/productos", { params: { q: qDeb.trim() } })
       .then(({ data }) => { if (vivo) setResultados((Array.isArray(data) ? data : []).slice(0, 8)); })
       .catch(() => { if (vivo) setResultados([]); });
     return () => { vivo = false; };

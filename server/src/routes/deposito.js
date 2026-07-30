@@ -355,6 +355,45 @@ router.get("/orders", mustWarehouse, (req, res) => {
   }
 });
 
+// BUSCAR PRODUCTOS del catálogo (para agregar insumos en revisión). A diferencia
+// de /catalog/products, NO filtra por visibilidad de rol: el depósito maneja el
+// stock, así que ve todo el catálogo de su empresa.
+router.get("/productos", mustWarehouse, (req, res) => {
+  try {
+    const empresaId = req.user?.empresaId ?? 1;
+    const q = String(req.query.q || "").trim();
+    if (q.length < 2) return res.json([]);
+
+    const sch = discoverCatalogSchema();
+    if (!sch.ok) return res.json([]);
+    const { products } = sch.tables;
+    const { prodId, prodName, prodPrice, prodCode, prodStock } = sch.cols;
+
+    const cols = db.prepare(`PRAGMA table_info(${products})`).all().map(c => c.name.toLowerCase());
+    const where = ["COALESCE(is_active,1) = 1"];
+    const params = [];
+    if (cols.includes("empresa_id")) { where.push("empresa_id = ?"); params.push(Number(empresaId)); }
+    const like = `%${q}%`;
+    if (prodCode) { where.push(`(${prodName} LIKE ? OR ${prodCode} LIKE ?)`); params.push(like, like); }
+    else { where.push(`${prodName} LIKE ?`); params.push(like); }
+
+    const rows = db.prepare(`
+      SELECT ${prodId} AS id, ${prodName} AS name,
+             ${prodCode ? `${prodCode}` : "''"} AS code,
+             ${prodPrice ? `${prodPrice}` : "0"} AS price,
+             ${prodStock ? `COALESCE(${prodStock},0)` : "0"} AS stock
+      FROM ${products}
+      WHERE ${where.join(" AND ")}
+      ORDER BY ${prodName} COLLATE NOCASE
+      LIMIT 15
+    `).all(...params);
+    res.json(rows);
+  } catch (e) {
+    console.error("[deposito/productos]", e?.message || e);
+    res.json([]);
+  }
+});
+
 /* ===== Revisión del depósito: editar ítems y confirmar ===== */
 // Van antes de /:id/:action para que Express no los tome como action.
 
