@@ -36,6 +36,7 @@ function money(v) {
 }
 
 const ESTADO_CONFIG = {
+  revision_deposito: { label: "En revisión por depósito", color: "#7c3aed", bg: "#f5f3ff", border: "#ddd6fe", icon: "🔎" },
   open:       { label: "Pendiente",      color: "#d97706", bg: "#fffbeb", border: "#fde68a", icon: "⏳" },
   preparing:  { label: "En preparación", color: "#2563eb", bg: "#eff6ff", border: "#bfdbfe", icon: "🔧" },
   closed:     { label: "Listo para retirar", color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0", icon: "✅" },

@@ -198,6 +198,167 @@ const useDebounced = (value, delay = 300) => {
 const API_BASE_URL = (import.meta?.env && import.meta.env.VITE_API_URL) || "http://localhost:4000";
 
 /* =====================================================
+   Editor de un pedido en revisión (agregar/quitar/cambiar
+   cantidad de insumos y confirmar). onDone recarga la lista.
+   ===================================================== */
+function RevisionOrderEditor({ order, onDone }) {
+  const [items, setItems] = useState(() =>
+    (order.items || []).map((it) => ({
+      productId: Number(it.productId ?? it.ProductoID ?? it.product_id),
+      nombre: it.nombre ?? it.name ?? "",
+      codigo: it.codigo ?? it.code ?? "",
+      precio: Number(it.precio ?? it.price ?? 0),
+      cantidad: Number(it.cantidad ?? it.qty ?? 1),
+    }))
+  );
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [faltantes, setFaltantes] = useState([]);
+  const [dirty, setDirty] = useState(false);
+
+  // Buscador de productos para agregar insumo.
+  const [q, setQ] = useState("");
+  const [resultados, setResultados] = useState([]);
+  const qDeb = useDebounced(q, 300);
+  useEffect(() => {
+    let vivo = true;
+    if (!qDeb || qDeb.trim().length < 2) { setResultados([]); return; }
+    api.get("/catalog/products", { params: { q: qDeb.trim(), serviceId: order.servicioId || undefined } })
+      .then(({ data }) => { if (vivo) setResultados((Array.isArray(data) ? data : []).slice(0, 8)); })
+      .catch(() => { if (vivo) setResultados([]); });
+    return () => { vivo = false; };
+  }, [qDeb, order.servicioId]);
+
+  const total = items.reduce((s, it) => s + it.precio * it.cantidad, 0);
+
+  const setCantidad = (pid, val) => {
+    const n = Math.max(1, Math.trunc(Number(val) || 1));
+    setItems((prev) => prev.map((it) => (it.productId === pid ? { ...it, cantidad: n } : it)));
+    setDirty(true);
+  };
+  const quitar = (pid) => { setItems((prev) => prev.filter((it) => it.productId !== pid)); setDirty(true); };
+  const agregar = (p) => {
+    const pid = Number(p.id);
+    setItems((prev) => prev.some((it) => it.productId === pid)
+      ? prev.map((it) => it.productId === pid ? { ...it, cantidad: it.cantidad + 1 } : it)
+      : [...prev, { productId: pid, nombre: p.name ?? p.nombre ?? "", codigo: p.code ?? p.codigo ?? "", precio: Number(p.price ?? p.precio ?? 0), cantidad: 1 }]);
+    setQ(""); setResultados([]); setDirty(true);
+  };
+
+  const guardar = async () => {
+    setBusy(true); setMsg(""); setFaltantes([]);
+    try {
+      await api.put(`/deposito/orders/${order.id}/items`, {
+        items: items.map((it) => ({ productId: it.productId, cantidad: it.cantidad })),
+      });
+      setDirty(false); setMsg("Cambios guardados.");
+    } catch (e) { setMsg(e?.response?.data?.error || "No se pudieron guardar los cambios"); }
+    finally { setBusy(false); }
+  };
+
+  const confirmar = async () => {
+    setBusy(true); setMsg(""); setFaltantes([]);
+    try {
+      if (dirty) {
+        await api.put(`/deposito/orders/${order.id}/items`, {
+          items: items.map((it) => ({ productId: it.productId, cantidad: it.cantidad })),
+        });
+        setDirty(false);
+      }
+      await api.post(`/deposito/orders/${order.id}/confirm`);
+      onDone && onDone();
+    } catch (e) {
+      const data = e?.response?.data;
+      if (data?.faltantes) { setFaltantes(data.faltantes); setMsg("No se puede confirmar: faltan estos insumos en stock."); }
+      else setMsg(data?.error || "No se pudo confirmar el pedido");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="deposito-items-panel">
+      <div className="deposito-items-title">Revisar y ajustar el pedido</div>
+
+      {faltantes.length > 0 && (
+        <div className="state error" style={{ marginBottom: 8 }}>
+          <strong>Stock insuficiente:</strong>
+          <ul style={{ margin: "4px 0 0 18px" }}>
+            {faltantes.map((f) => (
+              <li key={f.productId}>{f.nombre} — pedido {f.pedido}, disponible {f.disponible == null ? "s/d" : f.disponible}</li>
+            ))}
+          </ul>
+          <div style={{ marginTop: 4, fontSize: "0.85rem" }}>Cargá stock, bajá la cantidad o quitá el insumo para poder confirmar.</div>
+        </div>
+      )}
+
+      <table className="deposito-items-table">
+        <thead>
+          <tr>
+            <th scope="col">Código</th>
+            <th scope="col">Insumo</th>
+            <th scope="col" className="numeric" style={{ width: 110 }}>Cantidad</th>
+            <th scope="col" className="numeric">Precio</th>
+            <th scope="col" className="numeric">Subtotal</th>
+            <th scope="col" style={{ width: 40 }}></th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((it) => (
+            <tr key={it.productId} className={faltantes.some((f) => f.productId === it.productId) ? "" : ""}>
+              <td>{it.codigo ? <span className="deposito-code">{it.codigo}</span> : <span style={{ color: "#9ca3af" }}>—</span>}</td>
+              <td>{it.nombre}</td>
+              <td className="numeric">
+                <input type="number" min="1" value={it.cantidad}
+                  onChange={(e) => setCantidad(it.productId, e.target.value)}
+                  style={{ width: 70, textAlign: "right" }} />
+              </td>
+              <td className="numeric">{money(it.precio)}</td>
+              <td className="numeric">{money(it.precio * it.cantidad)}</td>
+              <td style={{ textAlign: "center" }}>
+                <button type="button" className="pill pill--ghost" onClick={() => quitar(it.productId)}
+                  title="Quitar insumo" style={{ padding: "2px 8px", color: "#b91c1c" }}>✕</button>
+              </td>
+            </tr>
+          ))}
+          {items.length === 0 && (
+            <tr><td colSpan={6} style={{ color: "#b91c1c" }}>El pedido quedó sin insumos. Agregá al menos uno.</td></tr>
+          )}
+        </tbody>
+      </table>
+
+      {/* Agregar insumo */}
+      <div style={{ position: "relative", marginTop: 10, maxWidth: 460 }}>
+        <input type="search" className="deposito-search" style={{ width: "100%" }}
+          placeholder="Agregar insumo: buscar por nombre o código…"
+          value={q} onChange={(e) => setQ(e.target.value)} />
+        {resultados.length > 0 && (
+          <div style={{ position: "absolute", zIndex: 20, left: 0, right: 0, background: "#fff", border: "1px solid #d1d5db", borderRadius: 8, marginTop: 2, maxHeight: 240, overflowY: "auto", boxShadow: "0 8px 24px rgba(15,23,42,.12)" }}>
+            {resultados.map((p) => (
+              <button key={p.id} type="button" onClick={() => agregar(p)}
+                style={{ display: "flex", justifyContent: "space-between", width: "100%", border: 0, background: "none", padding: "8px 12px", cursor: "pointer", textAlign: "left", borderBottom: "1px solid #f1f5f9" }}>
+                <span>{p.name ?? p.nombre}</span>
+                <span style={{ color: "#6b7280", fontSize: "0.82rem" }}>stock {fmt(p.stock ?? 0)}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+        <strong style={{ marginRight: "auto" }}>Total: {money(total)}</strong>
+        {msg && <span style={{ fontSize: "0.85rem", color: faltantes.length ? "#b91c1c" : "#166534" }}>{msg}</span>}
+        <button type="button" className="pill pill--ghost" onClick={guardar} disabled={busy || !items.length}>
+          {busy ? "Guardando…" : "Guardar cambios"}
+        </button>
+        <button type="button" className="pill" onClick={confirmar} disabled={busy || !items.length}
+          style={{ background: "#16a34a", borderColor: "#15803d" }}>
+          Confirmar pedido
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* =====================================================
    Panel de Pedidos
    ===================================================== */
 function DepositoOrdersPanel({ pedidosPorDia }) {
@@ -415,6 +576,7 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
       {/* Tabs + filtros */}
       <div className="deposito-header-actions" style={{ gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
         {[
+          { key: "revision_deposito", label: "Por confirmar" },
           { key: "open",      label: "Pendientes" },
           { key: "preparing", label: "En preparación" },
           { key: "closed",    label: "Listos para retirar" },
@@ -531,6 +693,12 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                         <button type="button" className="pill pill--ghost" onClick={() => onPreviewRemito(o)}>
                           Ver remito
                         </button>
+                        {tab === "revision_deposito" && (
+                          <button type="button" className="pill" onClick={() => toggleExpand(o.id)}
+                            style={{ background: "#2563eb", borderColor: "#1d4ed8" }}>
+                            {isExpanded ? "Cerrar" : "Revisar y confirmar"}
+                          </button>
+                        )}
                         {tab === "open" && (
                           <button type="button" className="pill" onClick={() => moveToPreparing(o.id)}>
                             Preparar
@@ -561,8 +729,15 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                     </td>
                   </tr>
 
-                  {/* Fila de detalle de items + tiempos expandida */}
-                  {isExpanded && (
+                  {/* Fila expandida: editor si está en revisión, detalle si no */}
+                  {isExpanded && tab === "revision_deposito" && (
+                    <tr key={`${o.id}-edit`} className="deposito-row--items-container">
+                      <td colSpan={6} style={{ padding: 0 }}>
+                        <RevisionOrderEditor order={o} onDone={list} />
+                      </td>
+                    </tr>
+                  )}
+                  {isExpanded && tab !== "revision_deposito" && (
                     <tr key={`${o.id}-items`} className="deposito-row--items-container">
                       <td colSpan={6} style={{ padding: 0 }}>
                         <div className="deposito-items-panel">

@@ -1042,6 +1042,11 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
 
   const servicioIdForInsert = (chosenRole === "administrativo") ? null : (servicioId || null);
 
+  // Los pedidos de supervisor pasan primero por revisión del depósito: no se
+  // toca stock al crear, se descuenta recién al confirmar (applyOrderStockDiscount).
+  // Los administrativos siguen igual: descuentan y validan al crear.
+  const deferStock = (chosenRole === "supervisor");
+
   const childWarehouse = (servicioIdForInsert && getWarehouseForChildService)
     ? getWarehouseForChildService(servicioIdForInsert)
     : null;
@@ -1059,14 +1064,15 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
     const hasStock = !!prodStock;
 
     const insPedido = db.prepare(`
-      INSERT INTO Pedidos (EmpleadoID, Rol, Nota, ServicioID, Total)
-      VALUES (?, ?, ?, ?, 0)
+      INSERT INTO Pedidos (EmpleadoID, Rol, Nota, ServicioID, Total, Status)
+      VALUES (?, ?, ?, ?, 0, ?)
     `);
     const pedidoId = insPedido.run(
       empleadoId,
       String(chosenRole),
       String(nota || ""),
-      servicioIdForInsert
+      servicioIdForInsert,
+      deferStock ? "revision_deposito" : "open"
     ).lastInsertRowid;
 
     const insItem = db.prepare(`
@@ -1093,6 +1099,8 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
 
       const precio = row.price != null ? Number(row.price) : 0;
 
+      // Supervisor: no se descuenta stock al crear (va a revisión del depósito).
+      if (!deferStock) {
       if (childWarehouse && warehouseDecrementStock && getWarehouseStock) {
         const avail = getWarehouseStock(childWarehouse.id, pid);
         if (avail < cantidad) {
@@ -1188,6 +1196,7 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
           }
         }
       }
+      } // fin if (!deferStock)
 
       const subtotal = precio * cantidad;
       total += subtotal;
@@ -1204,6 +1213,88 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
   });
 
   return tx();
+}
+
+/**
+ * Descuenta el stock de un pedido que estaba en revisión del depósito, usando
+ * sus PedidoItems FINALES. Primero valida todo contra el stock actual real (no
+ * ingresos futuros): si algún insumo no alcanza, no descuenta nada y devuelve
+ * { ok:false, faltantes:[...] }. Si todo entra, descuenta y devuelve { ok:true }.
+ * Nunca deja stock negativo.
+ */
+export function applyOrderStockDiscount(pedidoId) {
+  let getWarehouseForChildService, getWarehouseForLinkedService,
+      warehouseDecrementStock, warehouseIncrementStock, getWarehouseStock;
+  try {
+    const wh = globalThis.__warehousesModule;
+    if (wh) {
+      getWarehouseForChildService  = wh.getWarehouseForChildService;
+      getWarehouseForLinkedService = wh.getWarehouseForLinkedService;
+      warehouseDecrementStock      = wh.warehouseDecrementStock;
+      warehouseIncrementStock      = wh.warehouseIncrementStock;
+      getWarehouseStock            = wh.getWarehouseStock;
+    }
+  } catch {}
+
+  const ped = db.prepare(`SELECT PedidoID, ServicioID, Rol FROM Pedidos WHERE PedidoID = ?`).get(pedidoId);
+  if (!ped) return { ok: false, error: "Pedido no encontrado" };
+
+  const servicioId = ped.ServicioID || null;
+  const childWarehouse = (servicioId && getWarehouseForChildService)
+    ? getWarehouseForChildService(servicioId) : null;
+  const linkedWarehouse = (!childWarehouse && servicioId && getWarehouseForLinkedService)
+    ? getWarehouseForLinkedService(servicioId) : null;
+
+  const sch = discoverCatalogSchema();
+  if (!sch.ok) return { ok: false, error: sch.reason };
+  const { products } = sch.tables;
+  const { prodId, prodName, prodStock } = sch.cols;
+  const hasStock = !!prodStock;
+
+  const items = db.prepare(
+    `SELECT ProductoID AS pid, Nombre AS name, Cantidad AS cantidad FROM PedidoItems WHERE PedidoID = ?`
+  ).all(pedidoId);
+  if (!items.length) return { ok: false, error: "El pedido no tiene ítems" };
+
+  // Stock disponible de cada insumo, según la rama que corresponda.
+  const disponibleDe = (pid) => {
+    if (childWarehouse && getWarehouseStock) return Number(getWarehouseStock(childWarehouse.id, pid) ?? 0);
+    if (hasStock) {
+      const r = db.prepare(`SELECT COALESCE(${prodStock},0) AS stock FROM ${products} WHERE ${prodId} = ? LIMIT 1`).get(pid);
+      return Number(r?.stock ?? 0);
+    }
+    return Infinity; // sin control de stock configurado
+  };
+
+  // Fase 1: validar TODO. Si algo no alcanza, no se toca nada.
+  const faltantes = [];
+  for (const it of items) {
+    const cantidad = Math.max(1, Number(it.cantidad || 0));
+    const disp = disponibleDe(it.pid);
+    if (disp < cantidad) {
+      faltantes.push({ productId: it.pid, nombre: it.name, disponible: disp === Infinity ? null : disp, pedido: cantidad });
+    }
+  }
+  if (faltantes.length) return { ok: false, faltantes };
+
+  // Fase 2: descontar en una transacción.
+  const tx = db.transaction(() => {
+    for (const it of items) {
+      const pid = it.pid;
+      const cantidad = Math.max(1, Number(it.cantidad || 0));
+      const precio = 0; // el precio ya está guardado en el item; acá sólo movemos stock
+      if (childWarehouse && warehouseDecrementStock) {
+        warehouseDecrementStock({ warehouseId: childWarehouse.id, productId: pid, qty: cantidad, serviceId: servicioId, pedidoId, name: it.name, code: null, price: precio });
+      } else if (linkedWarehouse && warehouseIncrementStock) {
+        if (hasStock) db.prepare(`UPDATE ${products} SET ${prodStock} = ${prodStock} - ? WHERE ${prodId} = ?`).run(cantidad, pid);
+        warehouseIncrementStock({ warehouseId: linkedWarehouse.id, productId: pid, qty: cantidad, serviceId: servicioId, pedidoId, name: it.name, code: null, price: precio });
+      } else if (hasStock) {
+        db.prepare(`UPDATE ${products} SET ${prodStock} = ${prodStock} - ? WHERE ${prodId} = ?`).run(cantidad, pid);
+      }
+    }
+  });
+  tx();
+  return { ok: true };
 }
 
 export function getFullOrder(pedidoId) {

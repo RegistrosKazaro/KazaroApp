@@ -154,7 +154,8 @@ router.get("/pedidos", (req, res) => {
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
 
-    const where = ["p.deleted_at IS NULL", "p.empresa_id = @empresaId"];
+    // Sólo pedidos confirmados: los que están en revisión del depósito no se exponen.
+    const where = ["p.deleted_at IS NULL", "p.empresa_id = @empresaId", "LOWER(COALESCE(p.Status,'')) <> 'revision_deposito'"];
     const params = { empresaId, limit, offset: (page - 1) * limit };
 
     const { desdeUtc, hastaUtc } = rangoUtc(desde, hasta);

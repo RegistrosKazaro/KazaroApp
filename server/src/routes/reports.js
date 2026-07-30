@@ -48,6 +48,11 @@ function empresaFilter(table, empresaId, alias = "") {
     let out = "";
     if (cols.includes("empresa_id")) out += ` AND ${prefix}empresa_id = ${Number(empresaId)}`;
     if (cols.includes("deleted_at")) out += ` AND ${prefix}deleted_at IS NULL`;
+    // Los pedidos en revisión del depósito no se toman para informes hasta
+    // que el depósito los confirme.
+    if (String(table).toLowerCase() === "pedidos" && cols.includes("status")) {
+      out += ` AND LOWER(COALESCE(${prefix}Status,'')) <> 'revision_deposito'`;
+    }
     return out;
   } catch { return ""; }
 }

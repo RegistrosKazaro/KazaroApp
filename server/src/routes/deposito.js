@@ -10,6 +10,7 @@ import {
   getServiceNameById,
   getUserById,
   getFullOrder,
+  applyOrderStockDiscount,
 } from "../db.js";
 import { sendMail } from "../utils/mailer.js";
 import { getMailConfigValue } from "../utils/empresa.js";
@@ -306,7 +307,9 @@ router.get("/orders", mustWarehouse, (req, res) => {
       let finalStatus = "open";
       const isClosed    = isClosedVal == 1 || status === "closed" || estado === "cerrado";
       const isPreparing = status.includes("prepar") || estado.includes("prepar");
-      if (isClosed) finalStatus = "closed";
+      const isRevision  = status === "revision_deposito";
+      if (isRevision) finalStatus = "revision_deposito";
+      else if (isClosed) finalStatus = "closed";
       else if (isPreparing) finalStatus = "preparing";
 
       let remitoNumero = null;
@@ -337,9 +340,11 @@ router.get("/orders", mustWarehouse, (req, res) => {
 
     const statusParam = String(req.query.status || "open").toLowerCase();
     const filtered = cleanRows.filter(o => {
+      if (statusParam === "revision_deposito") return o.status === "revision_deposito";
       if (statusParam === "preparing") return o.status === "preparing";
       if (statusParam === "closed")    return o.status === "closed" && !o.retiroAt;
       if (statusParam === "retirado")  return o.status === "closed" && !!o.retiroAt;
+      // "open" (Pendientes) NO debe incluir los que están en revisión.
       return o.status === "open";
     });
 
@@ -347,6 +352,97 @@ router.get("/orders", mustWarehouse, (req, res) => {
   } catch (e) {
     console.error("[deposito] Error listing orders:", e);
     res.json([]);
+  }
+});
+
+/* ===== Revisión del depósito: editar ítems y confirmar ===== */
+// Van antes de /:id/:action para que Express no los tome como action.
+
+// Verifica que el pedido exista, sea de la empresa y esté en revision_deposito.
+function pedidoEnRevision(id, empresaId) {
+  const p = db.prepare(`SELECT PedidoID, empresa_id, Status FROM Pedidos WHERE PedidoID = ?`).get(id);
+  if (!p) return { error: 404 };
+  if (p.empresa_id != null && Number(p.empresa_id) !== Number(empresaId)) return { error: 404 };
+  if (String(p.Status || "").toLowerCase() !== "revision_deposito") return { error: 409 };
+  return { ok: true, pedido: p };
+}
+
+// REEMPLAZAR ÍTEMS de un pedido en revisión (agregar/quitar/cambiar cantidad/producto).
+router.put("/orders/:id/items", mustWarehouse, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const empresaId = req.user?.empresaId ?? 1;
+    const chk = pedidoEnRevision(id, empresaId);
+    if (chk.error === 404) return res.status(404).json({ error: "Pedido no encontrado" });
+    if (chk.error === 409) return res.status(409).json({ error: "El pedido ya no está en revisión" });
+
+    const nuevos = Array.isArray(req.body?.items) ? req.body.items : null;
+    if (!nuevos || !nuevos.length) return res.status(400).json({ error: "Enviá al menos un insumo" });
+
+    const sch = discoverCatalogSchema();
+    if (!sch.ok) return res.status(500).json({ error: sch.reason });
+    const { products } = sch.tables;
+    const { prodId, prodName, prodPrice, prodCode } = sch.cols;
+
+    const lookup = db.prepare(`
+      SELECT ${prodName} AS name, ${prodPrice ? prodPrice : "0"} AS price${prodCode ? `, ${prodCode} AS code` : ", '' AS code"}
+      FROM ${products} WHERE ${prodId} = ? LIMIT 1
+    `);
+
+    // Validar y normalizar los ítems entrantes.
+    const filas = [];
+    let total = 0;
+    for (const it of nuevos) {
+      const pid = Number(it.productId ?? it.ProductoID ?? it.pid);
+      const cantidad = Math.trunc(Number(it.cantidad ?? it.qty ?? 0));
+      if (!Number.isFinite(pid) || pid <= 0) return res.status(400).json({ error: "Producto inválido" });
+      if (!Number.isFinite(cantidad) || cantidad <= 0) return res.status(400).json({ error: "Cantidad inválida" });
+      const row = lookup.get(pid);
+      if (!row) return res.status(400).json({ error: `Producto inexistente (id ${pid})` });
+      const precio = Number(row.price || 0);
+      const subtotal = precio * cantidad;
+      total += subtotal;
+      filas.push({ pid, name: row.name, precio, cantidad, subtotal, code: row.code || "" });
+    }
+
+    const tx = db.transaction(() => {
+      db.prepare(`DELETE FROM PedidoItems WHERE PedidoID = ?`).run(id);
+      const ins = db.prepare(`INSERT INTO PedidoItems (PedidoID, ProductoID, Nombre, Precio, Cantidad, Subtotal, Codigo) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+      for (const f of filas) ins.run(id, f.pid, f.name, f.precio, f.cantidad, f.subtotal, f.code);
+      db.prepare(`UPDATE Pedidos SET Total = ? WHERE PedidoID = ?`).run(total, id);
+    });
+    tx();
+
+    res.json({ ok: true, total, items: filas.length });
+  } catch (e) {
+    console.error("[deposito/items]", e?.message || e);
+    res.status(500).json({ error: "No se pudieron guardar los cambios" });
+  }
+});
+
+// CONFIRMAR un pedido en revisión: descuenta stock y lo pasa al flujo normal.
+router.post("/orders/:id/confirm", mustWarehouse, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const empresaId = req.user?.empresaId ?? 1;
+    const chk = pedidoEnRevision(id, empresaId);
+    if (chk.error === 404) return res.status(404).json({ error: "Pedido no encontrado" });
+    if (chk.error === 409) return res.status(409).json({ error: "El pedido ya no está en revisión" });
+
+    const r = applyOrderStockDiscount(id);
+    if (!r.ok) {
+      if (r.faltantes) {
+        return res.status(400).json({ error: "Stock insuficiente para confirmar", faltantes: r.faltantes });
+      }
+      return res.status(400).json({ error: r.error || "No se pudo confirmar" });
+    }
+
+    ensureStatusColumn();
+    db.prepare(`UPDATE Pedidos SET Status = 'open' WHERE PedidoID = ?`).run(id);
+    res.json({ ok: true, id });
+  } catch (e) {
+    console.error("[deposito/confirm]", e?.message || e);
+    res.status(500).json({ error: "No se pudo confirmar el pedido" });
   }
 });
 
