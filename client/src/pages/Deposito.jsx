@@ -219,15 +219,30 @@ function RevisionOrderEditor({ order, onDone }) {
   // Buscador de productos para agregar insumo.
   const [q, setQ] = useState("");
   const [resultados, setResultados] = useState([]);
-  const qDeb = useDebounced(q, 300);
+  const [buscando, setBuscando] = useState(false);
+  const [activeIdx, setActiveIdx] = useState(-1);
+  const qDeb = useDebounced(q, 200);
   useEffect(() => {
     let vivo = true;
-    if (!qDeb || qDeb.trim().length < 2) { setResultados([]); return; }
-    api.get("/deposito/productos", { params: { q: qDeb.trim() } })
-      .then(({ data }) => { if (vivo) setResultados((Array.isArray(data) ? data : []).slice(0, 8)); })
-      .catch(() => { if (vivo) setResultados([]); });
+    const termino = qDeb.trim();
+    if (termino.length < 2) { setResultados([]); setBuscando(false); return; }
+    setBuscando(true);
+    api.get("/deposito/productos", { params: { q: termino } })
+      .then(({ data }) => { if (vivo) { setResultados(Array.isArray(data) ? data.slice(0, 10) : []); setActiveIdx(-1); } })
+      .catch(() => { if (vivo) setResultados([]); })
+      .finally(() => { if (vivo) setBuscando(false); });
     return () => { vivo = false; };
-  }, [qDeb, order.servicioId]);
+  }, [qDeb]);
+
+  // Navegación por teclado en la lista de resultados.
+  const onSearchKey = (e) => {
+    if (!resultados.length) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setActiveIdx((i) => Math.min(resultados.length - 1, i + 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActiveIdx((i) => Math.max(0, i - 1)); }
+    else if (e.key === "Enter" && activeIdx >= 0) { e.preventDefault(); agregar(resultados[activeIdx]); }
+    else if (e.key === "Escape") { setResultados([]); setActiveIdx(-1); }
+  };
+  const yaEnPedido = (pid) => items.some((it) => it.productId === Number(pid));
 
   const total = items.reduce((s, it) => s + it.precio * it.cantidad, 0);
 
@@ -326,19 +341,43 @@ function RevisionOrderEditor({ order, onDone }) {
       </table>
 
       {/* Agregar insumo */}
-      <div style={{ position: "relative", marginTop: 10, maxWidth: 460 }}>
+      <div style={{ position: "relative", marginTop: 10, maxWidth: 520 }}>
         <input type="search" className="deposito-search" style={{ width: "100%" }}
           placeholder="Agregar insumo: buscar por nombre o código…"
-          value={q} onChange={(e) => setQ(e.target.value)} />
+          value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onSearchKey}
+          autoComplete="off" role="combobox" aria-expanded={resultados.length > 0} />
+        {buscando && (
+          <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", fontSize: "0.8rem", color: "#94a3b8" }}>Buscando…</span>
+        )}
+        {q.trim().length >= 2 && !buscando && resultados.length === 0 && (
+          <div style={{ position: "absolute", zIndex: 20, left: 0, right: 0, background: "#fff", border: "1px solid #d1d5db", borderRadius: 8, marginTop: 2, padding: "10px 12px", color: "#6b7280", fontSize: "0.88rem", boxShadow: "0 8px 24px rgba(15,23,42,.12)" }}>
+            No se encontraron insumos para “{q.trim()}”.
+          </div>
+        )}
         {resultados.length > 0 && (
-          <div style={{ position: "absolute", zIndex: 20, left: 0, right: 0, background: "#fff", border: "1px solid #d1d5db", borderRadius: 8, marginTop: 2, maxHeight: 240, overflowY: "auto", boxShadow: "0 8px 24px rgba(15,23,42,.12)" }}>
-            {resultados.map((p) => (
-              <button key={p.id} type="button" onClick={() => agregar(p)}
-                style={{ display: "flex", justifyContent: "space-between", width: "100%", border: 0, background: "none", padding: "8px 12px", cursor: "pointer", textAlign: "left", borderBottom: "1px solid #f1f5f9" }}>
-                <span>{p.name ?? p.nombre}</span>
-                <span style={{ color: "#6b7280", fontSize: "0.82rem" }}>stock {fmt(p.stock ?? 0)}</span>
-              </button>
-            ))}
+          <div style={{ position: "absolute", zIndex: 20, left: 0, right: 0, background: "#fff", border: "1px solid #d1d5db", borderRadius: 8, marginTop: 2, maxHeight: 280, overflowY: "auto", boxShadow: "0 8px 24px rgba(15,23,42,.12)" }}>
+            {resultados.map((p, idx) => {
+              const stock = Number(p.stock ?? 0);
+              const enPedido = yaEnPedido(p.id);
+              return (
+                <button key={p.id} type="button" onMouseEnter={() => setActiveIdx(idx)} onClick={() => agregar(p)}
+                  style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", border: 0,
+                    background: idx === activeIdx ? "#eff6ff" : "#fff", padding: "8px 12px", cursor: "pointer",
+                    textAlign: "left", borderBottom: "1px solid #f1f5f9" }}>
+                  <span style={{ fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: "0.75rem", color: "#9ca3af", minWidth: 74 }}>
+                    {p.code || "—"}
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {p.name ?? p.nombre}
+                    {enPedido && <span style={{ marginLeft: 6, fontSize: "0.72rem", color: "#2563eb" }}>· ya en el pedido</span>}
+                  </span>
+                  <span style={{ fontSize: "0.8rem", fontWeight: 600, color: stock <= 0 ? "#b91c1c" : stock < 5 ? "#b45309" : "#16a34a" }}>
+                    stock {fmt(stock)}
+                  </span>
+                  <span style={{ fontSize: "0.8rem", color: "#6b7280", minWidth: 72, textAlign: "right" }}>{money(p.price ?? 0)}</span>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
