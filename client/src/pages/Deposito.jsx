@@ -201,7 +201,7 @@ const API_BASE_URL = (import.meta?.env && import.meta.env.VITE_API_URL) || "http
    Editor de un pedido en revisión (agregar/quitar/cambiar
    cantidad de insumos y confirmar). onDone recarga la lista.
    ===================================================== */
-function RevisionOrderEditor({ order, onDone }) {
+function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes = null }) {
   const [items, setItems] = useState(() =>
     (order.items || []).map((it) => ({
       productId: Number(it.productId ?? it.ProductoID ?? it.product_id),
@@ -215,6 +215,14 @@ function RevisionOrderEditor({ order, onDone }) {
   const [msg, setMsg] = useState("");
   const [faltantes, setFaltantes] = useState([]);
   const [dirty, setDirty] = useState(false);
+
+  // Si el retiro se bloqueó por faltta de stock, se muestran acá para resolverlos.
+  useEffect(() => {
+    if (seedFaltantes && seedFaltantes.length) {
+      setFaltantes(seedFaltantes);
+      setMsg("No se puede retirar: faltan estos insumos en stock.");
+    }
+  }, [seedFaltantes]);
 
   // Buscador de productos para agregar insumo.
   const [q, setQ] = useState("");
@@ -388,11 +396,19 @@ function RevisionOrderEditor({ order, onDone }) {
         <button type="button" className="pill pill--ghost" onClick={guardar} disabled={busy || !items.length}>
           {busy ? "Guardando…" : "Guardar cambios"}
         </button>
-        <button type="button" className="pill" onClick={confirmar} disabled={busy || !items.length}
-          style={{ background: "#16a34a", borderColor: "#15803d" }}>
-          Confirmar pedido
-        </button>
+        {canConfirm && (
+          <button type="button" className="pill" onClick={confirmar} disabled={busy || !items.length}
+            style={{ background: "#16a34a", borderColor: "#15803d" }}>
+            Confirmar pedido
+          </button>
+        )}
       </div>
+      {!canConfirm && (
+        <div style={{ marginTop: 6, fontSize: "0.82rem", color: "#6b7280" }}>
+          El stock se descuenta recién al marcar el pedido como <strong>retirado</strong>.
+          Guardá los cambios y cuando esté todo, marcalo como retirado.
+        </div>
+      )}
     </div>
   );
 }
@@ -415,6 +431,10 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewErr, setPreviewErr] = useState("");
   const [expandedOrders, setExpandedOrders] = useState(new Set());
+  // Pedidos que el depósito está editando fuera de "Por confirmar" (open/prep/closed).
+  const [editingOrders, setEditingOrders] = useState(new Set());
+  // Faltantes de stock devueltos al intentar retirar, por id de pedido.
+  const [pickupFaltantes, setPickupFaltantes] = useState({});
 
   // La base guarda UTC. Antes esto hacía new Date(str + "-03:00"), es decir lo
   // interpretaba como hora argentina y adelantaba 3 horas, el mismo bug que
@@ -448,6 +468,8 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
   const list = useCallback(async () => {
     setErr("");
     setExpandedOrders(new Set());
+    setEditingOrders(new Set());
+    setPickupFaltantes({});
     try {
       const { data } = await api.get("/deposito/orders", { params: { status: tab }, withCredentials: true });
       setOrders(Array.isArray(data) ? data : []);
@@ -466,6 +488,15 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
 
   const toggleExpand = (id) => {
     setExpandedOrders(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleEdit = (id) => {
+    setEditingOrders(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -542,9 +573,19 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
   const markPickup = async (id) => {
     try {
       await api.put(`/deposito/orders/${id}/pickup`, {}, { withCredentials: true });
+      setPickupFaltantes(prev => { const n = { ...prev }; delete n[id]; return n; });
       setOrders(prev => prev.filter(o => o.id !== id));
     } catch (e) {
-      setErr(e?.response?.data?.error || e.message || "Error al registrar el retiro");
+      const data = e?.response?.data;
+      if (data?.faltantes) {
+        // Stock insuficiente: se abre el editor del pedido con los faltantes
+        // marcados para que el depósito baje cantidades, cargue stock o quite.
+        setPickupFaltantes(prev => ({ ...prev, [id]: data.faltantes }));
+        setEditingOrders(prev => new Set(prev).add(id));
+        setErr("");
+      } else {
+        setErr(data?.error || e.message || "Error al registrar el retiro");
+      }
     }
   };
 
@@ -730,6 +771,12 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                         <button type="button" className="pill pill--ghost" onClick={() => onPreviewRemito(o)}>
                           Ver remito
                         </button>
+                        {(tab === "open" || tab === "preparing" || tab === "closed") && (
+                          <button type="button" className="pill pill--ghost" onClick={() => toggleEdit(o.id)}
+                            style={{ borderColor: "#2563eb", color: "#1d4ed8" }}>
+                            {editingOrders.has(o.id) ? "Cerrar edición" : "Editar"}
+                          </button>
+                        )}
                         {tab === "revision_deposito" && (
                           <button type="button" className="pill" onClick={() => toggleExpand(o.id)}
                             style={{ background: "#2563eb", borderColor: "#1d4ed8" }}>
@@ -774,7 +821,16 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                       </td>
                     </tr>
                   )}
-                  {isExpanded && tab !== "revision_deposito" && (
+                  {/* Editor en pestañas de trabajo (no revisión, no retirado) */}
+                  {tab !== "revision_deposito" && tab !== "retirado" && editingOrders.has(o.id) && (
+                    <tr key={`${o.id}-edit`} className="deposito-row--items-container">
+                      <td colSpan={6} style={{ padding: 0 }}>
+                        <RevisionOrderEditor order={o} onDone={list} canConfirm={false}
+                          seedFaltantes={pickupFaltantes[o.id] || null} />
+                      </td>
+                    </tr>
+                  )}
+                  {isExpanded && !editingOrders.has(o.id) && tab !== "revision_deposito" && (
                     <tr key={`${o.id}-items`} className="deposito-row--items-container">
                       <td colSpan={6} style={{ padding: 0 }}>
                         <div className="deposito-items-panel">

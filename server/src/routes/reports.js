@@ -48,9 +48,12 @@ function empresaFilter(table, empresaId, alias = "") {
     let out = "";
     if (cols.includes("empresa_id")) out += ` AND ${prefix}empresa_id = ${Number(empresaId)}`;
     if (cols.includes("deleted_at")) out += ` AND ${prefix}deleted_at IS NULL`;
-    // Los pedidos en revisión del depósito no se toman para informes hasta
-    // que el depósito los confirme.
-    if (String(table).toLowerCase() === "pedidos" && cols.includes("status")) {
+    // Los pedidos recién se toman para informes cuando quedan contabilizados:
+    // administrativos al crearse, y los de supervisor recién al marcarse retirado
+    // (ahí se descuenta el stock y se toma el detalle final del remito).
+    if (String(table).toLowerCase() === "pedidos" && cols.includes("contabilizado_at")) {
+      out += ` AND ${prefix}contabilizado_at IS NOT NULL`;
+    } else if (String(table).toLowerCase() === "pedidos" && cols.includes("status")) {
       out += ` AND LOWER(COALESCE(${prefix}Status,'')) <> 'revision_deposito'`;
     }
     return out;

@@ -407,12 +407,12 @@ router.post("/returns", requireAuth, (req, res) => {
     if (!pedOwner) return res.status(404).json({ error: "Pedido no encontrado" });
     if (pedOwner.empresa_id != null && Number(pedOwner.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "Pedido no encontrado" });
 
-    // La devolución recién se habilita cuando el depósito dejó el pedido listo
-    // para retirar (Status 'closed') o ya fue retirado (retiro_at seteado).
-    // Coincide con el frontend, que muestra "Devolver" sólo en esos estados.
-    const listoParaRetirar = String(pedOwner.Status || "").toLowerCase() === "closed" || pedOwner.retiro_at != null;
-    if (!listoParaRetirar) {
-      return res.status(400).json({ error: "El pedido debe estar listo para retirar antes de poder devolver insumos." });
+    // La devolución recién se habilita cuando el pedido ya fue retirado: es cuando
+    // el stock realmente se descontó, así que devolver vuelve a sumar algo que se
+    // restó. Antes de eso no se puede (no habría stock que reponer).
+    const retirado = pedOwner.retiro_at != null && String(pedOwner.retiro_at).trim() !== "";
+    if (!retirado) {
+      return res.status(400).json({ error: "El pedido debe estar retirado antes de poder devolver insumos." });
     }
 
     const pedItem = db.prepare(`SELECT SUM(Cantidad) AS pedido FROM PedidoItems WHERE PedidoID = ? AND ProductoID = ?`).get(pid, prod);

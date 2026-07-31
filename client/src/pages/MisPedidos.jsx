@@ -353,7 +353,7 @@ export default function MisPedidos() {
                   >
                     {pdfLoading && pdfOrder?.id === o.id ? "Cargando…" : "Ver remito"}
                   </button>
-                  {(o.status === "closed" || o.status === "retirado") && (
+                  {o.status === "retirado" && (
                     <button type="button" onClick={() => setReturnOrder(o)}
                       style={{ padding: "6px 16px", borderRadius: 999, border: "1px solid #1d4ed8", cursor: "pointer", background: "#fff", color: "#1d4ed8", fontWeight: 600, fontSize: "0.85rem", marginLeft: 8 }}>
                       Devolver

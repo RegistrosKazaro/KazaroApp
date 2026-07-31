@@ -154,8 +154,9 @@ router.get("/pedidos", (req, res) => {
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
 
-    // Sólo pedidos confirmados: los que están en revisión del depósito no se exponen.
-    const where = ["p.deleted_at IS NULL", "p.empresa_id = @empresaId", "LOWER(COALESCE(p.Status,'')) <> 'revision_deposito'"];
+    // Sólo pedidos contabilizados (retirados o administrativos): los que el
+    // depósito todavía está trabajando no se exponen hasta marcarse retirados.
+    const where = ["p.deleted_at IS NULL", "p.empresa_id = @empresaId", "p.contabilizado_at IS NOT NULL"];
     const params = { empresaId, limit, offset: (page - 1) * limit };
 
     const { desdeUtc, hastaUtc } = rangoUtc(desde, hasta);

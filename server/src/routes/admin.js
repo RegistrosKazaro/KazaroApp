@@ -934,9 +934,10 @@ router.get("/pedidos", mustBeAdmin, (req, res) => {
     const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 50));
     const offset = (page - 1) * limit;
 
-    // Los pedidos en revisión del depósito aún no cuentan: no aparecen acá hasta
-    // que el depósito los confirme.
-    const where = ["p.deleted_at IS NULL", "p.empresa_id = @empresaId", "LOWER(COALESCE(p.Status,'')) <> 'revision_deposito'"];
+    // Los pedidos recién cuentan cuando quedan contabilizados: administrativos al
+    // crearse, y los de supervisor recién al marcarse retirado (ahí se toma el
+    // detalle final del remito). Antes de eso no aparecen en admin.
+    const where = ["p.deleted_at IS NULL", "p.empresa_id = @empresaId", "p.contabilizado_at IS NOT NULL"];
     const params = { empresaId, limit, offset };
 
     // Argentina es UTC-3, así que el día local arranca a las 03:00 UTC. Comparar
@@ -1033,7 +1034,7 @@ router.get("/pedidos/servicios", mustBeAdmin, (req, res) => {
       SELECT s.ServiciosID AS id, s.ServicioNombre AS nombre, COUNT(*) AS pedidos
       FROM Pedidos p JOIN Servicios s ON s.ServiciosID = p.ServicioID
       WHERE p.deleted_at IS NULL AND p.empresa_id = ?
-        AND LOWER(COALESCE(p.Status,'')) <> 'revision_deposito'
+        AND p.contabilizado_at IS NOT NULL
       GROUP BY s.ServiciosID, s.ServicioNombre
       ORDER BY s.ServicioNombre COLLATE NOCASE
     `).all(empresaId);

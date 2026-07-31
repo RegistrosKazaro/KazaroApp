@@ -962,6 +962,30 @@ function ensureOrdersSchema() {
   `);
 }
 ensureOrdersSchema();
+
+// contabilizado_at marca cuándo el pedido "cuenta": aparece en admin/informes/API
+// y su stock ya fue descontado. Administrativos lo setean al crear; los pedidos
+// de supervisor recién al marcarse retirado. Para los pedidos YA existentes se
+// rellena una única vez (al agregar la columna) con los que hoy ya cuentan
+// (todo lo que no está en revisión), así ninguno desaparece ni se re-descuenta.
+function ensureContabilizadoColumn() {
+  try {
+    const cols = db.prepare("PRAGMA table_info(Pedidos)").all().map(c => c.name.toLowerCase());
+    if (!cols.includes("contabilizado_at")) {
+      db.prepare("ALTER TABLE Pedidos ADD COLUMN contabilizado_at TEXT DEFAULT NULL").run();
+      db.prepare(`
+        UPDATE Pedidos
+        SET contabilizado_at = COALESCE(Fecha, datetime('now'))
+        WHERE contabilizado_at IS NULL
+          AND LOWER(COALESCE(Status,'')) <> 'revision_deposito'
+      `).run();
+      console.log("[db] Columna 'contabilizado_at' agregada y rellenada en Pedidos existentes");
+    }
+  } catch (e) {
+    console.warn("[db] ensureContabilizadoColumn:", e?.message || e);
+  }
+}
+ensureContabilizadoColumn();
 ensureVisibilitySchema();
 ensureServiceProductsPivot();
 ensureIncomingStockTable();
@@ -1074,6 +1098,13 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
       servicioIdForInsert,
       deferStock ? "revision_deposito" : "open"
     ).lastInsertRowid;
+
+    // Administrativos cuentan desde el momento de crearse (descuentan stock acá).
+    // Los de supervisor recién se contabilizan al retirarse (en el depósito).
+    if (!deferStock) {
+      try { db.prepare(`UPDATE Pedidos SET contabilizado_at = datetime('now') WHERE PedidoID = ?`).run(pedidoId); }
+      catch { /* la columna se asegura al arrancar; si no está, no rompe la creación */ }
+    }
 
     const insItem = db.prepare(`
       INSERT INTO PedidoItems (PedidoID, ProductoID, Nombre, Precio, Cantidad, Subtotal, Codigo)

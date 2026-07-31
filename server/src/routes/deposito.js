@@ -403,12 +403,17 @@ router.get("/productos", mustWarehouse, (req, res) => {
 /* ===== Revisión del depósito: editar ítems y confirmar ===== */
 // Van antes de /:id/:action para que Express no los tome como action.
 
-// Verifica que el pedido exista, sea de la empresa y esté en revision_deposito.
-function pedidoEnRevision(id, empresaId) {
-  const p = db.prepare(`SELECT PedidoID, empresa_id, Status FROM Pedidos WHERE PedidoID = ?`).get(id);
+// Verifica que el pedido exista, sea de la empresa y todavía sea editable. Un
+// pedido es editable mientras no esté contabilizado (es decir, hasta que se
+// marca retirado). Los administrativos quedan contabilizados al crearse, así que
+// no son editables por acá (igual que antes).
+function pedidoEditable(id, empresaId) {
+  const cols = db.prepare("PRAGMA table_info(Pedidos)").all().map(c => c.name.toLowerCase());
+  const selCont = cols.includes("contabilizado_at") ? "contabilizado_at" : "NULL AS contabilizado_at";
+  const p = db.prepare(`SELECT PedidoID, empresa_id, Status, ${selCont} FROM Pedidos WHERE PedidoID = ?`).get(id);
   if (!p) return { error: 404 };
   if (p.empresa_id != null && Number(p.empresa_id) !== Number(empresaId)) return { error: 404 };
-  if (String(p.Status || "").toLowerCase() !== "revision_deposito") return { error: 409 };
+  if (p.contabilizado_at != null && String(p.contabilizado_at).trim() !== "") return { error: 409 };
   return { ok: true, pedido: p };
 }
 
@@ -417,9 +422,9 @@ router.put("/orders/:id/items", mustWarehouse, (req, res) => {
   try {
     const id = Number(req.params.id);
     const empresaId = req.user?.empresaId ?? 1;
-    const chk = pedidoEnRevision(id, empresaId);
+    const chk = pedidoEditable(id, empresaId);
     if (chk.error === 404) return res.status(404).json({ error: "Pedido no encontrado" });
-    if (chk.error === 409) return res.status(409).json({ error: "El pedido ya no está en revisión" });
+    if (chk.error === 409) return res.status(409).json({ error: "El pedido ya fue retirado y no se puede editar" });
 
     const nuevos = Array.isArray(req.body?.items) ? req.body.items : null;
     if (!nuevos || !nuevos.length) return res.status(400).json({ error: "Enviá al menos un insumo" });
@@ -465,21 +470,19 @@ router.put("/orders/:id/items", mustWarehouse, (req, res) => {
   }
 });
 
-// CONFIRMAR un pedido en revisión: descuenta stock y lo pasa al flujo normal.
+// CONFIRMAR un pedido en revisión: lo saca de "Por confirmar" y lo pasa a la
+// cola de trabajo del depósito (Pendientes). NO descuenta stock: el stock recién
+// se descuenta al marcar el pedido como retirado. El pedido sigue editable.
 router.post("/orders/:id/confirm", mustWarehouse, (req, res) => {
   try {
     const id = Number(req.params.id);
     const empresaId = req.user?.empresaId ?? 1;
-    const chk = pedidoEnRevision(id, empresaId);
-    if (chk.error === 404) return res.status(404).json({ error: "Pedido no encontrado" });
-    if (chk.error === 409) return res.status(409).json({ error: "El pedido ya no está en revisión" });
-
-    const r = applyOrderStockDiscount(id);
-    if (!r.ok) {
-      if (r.faltantes) {
-        return res.status(400).json({ error: "Stock insuficiente para confirmar", faltantes: r.faltantes });
-      }
-      return res.status(400).json({ error: r.error || "No se pudo confirmar" });
+    const p = db.prepare(`SELECT PedidoID, empresa_id, Status FROM Pedidos WHERE PedidoID = ?`).get(id);
+    if (!p || (p.empresa_id != null && Number(p.empresa_id) !== Number(empresaId))) {
+      return res.status(404).json({ error: "Pedido no encontrado" });
+    }
+    if (String(p.Status || "").toLowerCase() !== "revision_deposito") {
+      return res.status(409).json({ error: "El pedido ya no está en revisión" });
     }
 
     ensureStatusColumn();
@@ -512,16 +515,37 @@ router.put("/orders/:id/pickup", mustWarehouse, (req, res) => {
       if (!owner || Number(owner.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "Pedido no encontrado" });
     }
 
+    // Si ya estaba retirado, no repetir nada.
+    const yaRetirado = db.prepare(`SELECT retiro_at FROM Pedidos WHERE ${idCol} = ?`).get(id);
+    if (!yaRetirado) return res.status(404).json({ error: "Pedido no encontrado" });
+    if (yaRetirado.retiro_at != null && String(yaRetirado.retiro_at).trim() !== "") {
+      return res.json({ ok: true, alreadyPickedUp: true, retiroAt: yaRetirado.retiro_at });
+    }
+
+    // El stock recién se descuenta acá, con el detalle final del remito. Si el
+    // pedido todavía no fue contabilizado (supervisor), se valida y descuenta;
+    // si falta stock, se bloquea el retiro y se avisa qué insumos no alcanzan.
+    const contabilizado = cols.includes("contabilizado_at")
+      ? db.prepare(`SELECT contabilizado_at FROM Pedidos WHERE ${idCol} = ?`).get(id)?.contabilizado_at
+      : "ya"; // sin columna: asumimos contabilizado (comportamiento viejo)
+
     const retiroAt = new Date().toISOString();
 
-    const r = db.prepare(
-      `UPDATE Pedidos SET retiro_at = ? WHERE ${idCol} = ? AND (retiro_at IS NULL OR retiro_at = '')`
-    ).run(retiroAt, id);
-
-    if (r.changes === 0) {
-      const exists = db.prepare(`SELECT retiro_at FROM Pedidos WHERE ${idCol} = ?`).get(id);
-      if (!exists) return res.status(404).json({ error: "Pedido no encontrado" });
-      return res.json({ ok: true, alreadyPickedUp: true, retiroAt: exists.retiro_at });
+    if (contabilizado == null) {
+      const disc = applyOrderStockDiscount(Number(id));
+      if (!disc.ok) {
+        if (disc.faltantes) {
+          return res.status(400).json({ error: "Stock insuficiente para retirar", faltantes: disc.faltantes });
+        }
+        return res.status(400).json({ error: disc.error || "No se pudo registrar el retiro" });
+      }
+      db.prepare(
+        `UPDATE Pedidos SET retiro_at = ?, contabilizado_at = ? WHERE ${idCol} = ?`
+      ).run(retiroAt, retiroAt, id);
+    } else {
+      db.prepare(
+        `UPDATE Pedidos SET retiro_at = ? WHERE ${idCol} = ?`
+      ).run(retiroAt, id);
     }
 
     res.json({ ok: true, retiroAt });
