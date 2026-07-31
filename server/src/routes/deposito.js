@@ -263,6 +263,7 @@ router.get("/orders", mustWarehouse, (req, res) => {
           const placeholders = rowIds.map(() => "?").join(",");
           const itemSql = `
             SELECT PedidoID,
+                   ProductoID AS productoId,
                    Nombre    AS nombre,
                    ${hasCodigo ? "Codigo AS codigo," : "NULL AS codigo,"}
                    Cantidad  AS cantidad,
@@ -277,6 +278,7 @@ router.get("/orders", mustWarehouse, (req, res) => {
             const pid = String(item.PedidoID);
             if (!itemsMap[pid]) itemsMap[pid] = [];
             itemsMap[pid].push({
+              productId: Number(item.productoId) || null,
               nombre: item.nombre || "—",
               codigo: item.codigo || "",
               cantidad: Number(item.cantidad || 0),
