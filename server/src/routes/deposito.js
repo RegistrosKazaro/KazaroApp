@@ -72,6 +72,10 @@ const getVal = (obj, keys) => {
 const pad7 = (v) => String(v ?? "").padStart(7, "0");
 
 /* ========================= Email de pedido listo ========================= */
+// DEPRECADA / SIN USO: el aviso de "listo para retirar" ya NO manda mail; el
+// supervisor se entera por la notificación in-app (campana). Se conserva por si
+// se necesita volver a habilitar, pero no se llama desde ningún lado.
+// eslint-disable-next-line no-unused-vars
 async function notifyOrderReady(orderId, closedAt) {
   try {
     const pedido = getFullOrder(Number(orderId));
@@ -583,9 +587,9 @@ router.put("/orders/:id/:action", mustWarehouse, async (req, res) => {
     }
     res.json({ ok: true, id });
 
-    if (action === "close" && closedAt) {
-      setImmediate(async () => { await notifyOrderReady(id, closedAt); });
-    }
+    // "Listo para retirar" NO manda mail: el supervisor se entera por la
+    // notificación in-app (campana) creada arriba. Los únicos mails son los de
+    // los pedidos (al crearse). Evita llenar la casilla de correos.
   } catch (e) {
     console.error("[deposito] action error:", e);
     res.status(500).json({ error: e.message });

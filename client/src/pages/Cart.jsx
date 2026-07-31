@@ -164,9 +164,10 @@ export default function Cart() {
       // Guardamos remito si vino
       setRemito(res.data?.remito || null);
 
-      // Opcional: vaciar nota y carrito si tu flujo es “pedido enviado => limpiar”
+      // Vaciar nota y carrito al enviar: evita que se reenvíe el mismo pedido
+      // dos veces. Al quedar sin ítems, el botón "Enviar pedido" se deshabilita.
       setNote("");
-      // clear(); // si querés que se limpie el carrito al enviar, descomentá
+      clear();
     } catch (e) {
       setOrderOk(false);
       setErrorSend(e?.response?.data?.error || "No se pudo enviar el pedido");
@@ -272,7 +273,11 @@ export default function Cart() {
       </section>
 
       {items.length === 0 ? (
-        <div className="state">No tenés productos en el carrito.</div>
+        // Tras enviar, el carrito queda vacío pero se muestra la confirmación
+        // más abajo; en ese caso no repetimos el mensaje de carrito vacío.
+        showRemitoSection ? null : (
+          <div className="state">No tenés productos en el carrito.</div>
+        )
       ) : (
         <>
           <table className="sup-table" style={{ marginBottom: 12 }}>
@@ -402,89 +407,91 @@ export default function Cart() {
             </div>
           )}
 
-          {/* NUEVO: Sección de éxito + remito (con fallbacks) */}
-          {showRemitoSection && (
-            <section className="state" style={{ marginTop: 12 }}>
-              {/* % arriba del remito (solo supervisor) */}
-              {isSupervisorRoute && usagePct != null && (
-                <div style={{ marginBottom: 6 }}>
-                  <span className={`budget-chip ${overLimit ? "over" : "ok"}`}>
-                    {usagePct.toFixed(2)}% del presupuesto usado
-                  </span>
+        </>
+      )}
+
+      {/* Confirmación del pedido enviado. Va FUERA del ternario de items porque
+          al enviar se vacía el carrito (items = 0), y aun así hay que mostrarla. */}
+      {showRemitoSection && (
+        <section className="state" style={{ marginTop: 12 }}>
+          {/* % arriba del remito (solo supervisor) */}
+          {isSupervisorRoute && usagePct != null && (
+            <div style={{ marginBottom: 6 }}>
+              <span className={`budget-chip ${overLimit ? "over" : "ok"}`}>
+                {usagePct.toFixed(2)}% del presupuesto usado
+              </span>
+            </div>
+          )}
+
+          {/* Cartelito de aprobación */}
+          <div style={successBoxStyle}>
+            <div style={checkBadgeStyle}>✓</div>
+            <div>
+              <div style={{ fontWeight: 800, lineHeight: 1.2 }}>
+                Pedido enviado con éxito
+              </div>
+              <div style={{ fontSize: 13, opacity: 0.85 }}>
+                El pedido fue registrado y el carrito quedó vacío. No hace falta volver a enviarlo.
+              </div>
+            </div>
+          </div>
+
+          {/* Detalle SOLO si el backend devolvió remito con datos */}
+          {remito ? (
+            <>
+              <h3 style={{ marginTop: 0 }}>Detalle del remito</h3>
+
+              <div>
+                <strong>Número:</strong>{" "}
+                {remito.numero != null && String(remito.numero).trim()
+                  ? remito.numero
+                  : "—"}
+              </div>
+
+              <div>
+                <strong>Fecha:</strong> {safeDateLabel(remito.fecha)}
+              </div>
+
+              <div>
+                <strong>Generado por:</strong>{" "}
+                {remito.empleado != null && String(remito.empleado).trim()
+                  ? remito.empleado
+                  : "—"}
+              </div>
+
+              {/* Servicio SOLO cuando vino y estamos en supervisor */}
+              {isSupervisorRoute && remito.servicio?.name && (
+                <div>
+                  <strong>Servicio:</strong> {remito.servicio.name}
                 </div>
               )}
 
-              {/* Cartelito de aprobación */}
-              <div style={successBoxStyle}>
-                <div style={checkBadgeStyle}>✓</div>
-                <div>
-                  <div style={{ fontWeight: 800, lineHeight: 1.2 }}>
-                    Remito generado con éxito
-                  </div>
-                  <div style={{ fontSize: 13, opacity: 0.85 }}>
-                    El pedido fue registrado correctamente.
-                  </div>
+              {/* Nota del remito */}
+              {remito.nota && remito.nota.trim() && (
+                <div style={{ whiteSpace: "pre-wrap" }}>
+                  <strong>Nota:</strong> {remito.nota}
                 </div>
+              )}
+
+              <div>
+                <strong>Total:</strong> {nf.format(remito.total || 0)}
               </div>
 
-              {/* Detalle SOLO si el backend devolvió remito con datos */}
-              {remito ? (
-                <>
-                  <h3 style={{ marginTop: 0 }}>Detalle del remito</h3>
-
-                  <div>
-                    <strong>Número:</strong>{" "}
-                    {remito.numero != null && String(remito.numero).trim()
-                      ? remito.numero
-                      : "—"}
-                  </div>
-
-                  <div>
-                    <strong>Fecha:</strong> {safeDateLabel(remito.fecha)}
-                  </div>
-
-                  <div>
-                    <strong>Generado por:</strong>{" "}
-                    {remito.empleado != null && String(remito.empleado).trim()
-                      ? remito.empleado
-                      : "—"}
-                  </div>
-
-                  {/* Servicio SOLO cuando vino y estamos en supervisor */}
-                  {isSupervisorRoute && remito.servicio?.name && (
-                    <div>
-                      <strong>Servicio:</strong> {remito.servicio.name}
-                    </div>
-                  )}
-
-                  {/* Nota del remito */}
-                  {remito.nota && remito.nota.trim() && (
-                    <div style={{ whiteSpace: "pre-wrap" }}>
-                      <strong>Nota:</strong> {remito.nota}
-                    </div>
-                  )}
-
-                  <div>
-                    <strong>Total:</strong> {nf.format(remito.total || 0)}
-                  </div>
-
-                  {remito.pdfUrl && (
-                    <div style={{ marginTop: 8 }}>
-                      <a
-                        className="pill"
-                        href={remito.pdfUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        Descargar PDF
-                      </a>
-                    </div>
-                  )}
-                </>
-              ) : null}
-            </section>
-          )}
-        </>
+              {remito.pdfUrl && (
+                <div style={{ marginTop: 8 }}>
+                  <a
+                    className="pill"
+                    href={remito.pdfUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Descargar PDF
+                  </a>
+                </div>
+              )}
+            </>
+          ) : null}
+        </section>
       )}
     </div>
   );
