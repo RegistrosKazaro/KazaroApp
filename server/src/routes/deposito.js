@@ -404,16 +404,15 @@ router.get("/productos", mustWarehouse, (req, res) => {
 // Van antes de /:id/:action para que Express no los tome como action.
 
 // Verifica que el pedido exista, sea de la empresa y todavía sea editable. Un
-// pedido es editable mientras no esté contabilizado (es decir, hasta que se
-// marca retirado). Los administrativos quedan contabilizados al crearse, así que
-// no son editables por acá (igual que antes).
+// pedido de supervisor es editable mientras NO esté retirado (retiro_at nulo).
+// Los administrativos descuentan stock al crearse, así que no se editan por acá
+// (editarlos desincronizaría su stock).
 function pedidoEditable(id, empresaId) {
-  const cols = db.prepare("PRAGMA table_info(Pedidos)").all().map(c => c.name.toLowerCase());
-  const selCont = cols.includes("contabilizado_at") ? "contabilizado_at" : "NULL AS contabilizado_at";
-  const p = db.prepare(`SELECT PedidoID, empresa_id, Status, ${selCont} FROM Pedidos WHERE PedidoID = ?`).get(id);
+  const p = db.prepare(`SELECT PedidoID, empresa_id, Status, Rol, retiro_at FROM Pedidos WHERE PedidoID = ?`).get(id);
   if (!p) return { error: 404 };
   if (p.empresa_id != null && Number(p.empresa_id) !== Number(empresaId)) return { error: 404 };
-  if (p.contabilizado_at != null && String(p.contabilizado_at).trim() !== "") return { error: 409 };
+  if (p.retiro_at != null && String(p.retiro_at).trim() !== "") return { error: 409 };
+  if (String(p.Rol || "").toLowerCase() !== "supervisor") return { error: 403 };
   return { ok: true, pedido: p };
 }
 
@@ -425,6 +424,7 @@ router.put("/orders/:id/items", mustWarehouse, (req, res) => {
     const chk = pedidoEditable(id, empresaId);
     if (chk.error === 404) return res.status(404).json({ error: "Pedido no encontrado" });
     if (chk.error === 409) return res.status(409).json({ error: "El pedido ya fue retirado y no se puede editar" });
+    if (chk.error === 403) return res.status(403).json({ error: "Solo se pueden editar pedidos de supervisor" });
 
     const nuevos = Array.isArray(req.body?.items) ? req.body.items : null;
     if (!nuevos || !nuevos.length) return res.status(400).json({ error: "Enviá al menos un insumo" });

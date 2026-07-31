@@ -771,7 +771,8 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                         <button type="button" className="pill pill--ghost" onClick={() => onPreviewRemito(o)}>
                           Ver remito
                         </button>
-                        {(tab === "open" || tab === "preparing" || tab === "closed") && (
+                        {(tab === "open" || tab === "preparing" || tab === "closed")
+                          && String(o.rol || "").toLowerCase() === "supervisor" && (
                           <button type="button" className="pill pill--ghost" onClick={() => toggleEdit(o.id)}
                             style={{ borderColor: "#2563eb", color: "#1d4ed8" }}>
                             {editingOrders.has(o.id) ? "Cerrar edición" : "Editar"}
