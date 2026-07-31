@@ -525,26 +525,24 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
     setOrders(prev => prev.filter(o => o.id !== id));
   };
 
+  // En todas las transiciones se saca el pedido de la lista actual pero NO se
+  // cambia de pestaña: el encargado sigue trabajando en la etapa donde está.
   const closeOrder = async (id) => {
     try { await api.put(`/deposito/orders/${id}/close`, {}, { withCredentials: true }); }
     catch (e) { setErr(e?.response?.data?.error || e.message || "Error"); return; }
-    setOrders(prev => prev.map(o => o.id === id ? { ...o, status: "closed", isClosed: true } : o));
-    setTab("closed");
+    setOrders(prev => prev.filter(o => o.id !== id));
   };
 
   const reopenOrder = async (id) => {
     try { await api.put(`/deposito/orders/${id}/reopen`, {}, { withCredentials: true }); }
     catch (e) { setErr(e?.response?.data?.error || e.message || "Error"); return; }
-    setOrders(prev => prev.map(o => o.id === id ? { ...o, status: "open", isClosed: false, retiroAt: null } : o));
-    setTab("open");
+    setOrders(prev => prev.filter(o => o.id !== id));
   };
 
   const markPickup = async (id) => {
     try {
       await api.put(`/deposito/orders/${id}/pickup`, {}, { withCredentials: true });
-      // Sacar el pedido de la lista actual (cerrados) y pasar a la tab retirados
       setOrders(prev => prev.filter(o => o.id !== id));
-      setTab("retirado");
     } catch (e) {
       setErr(e?.response?.data?.error || e.message || "Error al registrar el retiro");
     }
