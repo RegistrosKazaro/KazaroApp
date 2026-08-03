@@ -2780,7 +2780,7 @@ function ProductHistorialSection() {
                   <div key={r.id || i} className="t-row" style={{ display:"grid", gridTemplateColumns:"140px 1fr 80px 90px 110px 100px 100px 90px 110px", alignItems:"center" }}>
                     <div style={{ fontSize:"0.78rem", color:"#6b7280", fontVariantNumeric:"tabular-nums" }}>{niceDate(r.fecha)}</div>
                     <div style={{ fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={r.product_name}>{r.product_name || "—"}</div>
-                    <div style={{ fontSize:"0.78rem", color:"#9ca3af" }}>{r.product_code || "—"}</div>
+                    <div style={{ fontSize:"0.78rem", color:"#4b5563" }}>{r.product_code || "—"}</div>
                     <div style={{ fontSize:"0.8rem" }}>{campoInfo.icon} {campoInfo.label}</div>
                     <div>
                       <span style={{ fontSize:"0.72rem", fontWeight:700, padding:"2px 8px", borderRadius:999, background: tipoInfo.bg, color: tipoInfo.color, border:`1px solid ${tipoInfo.color}40` }}>
@@ -2829,7 +2829,7 @@ function ProductHistorialSection() {
                 return (
                   <div key={i} className="t-row" style={{ display:"grid", gridTemplateColumns:"1fr 80px 70px 70px 110px 110px 110px 110px 110px", alignItems:"center" }}>
                     <div style={{ fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={r.nombre}>{r.nombre || "—"}</div>
-                    <div style={{ fontSize:"0.78rem", color:"#9ca3af" }}>{r.codigo || "—"}</div>
+                    <div style={{ fontSize:"0.78rem", color:"#4b5563" }}>{r.codigo || "—"}</div>
                     <div style={{ fontSize:"0.8rem" }}>{campoInfo.icon} {campoInfo.label}</div>
                     <div style={{ textAlign:"right", fontWeight:700, color:"#1d4ed8" }}>{r.total_cambios}</div>
                     <div style={{ textAlign:"right", fontSize:"0.82rem", color:"#6b7280", fontVariantNumeric:"tabular-nums" }}>{fmt(r.valor_inicial)}</div>
@@ -2849,7 +2849,7 @@ function ProductHistorialSection() {
       {loading && <div className="state" style={{ marginTop:"1rem" }}>Cargando historial…</div>}
 
       {!loading && rows.length > 0 && (
-        <p style={{ fontSize:"0.78rem", color:"#9ca3af", marginTop:"0.75rem", textAlign:"right" }}>
+        <p style={{ fontSize:"0.78rem", color:"#4b5563", marginTop:"0.75rem", textAlign:"right" }}>
           {rows.length} registro{rows.length !== 1 ? "s" : ""} mostrado{rows.length !== 1 ? "s" : ""}
         </p>
       )}

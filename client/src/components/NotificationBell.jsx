@@ -105,7 +105,7 @@ export default function NotificationBell() {
                 >
                   <div style={{ fontSize: 13.5, fontWeight: n.leida ? 500 : 700, color: "#0f172a" }}>{n.titulo}</div>
                   {n.cuerpo && <div style={{ fontSize: 12.5, color: "#475569", marginTop: 2 }}>{n.cuerpo}</div>}
-                  <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 3 }}>{n.created_at}</div>
+                  <div style={{ fontSize: 11, color: "#4b5563", marginTop: 3 }}>{n.created_at}</div>
                 </button>
               ))
             )}

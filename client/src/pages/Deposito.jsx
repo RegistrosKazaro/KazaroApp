@@ -79,7 +79,7 @@ function calcCoverageDays(stockActual, consumosRow) {
 
 function MiniBarChart({ data, maxItems = 8 }) {
   const items = (data || []).slice(0, maxItems);
-  if (!items.length) return <p style={{ color: "#9ca3af", fontSize: "0.8rem" }}>Sin datos</p>;
+  if (!items.length) return <p style={{ color: "#4b5563", fontSize: "0.8rem" }}>Sin datos</p>;
   const maxVal = Math.max(...items.map(d => Number(d.total || 0)), 1);
   const COLORS = ["#2563eb", "#3b82f6", "#60a5fa", "#93c5fd", "#1d4ed8", "#1e40af", "#1e3a8a", "#172554"];
   return (
@@ -169,7 +169,7 @@ function Sparkline({ data, color = "#2563eb", height = 36, width = 120 }) {
 }
 
 function CoverageGauge({ days, max = 30 }) {
-  if (days == null) return <span style={{ color: "#9ca3af" }}>—</span>;
+  if (days == null) return <span style={{ color: "#4b5563" }}>—</span>;
   const pct = Math.min(days / max, 1);
   const color = pct >= 0.6 ? "#16a34a" : pct >= 0.3 ? "#d97706" : "#dc2626";
   return (
@@ -317,7 +317,7 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
         <tbody>
           {items.map((it) => (
             <tr key={it.productId} className={faltantes.some((f) => f.productId === it.productId) ? "" : ""}>
-              <td>{it.codigo ? <span className="deposito-code">{it.codigo}</span> : <span style={{ color: "#9ca3af" }}>—</span>}</td>
+              <td>{it.codigo ? <span className="deposito-code">{it.codigo}</span> : <span style={{ color: "#4b5563" }}>—</span>}</td>
               <td>{it.nombre}</td>
               <td className="numeric">
                 <input type="number" min="1" value={it.cantidad}
@@ -345,7 +345,7 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
           value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onSearchKey}
           autoComplete="off" role="combobox" aria-expanded={resultados.length > 0} />
         {buscando && (
-          <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", fontSize: "0.8rem", color: "#94a3b8" }}>Buscando…</span>
+          <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", fontSize: "0.8rem", color: "#4b5563" }}>Buscando…</span>
         )}
         {q.trim().length >= 2 && !buscando && resultados.length === 0 && (
           <div style={{ position: "absolute", zIndex: 20, left: 0, right: 0, background: "#fff", border: "1px solid #d1d5db", borderRadius: 8, marginTop: 2, padding: "10px 12px", color: "#6b7280", fontSize: "0.88rem", boxShadow: "0 8px 24px rgba(15,23,42,.12)" }}>
@@ -362,7 +362,7 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
                   style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", border: 0,
                     background: idx === activeIdx ? "#eff6ff" : "#fff", padding: "8px 12px", cursor: "pointer",
                     textAlign: "left", borderBottom: "1px solid #f1f5f9" }}>
-                  <span style={{ fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: "0.75rem", color: "#9ca3af", minWidth: 74 }}>
+                  <span style={{ fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: "0.75rem", color: "#4b5563", minWidth: 74 }}>
                     {p.code || "—"}
                   </span>
                   <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -868,7 +868,7 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                                   <td>
                                     {item.codigo
                                       ? <span className="deposito-code">{item.codigo}</span>
-                                      : <span style={{ color: "#9ca3af" }}>—</span>
+                                      : <span style={{ color: "#4b5563" }}>—</span>
                                     }
                                   </td>
                                   <td>{item.nombre}</td>
@@ -1272,7 +1272,7 @@ export default function Deposito() {
                         <td>
                           {r.code
                             ? <span className="deposito-code">{r.code}</span>
-                            : <span style={{ color: "#9ca3af" }}>—</span>
+                            : <span style={{ color: "#4b5563" }}>—</span>
                           }
                         </td>
                         <td>{r.unit || "—"}</td>
@@ -1369,7 +1369,7 @@ export default function Deposito() {
                           <td>
                             {r.code
                               ? <span className="deposito-code">{r.code}</span>
-                              : <span style={{ color: "#9ca3af" }}>—</span>
+                              : <span style={{ color: "#4b5563" }}>—</span>
                             }
                           </td>
                           <td className="deposito-td--numeric">

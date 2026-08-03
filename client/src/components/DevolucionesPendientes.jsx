@@ -61,7 +61,7 @@ export default function DevolucionesPendientes() {
                   <div style={{ fontSize: 13, color: "#64748b", marginTop: 3 }}>
                     Pedido #{String(r.pedido_id).padStart(7, "0")} · Motivo: {r.motivo || "—"}
                   </div>
-                  <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>
+                  <div style={{ fontSize: 12, color: "#4b5563", marginTop: 2 }}>
                     Solicitada: {r.fecha_solicitud}
                   </div>
                 </div>
