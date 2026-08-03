@@ -3,22 +3,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
+import { formatMoney } from "../utils/format";
 import "../styles/service-budgets.css";
 import "../styles/a11y.css";
 
 const PAGE_SIZE = 15;
 
-const moneyFormatter = (() => {
-  try {
-    return new Intl.NumberFormat("es-AR", {
-      style: "currency",
-      currency: "ARS",
-      minimumFractionDigits: 2,
-    });
-  } catch {
-    return { format: (n) => `$ ${Number(n || 0).toFixed(2)}` };
-  }
-})();
+const moneyFormatter = { format: formatMoney };
 
 function parseMoneyFlexible(raw) {
   if (raw == null) return NaN;

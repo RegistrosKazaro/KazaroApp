@@ -3,6 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { useCart } from "../hooks/useCart";
 import { api } from "../api/client";
+import { formatMoney } from "../utils/format";
 import "../styles/catalog.css";
 
 function useServiceBudget(servicioId) {
@@ -115,10 +116,7 @@ export default function Cart() {
     isSupervisorRoute ? service?.id : null
   );
 
-  const nf = useMemo(
-    () => new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }),
-    []
-  );
+  const nf = { format: formatMoney };
 
   const usagePct = useMemo(() => {
     if (!isSupervisorRoute) return null;

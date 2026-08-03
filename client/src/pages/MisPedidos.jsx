@@ -4,6 +4,7 @@ import { useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
 import ReturnModal from "../components/ReturnModal";
+import { formatMoney } from "../utils/format";
 
 const API_BASE_URL = (import.meta?.env && import.meta.env.VITE_API_URL) || "http://localhost:4000";
 
@@ -29,11 +30,7 @@ function diasDesde(raw) {
   return (Date.now() - t) / (1000 * 60 * 60 * 24);
 }
 
-function money(v) {
-  try {
-    return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 2 }).format(Number(v || 0));
-  } catch { return `$ ${Number(v || 0).toFixed(2)}`; }
-}
+const money = formatMoney;
 
 const ESTADO_CONFIG = {
   revision_deposito: { label: "En revisión por depósito", color: "#7c3aed", bg: "#f5f3ff", border: "#ddd6fe", icon: "🔎" },

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useCart } from "../hooks/useCart";
+import { formatMoney } from "../utils/format";
 import "../styles/catalog.css";
 
 export default function Products() {
@@ -285,11 +286,7 @@ function ProductCard({ p, remainingStock, onAdd, addDisabled }) {
     if (p.price == null) return "";
     const n = Number(p.price);
     if (Number.isNaN(n)) return String(p.price);
-    return new Intl.NumberFormat("es-AR", {
-      style: "currency",
-      currency: "ARS",
-      minimumFractionDigits: 2,
-    }).format(n);
+    return formatMoney(n);
   }, [p.price]);
 
   const actualStock = Number.isFinite(Number(p.stock)) ? Number(p.stock) : null;

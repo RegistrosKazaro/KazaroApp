@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
 import useDebounced from "../hooks/useDebounced";
 import { normalizeText as norm } from "../utils/text";
+import { formatMoney, formatNumber } from "../utils/format";
 import "../styles/admin-panel.css";
 import "../styles/a11y.css";
 import EmployeesSection from "./EmployeesSection";
@@ -14,18 +15,7 @@ import StockCriticoSection from "./StockCriticoSection";
 const API_BASE_URL =
   (import.meta?.env && import.meta.env.VITE_API_URL) || "http://localhost:4000";
 
-const money = (v) => {
-  const n = Number(v || 0);
-  try {
-    return new Intl.NumberFormat("es-AR", {
-      style: "currency",
-      currency: "ARS",
-      maximumFractionDigits: 2,
-    }).format(n);
-  } catch {
-    return `$ ${n.toFixed(2)}`;
-  }
-};
+const money = formatMoney;
 
 const parseMoneyFlexible = (raw) => {
   if (raw == null) return NaN;
@@ -2600,11 +2590,8 @@ function ProductHistorialSection() {
   });
   const [to, setTo]               = useState(() => new Date().toISOString().slice(0, 10));
 
-  const niceCurrency = (n) => {
-    if (n == null) return "—";
-    return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 2 }).format(Number(n));
-  };
-  const niceNum = (n) => n == null ? "—" : new Intl.NumberFormat("es-AR").format(Number(n));
+  const niceCurrency = (n) => (n == null ? "—" : formatMoney(n));
+  const niceNum = (n) => (n == null ? "—" : formatNumber(n));
   const niceDate = (d) => {
     if (!d) return "—";
     return String(d).slice(0, 16).replace("T", " ");

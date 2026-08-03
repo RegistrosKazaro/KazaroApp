@@ -4,6 +4,7 @@ import { Navigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
 import useDebounced from "../hooks/useDebounced";
+import { formatMoney, formatNumber } from "../utils/format";
 import "../styles/deposito.css";
 import DevolucionesPendientes from "../components/DevolucionesPendientes";
 
@@ -19,12 +20,8 @@ function isoNDaysAgo(n) {
 function isoFirstOfYear() {
   return new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10);
 }
-function fmt(n) { return new Intl.NumberFormat("es-AR").format(Number(n || 0)); }
-function money(v) {
-  try {
-    return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 2 }).format(Number(v || 0));
-  } catch { return `$ ${Number(v || 0).toFixed(2)}`; }
-}
+const fmt = formatNumber;
+const money = formatMoney;
 
 function parseDateToMs(raw) {
   if (!raw) return NaN;

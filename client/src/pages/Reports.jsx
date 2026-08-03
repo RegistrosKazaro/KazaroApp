@@ -1,6 +1,7 @@
 // client/src/pages/Reports.jsx
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
+import { formatMoney, formatNumber } from "../utils/format";
 import "../styles/reports.css";
 
 const NOW = new Date();
@@ -11,10 +12,8 @@ function monthNameEs(m) {
   const names = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
   return names[Math.max(1, Math.min(12, Number(m) || 1)) - 1];
 }
-function niceNumber(n) { return new Intl.NumberFormat("es-AR").format(Number(n || 0)); }
-function niceCurrency(n) {
-  return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", minimumFractionDigits: 2 }).format(Number(n || 0));
-}
+const niceNumber = formatNumber;
+const niceCurrency = formatMoney;
 // Parsea "YYYY-MM-DD" descomponiendo manualmente año/mes/día
 // Evita CUALQUIER problema de timezone — new Date(y, m, d) siempre es hora local
 function parseLocalDate(d) {
