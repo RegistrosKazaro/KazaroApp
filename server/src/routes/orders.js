@@ -312,15 +312,7 @@ router.get("/mis-pedidos", requireAuth, async (req, res) => {
         ORDER BY PedidoItemID
       `).all(p.id);
 
-      let servicioNombre = null;
-      if (p.ServicioID) {
-        try {
-          const srv = db.prepare(
-            `SELECT ServicioNombre AS name FROM Servicios WHERE CAST(ServiciosID AS TEXT) = CAST(? AS TEXT) LIMIT 1`
-          ).get(p.ServicioID);
-          servicioNombre = srv?.name || null;
-        } catch {}
-      }
+      const servicioNombre = p.ServicioID ? getServiceNameById(p.ServicioID) : null;
 
       return { ...p, items, servicioNombre };
     });

@@ -1542,10 +1542,13 @@ export function getAssignedServices(userId) { return listServicesByUser(userId);
 export function getServiceNameById(servicioId) {
   if (servicioId == null || String(servicioId).trim() === "") return null;
   try {
+    // Comparación como entero: algunos ServiciosID (p. ej. servicios de Pazar)
+    // quedaron guardados como REAL (904.0), y CAST(... AS TEXT) daba "904.0" que
+    // no matcheaba con "904". Normalizar a entero resuelve todos los casos.
     const row = db.prepare(`
       SELECT ServicioNombre AS name
       FROM Servicios
-      WHERE CAST(ServiciosID AS TEXT) = CAST(? AS TEXT)
+      WHERE CAST(ServiciosID AS INTEGER) = CAST(? AS INTEGER)
       LIMIT 1
     `).get(servicioId);
     return row?.name ? String(row.name).trim() : null;

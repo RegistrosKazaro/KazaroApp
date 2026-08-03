@@ -70,7 +70,7 @@ async function sendReminders() {
       if (p.ServicioID) {
         try {
           const srv = db.prepare(
-            `SELECT ServicioNombre AS name FROM Servicios WHERE CAST(ServiciosID AS TEXT) = CAST(? AS TEXT) LIMIT 1`
+            `SELECT ServicioNombre AS name FROM Servicios WHERE CAST(ServiciosID AS INTEGER) = CAST(? AS INTEGER) LIMIT 1`
           ).get(p.ServicioID);
           servicioNombre = srv?.name || "";
         } catch {}
