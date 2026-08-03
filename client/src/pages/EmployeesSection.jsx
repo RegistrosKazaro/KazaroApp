@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { normalizeText as norm } from "../utils/text";
 
 const API_BASE_URL =
   (typeof import.meta !== "undefined" && import.meta?.env?.VITE_API_URL) ||
@@ -91,9 +92,6 @@ export default function EmployeesSection() {
   useEffect(() => { if (msg) { const t = setTimeout(() => setMsg(""), 4000); return () => clearTimeout(t); } }, [msg]);
 
   // ── Filtro de búsqueda ────────────────────────────────────
-  const norm = (v) =>
-    String(v ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-
   const filtered = employees.filter((e) => {
     if (!q.trim()) return true;
     const s = norm(q);

@@ -4,19 +4,10 @@ import { useNavigate, Navigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
 import { useCart } from "../hooks/useCart";
+import useDebounced from "../hooks/useDebounced";
 import "../styles/services.css";
 
 const PER_PAGE = 15;
-
-/** Debounce simple para no disparar búsquedas en cada tecla */
-function useDebounced(value, delay = 350) {
-  const [v, setV] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setV(value), delay);
-    return () => clearTimeout(t);
-  }, [value, delay]);
-  return v;
-}
 
 export default function ServicesPage() {
   const nav = useNavigate();

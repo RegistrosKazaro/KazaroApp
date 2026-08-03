@@ -3,6 +3,8 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
+import useDebounced from "../hooks/useDebounced";
+import { normalizeText as norm } from "../utils/text";
 import "../styles/admin-panel.css";
 import "../styles/a11y.css";
 import EmployeesSection from "./EmployeesSection";
@@ -50,23 +52,6 @@ const parseMoneyFlexible = (raw) => {
 
 const clampInt = (v, min = 0, max = Number.MAX_SAFE_INTEGER) =>
   Math.min(max, Math.max(min, parseInt(v ?? 0, 10) || 0));
-
-const norm = (v) =>
-  String(v ?? "")
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ");
-
-const useDebounced = (value, delay = 300) => {
-  const [v, setV] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setV(value), delay);
-    return () => clearTimeout(t);
-  }, [value, delay]);
-  return v;
-};
 
 function ProductsSection() {
   const [rows, setRows] = useState([]);
