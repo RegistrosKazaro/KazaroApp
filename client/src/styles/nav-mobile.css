@@ -1,48 +1,74 @@
-/* nav-mobile.css — Responsive de la barra superior. Importar último. */
+/* nav-mobile.css — Barra superior responsive con menú hamburguesa.
+   Importar ÚLTIMO en main.jsx. En desktop no cambia nada. */
+
+/* El botón de menú sólo existe en mobile (ver media query). */
+.nav-toggle { display: none; }
 
 @media (max-width: 720px) {
-  /* La barra permite scroll horizontal en vez de encimar todo */
+  /* La barra es el ancla del panel desplegable. */
   .appbar {
-    gap: 8px;
-    padding: 8px 10px;
+    position: relative;
+    padding: 10px 12px;
   }
-  .appbar-right {
-    gap: 6px;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    flex-wrap: nowrap;
-    padding-bottom: 2px;
-  }
-  .appbar-right::-webkit-scrollbar { display: none; }
 
-  /* Links y botones no se comprimen: mantienen su tamaño y se deslizan */
-  .appbar-right .pill,
-  .appbar-right a,
-  .appbar-right button {
-    flex: 0 0 auto;
-    white-space: nowrap;
-    font-size: 13px;
+  /* Botón hamburguesa: buen tamaño de toque (44px), ícono blanco. */
+  .nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
     padding: 6px 10px;
+    border: 1px solid rgba(255, 255, 255, .45);
+    border-radius: 10px;
+    background: transparent;
+    color: #fff;
+    cursor: pointer;
+    line-height: 1;
   }
+  .nav-toggle:hover { border-color: #fff; }
+  .nav-toggle-icon { font-size: 20px; }
 
-  /* La marca no se achica */
-  .appbar .brand {
-    flex: 0 0 auto;
-    font-size: 18px;
+  /* Los ítems pasan a un panel desplegable debajo de la barra. */
+  .appbar-right {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 60;
+    display: none;              /* oculto salvo que esté abierto */
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    padding: 8px;
+    background: #0b1220;
+    border-top: 1px solid rgba(255, 255, 255, .12);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, .35);
   }
+  .appbar-right.is-open { display: flex; }
 
-  /* El nombre de usuario se oculta en pantallas muy chicas para dar aire */
-  .appbar-right .user {
-    display: none;
-  }
-}
-
-@media (max-width: 400px) {
+  /* Cada acción ocupa toda la fila, alineada a la izquierda y con buen toque. */
   .appbar-right .pill,
-  .appbar-right a,
-  .appbar-right button {
-    font-size: 12px;
-    padding: 5px 8px;
+  .appbar-right > a,
+  .appbar-right > button {
+    width: 100%;
+    justify-content: flex-start;
+    text-align: left;
+    padding: 11px 14px;
+    font-size: 15px;
+    border-radius: 10px;
   }
+
+  /* El nombre de usuario queda como encabezado del panel. */
+  .appbar-right .user {
+    display: block;
+    padding: 6px 14px 2px;
+    font-size: 13px;
+    opacity: .7;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+  }
+
+  /* La marca no se achica. */
+  .appbar .brand { flex: 0 0 auto; font-size: 18px; }
 }

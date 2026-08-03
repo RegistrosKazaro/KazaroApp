@@ -1,5 +1,5 @@
 // client/src/App.jsx
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useState, useRef, useEffect } from "react";
 import {
   Routes, Route, Navigate, NavLink, Link,
   Outlet, useLocation, useParams, useNavigate,
@@ -55,8 +55,29 @@ function Layout() {
   const base        = `/app/${role}`;
   const auth        = useAuth();
   const navigate    = useNavigate();
+  const location    = useLocation();
   const { count }   = useCart();
   const { empresa } = useEmpresa();
+
+  // Menú móvil (hamburguesa). En desktop el CSS lo ignora y muestra todo.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const navRef = useRef(null);
+  // Cerrar al navegar a otra ruta.
+  useEffect(() => { setMenuOpen(false); }, [location.pathname]);
+  // Cerrar con Escape o al tocar fuera de la barra.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e) => { if (e.key === "Escape") setMenuOpen(false); };
+    const onClickOut = (e) => { if (navRef.current && !navRef.current.contains(e.target)) setMenuOpen(false); };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onClickOut);
+    document.addEventListener("touchstart", onClickOut);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onClickOut);
+      document.removeEventListener("touchstart", onClickOut);
+    };
+  }, [menuOpen]);
 
   const roles = (auth?.user?.roles || []).map((r) => String(r).toLowerCase());
   const isAdmin        = roles.includes("admin");
@@ -86,13 +107,28 @@ function Layout() {
   return (
     <div className="app">
       <a href="#main-content" className="skip-link">Saltar al contenido</a>
-      <nav className="appbar" role="navigation" aria-label="Navegación principal">
+      <nav className="appbar" role="navigation" aria-label="Navegación principal" ref={navRef}>
         {/* Brand muestra el nombre de la empresa activa */}
         <Link to={isAdmin ? `${base}/admin` : `${base}/cart`} className="brand">
           {empresaNombre}
         </Link>
 
-        <div className="appbar-right">
+        {/* Botón de menú: sólo visible en mobile (lo controla el CSS) */}
+        <button
+          type="button"
+          className="nav-toggle"
+          aria-label={menuOpen ? "Cerrar menú" : "Abrir menú"}
+          aria-expanded={menuOpen}
+          aria-controls="appbar-menu"
+          onClick={() => setMenuOpen((o) => !o)}
+        >
+          <span className="nav-toggle-icon" aria-hidden="true">{menuOpen ? "✕" : "☰"}</span>
+        </button>
+
+        <div
+          id="appbar-menu"
+          className={`appbar-right${menuOpen ? " is-open" : ""}`}
+        >
           {isAdmin ? (
             /* El admin navega desde el lateral del panel: acá quedan sólo Admin y Salir.
                Carrito y notificaciones siguen en la barra del resto de los roles. */
