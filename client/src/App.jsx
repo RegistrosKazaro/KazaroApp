@@ -16,9 +16,9 @@ import Cart           from "./pages/Cart";
 import Services       from "./pages/Services";
 const AdminPanel = lazy(() => import("./pages/AdminPanel"));
 const Reports = lazy(() => import("./pages/Reports"));
-import Deposito       from "./pages/Deposito";
-import MisPedidos     from "./pages/MisPedidos";
-import ServiceBudgets from "./pages/ServiceBudgets";
+const Deposito = lazy(() => import("./pages/Deposito"));
+const MisPedidos = lazy(() => import("./pages/MisPedidos"));
+const ServiceBudgets = lazy(() => import("./pages/ServiceBudgets"));
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import "./styles/app.css";
@@ -124,7 +124,9 @@ function Layout() {
       </nav>
 
       <main className="appmain" id="main-content" tabIndex={-1}>
-        <Outlet />
+        <Suspense fallback={<div className="state">Cargando…</div>}>
+          <Outlet />
+        </Suspense>
       </main>
     </div>
   );
