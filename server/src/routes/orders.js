@@ -431,11 +431,15 @@ router.get("/returns", requireAuth, (req, res) => {
   try {
     const estado = String(req.query.estado || "").trim();
     const empresaId = req.user?.empresaId ?? null;
-    let sql = `SELECT d.*, p.ProductName AS producto_nombre FROM devoluciones d LEFT JOIN Productos p ON p.ProductID = d.producto_id WHERE (d.empresa_id = ? OR d.empresa_id IS NULL)`;
+    let sql = `SELECT d.*, p.ProductName AS producto_nombre, p.Code AS producto_codigo FROM devoluciones d LEFT JOIN Productos p ON p.ProductID = d.producto_id WHERE (d.empresa_id = ? OR d.empresa_id IS NULL)`;
     const params = [empresaId];
     if (estado) { sql += ` AND d.estado = ?`; params.push(estado); }
     sql += ` ORDER BY d.id DESC LIMIT 500`;
-    res.json({ ok: true, rows: db.prepare(sql).all(...params) });
+    const rows = db.prepare(sql).all(...params).map((r) => ({
+      ...r,
+      solicitante_nombre: r.solicitante_id ? (getEmployeeDisplayName(r.solicitante_id) || null) : null,
+    }));
+    res.json({ ok: true, rows });
   } catch (e) {
     console.error("[returns GET]", e?.message || e);
     res.status(500).json({ error: "No se pudieron cargar las devoluciones" });
