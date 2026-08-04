@@ -291,6 +291,7 @@ router.get("/mis-pedidos", requireAuth, async (req, res) => {
         p.Total      AS total,
         p.Fecha      AS fecha,
         p.ServicioID,
+        p.retiro_at  AS retiroAt,
         COALESCE(p.Status, 'open') AS status
       FROM Pedidos p
       WHERE CAST(p.EmpleadoID AS TEXT) = CAST(? AS TEXT)
@@ -314,7 +315,12 @@ router.get("/mis-pedidos", requireAuth, async (req, res) => {
 
       const servicioNombre = p.ServicioID ? getServiceNameById(p.ServicioID) : null;
 
-      return { ...p, items, servicioNombre };
+      // "retirado" no es un valor de la columna Status: se deriva de retiro_at.
+      // Sin esto el front nunca ve status "retirado" y no muestra "Devolver".
+      const retirado = p.retiroAt != null && String(p.retiroAt).trim() !== "";
+      const status = retirado ? "retirado" : p.status;
+
+      return { ...p, status, items, servicioNombre };
     });
 
     return res.json(result);
