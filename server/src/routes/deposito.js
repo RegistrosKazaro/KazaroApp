@@ -194,9 +194,11 @@ async function notifyOrderReady(orderId, closedAt) {
       : `PEDIDO #${nro} LISTO PARA RETIRAR`;
 
     // El aviso de "listo para retirar" va ÚNICAMENTE al supervisor que hizo el
-    // pedido. Sin copias a nadie más (antes copiaba a nicolas.barcena).
+    // pedido. exclusive ignora los destinatarios globales (MAIL_TO/CC/BCC), que
+    // si no le harían llegar el mail a otras casillas igual.
     await sendMail({
       to: supervisorEmail,
+      exclusive: true,
       subject,
       text,
       html,

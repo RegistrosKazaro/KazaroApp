@@ -136,6 +136,7 @@ export async function sendMail({
   empresaId = null,
   empresaNombre = null,
   overrideTo = false,
+  exclusive = false,
 }) {
   // Pausa activa: no se envía nada. Se registra como "paused" para dejar rastro
   // y se devuelve sin error, para no romper los flujos que llaman a sendMail.
@@ -160,10 +161,13 @@ export async function sendMail({
   const systemEmail = (parsed.email || pickFirstEmail(cfg.SMTP_USER) || "no-reply@example.com").trim();
   const systemName  = (parsed.name || brandName).trim();
 
-  const alwaysInclude = overrideTo ? [] : unionEmails(cfg.MAIL_TO);
+  // exclusive: el mail va SOLO a los destinatarios pasados explícitamente
+  // (ignora MAIL_TO/MAIL_CC/MAIL_BCC globales). Para avisos personales, como el
+  // "listo para retirar" que debe llegar únicamente al supervisor del pedido.
+  const alwaysInclude = (overrideTo || exclusive) ? [] : unionEmails(cfg.MAIL_TO);
   const toList  = unionEmails(to, alwaysInclude);
-  const ccList  = unionEmails(cc, cfg.MAIL_CC);
-  const bccList = unionEmails(bcc, cfg.MAIL_BCC);
+  const ccList  = exclusive ? unionEmails(cc)  : unionEmails(cc, cfg.MAIL_CC);
+  const bccList = exclusive ? unionEmails(bcc) : unionEmails(bcc, cfg.MAIL_BCC);
 
   const block   = parseList(cfg.MAIL_BLOCKLIST).filter(isValidEmail);
   const toFinal = minusEmails(toList, block);
