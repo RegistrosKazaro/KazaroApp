@@ -13,7 +13,6 @@ import {
   applyOrderStockDiscount,
 } from "../db.js";
 import { sendMail } from "../utils/mailer.js";
-import { getMailConfigValue } from "../utils/empresa.js";
 
 const router = Router();
 console.log("[deposito] Router cargado: Modo Seguro (JS JOIN)");
@@ -72,10 +71,8 @@ const getVal = (obj, keys) => {
 const pad7 = (v) => String(v ?? "").padStart(7, "0");
 
 /* ========================= Email de pedido listo ========================= */
-// DEPRECADA / SIN USO: el aviso de "listo para retirar" ya NO manda mail; el
-// supervisor se entera por la notificación in-app (campana). Se conserva por si
-// se necesita volver a habilitar, pero no se llama desde ningún lado.
-// eslint-disable-next-line no-unused-vars
+// Aviso de "listo para retirar": va ÚNICAMENTE al supervisor que hizo el pedido
+// (además de la notificación in-app). Sin copias a nadie más.
 async function notifyOrderReady(orderId, closedAt) {
   try {
     const pedido = getFullOrder(Number(orderId));
@@ -196,16 +193,10 @@ async function notifyOrderReady(orderId, closedAt) {
       ? `PEDIDO #${nro} LISTO PARA RETIRAR — ${servicioNombre}`
       : `PEDIDO #${nro} LISTO PARA RETIRAR`;
 
-    // Copia fija a nicolas.barcena (configurable con MAIL_ALWAYS por empresa).
-    // El aviso de "listo para retirar" va sólo al supervisor y a esta copia.
-    const copiaFija = getMailConfigValue(empresaId, "MAIL_ALWAYS", "nicolas.barcena@kazaro.com.ar");
-    const cc = copiaFija && copiaFija.trim().toLowerCase() !== supervisorEmail.trim().toLowerCase()
-      ? copiaFija.trim()
-      : undefined;
-
+    // El aviso de "listo para retirar" va ÚNICAMENTE al supervisor que hizo el
+    // pedido. Sin copias a nadie más (antes copiaba a nicolas.barcena).
     await sendMail({
       to: supervisorEmail,
-      cc,
       subject,
       text,
       html,
@@ -214,7 +205,7 @@ async function notifyOrderReady(orderId, closedAt) {
       empresaId,
     });
 
-    console.log(`[deposito] Notificación enviada a ${supervisorEmail}${cc ? ` (cc ${cc})` : ""} — pedido #${nro}`);
+    console.log(`[deposito] Notificación enviada a ${supervisorEmail} — pedido #${nro}`);
   } catch (e) {
     console.warn("[deposito] notifyOrderReady error:", e?.message || e);
   }
@@ -610,12 +601,12 @@ router.put("/orders/:id/:action", mustWarehouse, async (req, res) => {
           ).run(ped.empresa_id ?? null, ped.EmpleadoID, `Pedido #${String(id).padStart(7,"0")} listo para retiro`, "Tu pedido fue preparado y está listo para retirar.", "/app/supervisor/mis-pedidos");
         }
       } catch (e) { console.warn("[notif] close:", e?.message); }
+
+      // Además del aviso in-app, mandar el mail SOLO al supervisor del pedido.
+      // No bloquea la respuesta (se envía en segundo plano).
+      notifyOrderReady(id, closedAt).catch((e) => console.warn("[deposito] notifyOrderReady:", e?.message || e));
     }
     res.json({ ok: true, id });
-
-    // "Listo para retirar" NO manda mail: el supervisor se entera por la
-    // notificación in-app (campana) creada arriba. Los únicos mails son los de
-    // los pedidos (al crearse). Evita llenar la casilla de correos.
   } catch (e) {
     console.error("[deposito] action error:", e);
     res.status(500).json({ error: e.message });
