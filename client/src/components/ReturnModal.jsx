@@ -37,7 +37,7 @@ export default function ReturnModal({ order, onClose, onDone }) {
     setField(it.productId, "cantidad", n);
   };
   const paso = (it, delta) => {
-    const actual = Number(cur(it.productId).cantidad) || 1;
+    const actual = Number(cur(it.productId).cantidad) || 0;
     setCantidad(it, actual + delta);
   };
 
