@@ -93,6 +93,14 @@ async function notifyOrderReady(orderId, closedAt) {
       empresaId = row?.empresa_id ?? null;
     } catch {}
 
+    // Pazar (empresa 2) carga emails de usuario de relleno (no válidos), así que
+    // el aviso rebotaría. No mandamos mail: el supervisor de Pazar se entera por
+    // la notificación in-app (campana), que se crea aparte al cerrar el pedido.
+    if (Number(empresaId) === 2) {
+      console.log(`[deposito] Pazar: "listo para retirar" sin mail (solo campana) — pedido #${pad7(pedido.id)}`);
+      return;
+    }
+
     const servicioNombre = pedido.ServicioID
       ? getServiceNameById(String(pedido.ServicioID)) || `Servicio ${pedido.ServicioID}`
       : null;
