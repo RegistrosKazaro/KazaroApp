@@ -5,7 +5,7 @@ import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
 import useDebounced from "../hooks/useDebounced";
 import { normalizeText as norm } from "../utils/text";
-import { formatMoney, formatNumber } from "../utils/format";
+import { formatMoney, formatNumber, csvNumber } from "../utils/format";
 import "../styles/admin-panel.css";
 import "../styles/a11y.css";
 import EmployeesSection from "./EmployeesSection";
@@ -1921,14 +1921,24 @@ function OrdersSection() {
     const cab = ["Pedido", "Fecha y hora", "Servicio", "Solicitante", "Estado",
                  "Codigo", "Insumo", "Cantidad", "Precio unitario", "Subtotal", "Total del pedido"];
     const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    // Los importes y cantidades van SIN comillas y con coma decimal, para que
+    // Excel en español los lea como números (con punto los toma como miles).
     const filas = [cab.map(esc).join(";")];
     for (const p of orders) {
-      const base = [p.numero, p.fechaAr, p.servicio?.nombre ?? "(sin servicio)", p.solicitante, p.estado];
+      const base = [p.numero, p.fechaAr, p.servicio?.nombre ?? "(sin servicio)", p.solicitante, p.estado].map(esc);
       if (!p.items?.length) {
-        filas.push([...base, "", "", "", "", "", p.total].map(esc).join(";"));
+        filas.push([...base, "", "", "", "", "", csvNumber(p.total)].join(";"));
       } else {
         for (const i of p.items) {
-          filas.push([...base, i.codigo ?? "", i.nombre, i.cantidad, i.precio, i.subtotal, p.total].map(esc).join(";"));
+          filas.push([
+            ...base,
+            esc(i.codigo ?? ""),
+            esc(i.nombre),
+            csvNumber(i.cantidad),
+            csvNumber(i.precio),
+            csvNumber(i.subtotal),
+            csvNumber(p.total),
+          ].join(";"));
         }
       }
     }
@@ -2640,11 +2650,14 @@ function ProductHistorialSection() {
       ? ["Producto","Código","Campo","Cambios","Valor inicial","Valor final","Aumentos","Bajas","Variación neta","Primer cambio","Último cambio"]
       : ["Fecha","Producto","Código","Campo","Tipo","Valor anterior","Valor nuevo","Diferencia","Usuario"];
 
+    // Texto entre comillas; números sin comillas y con coma decimal, para que
+    // Excel en español no los lea como separador de miles.
+    const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const dataRows = vista === "resumen"
-      ? rows.map(r => [r.nombre||"—", r.codigo||"—", r.campo, r.total_cambios, r.valor_inicial??0, r.valor_final??0, r.total_aumentos??0, r.total_bajas??0, r.variacion_neta??0, r.primer_cambio||"—", r.ultimo_cambio||"—"])
-      : rows.map(r => [r.fecha, r.product_name||"—", r.product_code||"—", r.campo, r.tipo, r.valor_anterior??0, r.valor_nuevo??0, r.diferencia??0, r.usuario||"—"]);
+      ? rows.map(r => [esc(r.nombre||"—"), esc(r.codigo||"—"), esc(r.campo), csvNumber(r.total_cambios??0), csvNumber(r.valor_inicial??0), csvNumber(r.valor_final??0), csvNumber(r.total_aumentos??0), csvNumber(r.total_bajas??0), csvNumber(r.variacion_neta??0), esc(r.primer_cambio||"—"), esc(r.ultimo_cambio||"—")])
+      : rows.map(r => [esc(r.fecha), esc(r.product_name||"—"), esc(r.product_code||"—"), esc(r.campo), esc(r.tipo), csvNumber(r.valor_anterior??0), csvNumber(r.valor_nuevo??0), csvNumber(r.diferencia??0), esc(r.usuario||"—")]);
 
-    const csv = [headers, ...dataRows].map(row => row.map(c => `"${String(c).replace(/"/g,'""')}"`).join(";")).join("\n");
+    const csv = [headers.map(esc), ...dataRows].map(row => row.join(";")).join("\n");
     Object.assign(document.createElement("a"), {
       href: URL.createObjectURL(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" })),
       download: `historial_productos_${from}_${to}.csv`,

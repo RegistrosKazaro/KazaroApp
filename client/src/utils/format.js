@@ -34,3 +34,18 @@ export function formatNumber(v) {
   if (_num) return _num.format(n);
   return String(n);
 }
+
+/**
+ * Número para una celda de CSV que se abre con Excel en español: coma como
+ * separador decimal y SIN separador de miles. Se escribe sin comillas para que
+ * Excel lo tome como número y no como texto.
+ *
+ * Con punto decimal ("134.36") Excel es-AR lo lee como miles y lo convierte en
+ * un número gigante; por eso se exporta "134,36".
+ */
+export function csvNumber(v) {
+  if (v == null || v === "") return "";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "";
+  return String(n).replace(".", ",");
+}
