@@ -1196,6 +1196,27 @@ function ServiceProductsSection() {
     });
   };
 
+  // Marcar/desmarcar de una sola vez, para no tildar insumo por insumo. Si hay
+  // un filtro activo aplica sólo a lo que se está viendo.
+  const marcarTodos = () => {
+    setSelected((prev) => {
+      const s = new Set(prev);
+      for (const p of rows) s.add(String(p.id));
+      return s;
+    });
+  };
+  const desmarcarTodos = () => {
+    setSelected((prev) => {
+      const s = new Set(prev);
+      for (const p of rows) s.delete(String(p.id));
+      return s;
+    });
+  };
+
+  const hayFiltro = String(qDeb || "").trim().length > 0;
+  const visiblesMarcados = rows.filter((p) => selected.has(String(p.id))).length;
+  const todosMarcados = rows.length > 0 && visiblesMarcados === rows.length;
+
   const save = async () => {
     if (!service) return;
     setSaving(true);
@@ -1204,9 +1225,14 @@ function ServiceProductsSection() {
       const res = await api.put(`/admin/sp/assignments/${service.id}`, {
         productIds: Array.from(selected),
       });
-      const added = res?.data?.added?.length || 0;
-      const removed = res?.data?.removed?.length || 0;
-      setAssignMsg(`Guardado. +${added} / -${removed}`);
+      // El backend devuelve cantidades (números), no listas.
+      const added = Number(res?.data?.added ?? 0);
+      const removed = Number(res?.data?.removed ?? 0);
+      setAssignMsg(
+        added || removed
+          ? `Guardado: ${added} asignado${added === 1 ? "" : "s"}, ${removed} quitado${removed === 1 ? "" : "s"}.`
+          : "Guardado. No hubo cambios."
+      );
     } catch {
       setAssignMsg("No se pudo guardar");
     } finally {
@@ -1283,6 +1309,25 @@ function ServiceProductsSection() {
               onChange={(e) => setQ(e.target.value)}
               placeholder="Filtrar productos (ID, nombre o código)…"
             />
+          </div>
+
+          {/* Asignación masiva: evita tildar insumo por insumo */}
+          <div className="actions-row" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", margin: "4px 0 10px" }}>
+            <button type="button" className="btn primary" onClick={marcarTodos}
+              disabled={rows.length === 0 || todosMarcados}>
+              {hayFiltro ? `Asignar los ${rows.length} filtrados` : `Asignar todos los insumos (${rows.length})`}
+            </button>
+            <button type="button" className="btn ghost" onClick={desmarcarTodos}
+              disabled={visiblesMarcados === 0}>
+              {hayFiltro ? "Quitar los filtrados" : "Quitar todos"}
+            </button>
+            <span className="muted" style={{ fontSize: "0.85rem", marginLeft: "auto" }}>
+              {visiblesMarcados} de {rows.length} {hayFiltro ? "filtrados" : "insumos"} asignados
+              {" · "}<strong>{selected.size}</strong> en total
+            </span>
+          </div>
+          <div className="muted" style={{ fontSize: "0.8rem", marginBottom: 8 }}>
+            Acordate de tocar <strong>Guardar asignaciones</strong> para que se apliquen.
           </div>
 
           <div className="table like">
