@@ -41,6 +41,12 @@ function getEmpresaId(req) {
   return req.user?.empresaId ?? 1;
 }
 // Filtro SQL por empresa para la tabla dada (si la columna existe)
+// Total del pedido NETO de devoluciones aprobadas. Se usa en lugar de p.Total
+// para que un pedido con devolución no infle los montos de los informes. La
+// devolución se imputa al pedido original (o sea, al mes del pedido).
+const TOTAL_NETO = (alias = "p") =>
+  `(SELECT vn.TotalNeto FROM v_pedidos_neto vn WHERE vn.PedidoID = ${alias}.PedidoID)`;
+
 function empresaFilter(table, empresaId, alias = "") {
   try {
     const cols = _tinfo(table).map(c => c.name.toLowerCase());
@@ -227,15 +233,15 @@ router.get("/monthly", mustBeAdmin, (req, res) => {
 
     const totals = (() => {
       const ordersCount = runSql(`SELECT COUNT(*) AS c FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}`, start, end)?.c || 0;
-      const itemsCount  = runSql(`SELECT COALESCE(SUM(i.Cantidad),0) AS c FROM PedidoItems i JOIN Pedidos p ON p.PedidoID = i.PedidoID WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}`, start, end)?.c || 0;
-      const amount      = runSql(`SELECT COALESCE(SUM(p.Total),0) AS s FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}`, start, end)?.s || 0;
+      const itemsCount  = runSql(`SELECT COALESCE(SUM(i.Cantidad),0) AS c FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}`, start, end)?.c || 0;
+      const amount      = runSql(`SELECT COALESCE(SUM(${TOTAL_NETO()}),0) AS s FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}`, start, end)?.s || 0;
       return { ordersCount: Number(ordersCount), itemsCount: Number(itemsCount), amount: Number(amount) };
     })();
 
     const top_services = runAll(`
       SELECT COALESCE(p.ServicioID,'') AS serviceId, COUNT(DISTINCT p.PedidoID) AS pedidos,
              COALESCE(SUM(i.Cantidad),0) AS qty, COALESCE(SUM(i.Subtotal),0) AS amount
-      FROM Pedidos p LEFT JOIN PedidoItems i ON i.PedidoID = p.PedidoID
+      FROM Pedidos p LEFT JOIN v_pedido_items_neto i ON i.PedidoID = p.PedidoID
       WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}
       GROUP BY p.ServicioID ORDER BY amount DESC LIMIT 10
     `, start, end).map((r) => ({
@@ -246,7 +252,7 @@ router.get("/monthly", mustBeAdmin, (req, res) => {
     const top_products = runAll(`
       SELECT COALESCE(i.ProductoID, 0) AS productId, COALESCE(MAX(i.Codigo), '') AS code, COALESCE(MAX(i.Nombre), '') AS name,
              COUNT(DISTINCT i.PedidoID) AS pedidos, COALESCE(SUM(i.Cantidad),0) AS qty, COALESCE(SUM(i.Subtotal),0) AS amount
-      FROM PedidoItems i JOIN Pedidos p ON p.PedidoID = i.PedidoID
+      FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID
       WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}
       GROUP BY i.ProductoID, LOWER(i.Nombre), LOWER(i.Codigo) ORDER BY amount DESC LIMIT 10
     `, start, end).map((r) => ({
@@ -255,7 +261,7 @@ router.get("/monthly", mustBeAdmin, (req, res) => {
     }));
 
     const by_day = runAll(`
-      SELECT SUBSTR(p.Fecha,1,10) AS day, COUNT(*) AS pedidos, COALESCE(SUM(p.Total),0) AS monto
+      SELECT SUBSTR(p.Fecha,1,10) AS day, COUNT(*) AS pedidos, COALESCE(SUM(${TOTAL_NETO()}),0) AS monto
       FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}
       GROUP BY day ORDER BY day
     `, start, end).map((r) => ({ day: r.day, pedidos: Number(r.pedidos || 0), monto: Number(r.monto || 0) }));
@@ -265,8 +271,8 @@ router.get("/monthly", mustBeAdmin, (req, res) => {
     const prev_totals = (() => {
       try {
         const ordersCount = runSql(`SELECT COUNT(*) AS c FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}`, prevMonthRange.start, prevMonthRange.end)?.c || 0;
-        const itemsCount  = runSql(`SELECT COALESCE(SUM(i.Cantidad),0) AS c FROM PedidoItems i JOIN Pedidos p ON p.PedidoID = i.PedidoID WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}`, prevMonthRange.start, prevMonthRange.end)?.c || 0;
-        const amount      = runSql(`SELECT COALESCE(SUM(p.Total),0) AS s FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}`, prevMonthRange.start, prevMonthRange.end)?.s || 0;
+        const itemsCount  = runSql(`SELECT COALESCE(SUM(i.Cantidad),0) AS c FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}`, prevMonthRange.start, prevMonthRange.end)?.c || 0;
+        const amount      = runSql(`SELECT COALESCE(SUM(${TOTAL_NETO()}),0) AS s FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}`, prevMonthRange.start, prevMonthRange.end)?.s || 0;
         return { ordersCount: Number(ordersCount), itemsCount: Number(itemsCount), amount: Number(amount) };
       } catch { return null; }
     })();
@@ -312,12 +318,12 @@ function totalsForRange(start, end, serviceId, empresaId) {
     : (db.prepare(`SELECT COUNT(*) AS c FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? ${efP} ${sqlExclusions}`).get(start, end, ...exclusionParams)?.c || 0);
 
   const itemsCount = hasService
-    ? (db.prepare(`SELECT COALESCE(SUM(i.Cantidad),0) AS c FROM PedidoItems i JOIN Pedidos p ON p.PedidoID = i.PedidoID WHERE p.Fecha >= ? AND p.Fecha < ? AND CAST(p.ServicioID AS TEXT) = CAST(? AS TEXT) ${efP}`).get(start, end, serviceId)?.c || 0)
-    : (db.prepare(`SELECT COALESCE(SUM(i.Cantidad),0) AS c FROM PedidoItems i JOIN Pedidos p ON p.PedidoID = i.PedidoID WHERE p.Fecha >= ? AND p.Fecha < ? ${efP} ${sqlExclusions}`).get(start, end, ...exclusionParams)?.c || 0);
+    ? (db.prepare(`SELECT COALESCE(SUM(i.Cantidad),0) AS c FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID WHERE p.Fecha >= ? AND p.Fecha < ? AND CAST(p.ServicioID AS TEXT) = CAST(? AS TEXT) ${efP}`).get(start, end, serviceId)?.c || 0)
+    : (db.prepare(`SELECT COALESCE(SUM(i.Cantidad),0) AS c FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID WHERE p.Fecha >= ? AND p.Fecha < ? ${efP} ${sqlExclusions}`).get(start, end, ...exclusionParams)?.c || 0);
 
   const amount = hasService
-    ? (db.prepare(`SELECT COALESCE(SUM(Total),0) AS s FROM Pedidos WHERE Fecha >= ? AND Fecha < ? AND CAST(ServicioID AS TEXT) = CAST(? AS TEXT) ${efPlain}`).get(start, end, serviceId)?.s || 0)
-    : (db.prepare(`SELECT COALESCE(SUM(p.Total),0) AS s FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? ${efP} ${sqlExclusions}`).get(start, end, ...exclusionParams)?.s || 0);
+    ? (db.prepare(`SELECT COALESCE(SUM(${TOTAL_NETO("Pedidos")}),0) AS s FROM Pedidos WHERE Fecha >= ? AND Fecha < ? AND CAST(ServicioID AS TEXT) = CAST(? AS TEXT) ${efPlain}`).get(start, end, serviceId)?.s || 0)
+    : (db.prepare(`SELECT COALESCE(SUM(${TOTAL_NETO()}),0) AS s FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? ${efP} ${sqlExclusions}`).get(start, end, ...exclusionParams)?.s || 0);
 
   return { ordersCount: Number(ordersCount), itemsCount: Number(itemsCount), amount: Number(amount) };
 }
@@ -410,18 +416,16 @@ router.get("/traceability", mustBeAdmin, (req, res) => {
       SELECT i.ProductoID AS productId, COALESCE(NULLIF(TRIM(i.Codigo),''),'') AS code,
              COALESCE(NULLIF(TRIM(i.Nombre),''),'Sin nombre') AS name,
              COUNT(DISTINCT p.PedidoID) AS pedidos, COALESCE(SUM(i.Cantidad),0) AS qty, COALESCE(SUM(i.Subtotal),0) AS amount
-      FROM PedidoItems i JOIN Pedidos p ON p.PedidoID = i.PedidoID
+      FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID
       WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}
       GROUP BY i.ProductoID, LOWER(i.Nombre), LOWER(i.Codigo) ORDER BY qty DESC, amount DESC
     `).all(start, end, ...exclusionParams).map((r) => ({
       productId: Number(r.productId || 0), code: String(r.code || ""), name: String(r.name || ""),
       pedidos: Number(r.pedidos || 0), qty: Number(r.qty || 0), amount: Number(r.amount || 0),
     }));
-    try {
-      const devs = db.prepare(`SELECT producto_id AS productId, COALESCE(SUM(cantidad),0) AS devuelto FROM devoluciones WHERE estado='aprobada' AND fecha_resolucion >= ? AND fecha_resolucion < ? GROUP BY producto_id`).all(start, end);
-      const devMap = new Map(devs.map(d => [Number(d.productId), Number(d.devuelto)]));
-      for (const row of outgoing) { const dev = devMap.get(Number(row.productId)) || 0; if (dev > 0) row.qty = Math.max(0, Number(row.qty) - dev); }
-    } catch { /* sin devoluciones */ }
+    // El descuento de devoluciones ya viene resuelto por v_pedido_items_neto
+    // (imputado al pedido original y también sobre el importe). Antes se
+    // restaba acá a mano por fecha de aprobación y sólo en la cantidad.
     const totalOutgoing = outgoing.reduce((acc, row) => ({ qty: acc.qty + Number(row.qty || 0), amount: acc.amount + Number(row.amount || 0) }), { qty: 0, amount: 0 });
     const topUsed = [...outgoing].sort((a, b) => Number(b.qty || 0) - Number(a.qty || 0)).slice(0, top);
 
@@ -469,7 +473,7 @@ router.get("/traceability", mustBeAdmin, (req, res) => {
       byService = db.prepare(`
         SELECT CAST(p.ServicioID AS TEXT) AS serviceId, ${srv.nameExpr} AS serviceName,
                COUNT(DISTINCT p.PedidoID) AS pedidos, COALESCE(SUM(i.Cantidad),0) AS qty, COALESCE(SUM(i.Subtotal),0) AS amount
-        FROM Pedidos p JOIN PedidoItems i ON i.PedidoID = p.PedidoID
+        FROM Pedidos p JOIN v_pedido_items_neto i ON i.PedidoID = p.PedidoID
         LEFT JOIN ${srv.table} s ON CAST(s.${srv.idCol} AS TEXT) = CAST(p.ServicioID AS TEXT)
         WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}
         GROUP BY p.ServicioID ORDER BY amount DESC, qty DESC
@@ -487,7 +491,7 @@ router.get("/traceability", mustBeAdmin, (req, res) => {
         SELECT CAST(p.EmpleadoID AS TEXT) AS employeeId,
                COALESCE(NULLIF(TRIM(${emp.fullNameExpr}),''), CAST(p.EmpleadoID AS TEXT)) AS employeeName ${rolSelect},
                COUNT(DISTINCT p.PedidoID) AS pedidos, COALESCE(SUM(i.Cantidad),0) AS qty, COALESCE(SUM(i.Subtotal),0) AS amount
-        FROM Pedidos p JOIN PedidoItems i ON i.PedidoID = p.PedidoID
+        FROM Pedidos p JOIN v_pedido_items_neto i ON i.PedidoID = p.PedidoID
         LEFT JOIN ${emp.table} e ON CAST(e.${emp.idCol} AS TEXT) = CAST(p.EmpleadoID AS TEXT)
         WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}
         GROUP BY p.EmpleadoID ORDER BY pedidos DESC, qty DESC, amount DESC
@@ -555,15 +559,15 @@ router.get("/service/:serviceId", mustBeAdmin, (req, res) => {
 
     const totals = (() => {
       const ordersCount = db.prepare(`SELECT COUNT(*) AS c FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? AND CAST(p.ServicioID AS TEXT) = CAST(? AS TEXT) ${ef}`).get(start, end, servicioId)?.c || 0;
-      const itemsCount  = db.prepare(`SELECT COALESCE(SUM(i.Cantidad),0) AS c FROM PedidoItems i JOIN Pedidos p ON p.PedidoID = i.PedidoID WHERE p.Fecha >= ? AND p.Fecha < ? AND CAST(p.ServicioID AS TEXT) = CAST(? AS TEXT) ${ef}`).get(start, end, servicioId)?.c || 0;
-      const amount      = db.prepare(`SELECT COALESCE(SUM(p.Total),0) AS s FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? AND CAST(p.ServicioID AS TEXT) = CAST(? AS TEXT) ${ef}`).get(start, end, servicioId)?.s || 0;
+      const itemsCount  = db.prepare(`SELECT COALESCE(SUM(i.Cantidad),0) AS c FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID WHERE p.Fecha >= ? AND p.Fecha < ? AND CAST(p.ServicioID AS TEXT) = CAST(? AS TEXT) ${ef}`).get(start, end, servicioId)?.c || 0;
+      const amount      = db.prepare(`SELECT COALESCE(SUM(${TOTAL_NETO()}),0) AS s FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? AND CAST(p.ServicioID AS TEXT) = CAST(? AS TEXT) ${ef}`).get(start, end, servicioId)?.s || 0;
       return { ordersCount: Number(ordersCount), itemsCount: Number(itemsCount), amount: Number(amount) };
     })();
 
     const top_products = db.prepare(`
       SELECT COALESCE(i.ProductoID,0) AS productId, COALESCE(MAX(i.Codigo),'') AS code, COALESCE(MAX(i.Nombre),'') AS name,
              COUNT(DISTINCT i.PedidoID) AS pedidos, COALESCE(SUM(i.Cantidad),0) AS qty, COALESCE(SUM(i.Subtotal),0) AS amount
-      FROM PedidoItems i JOIN Pedidos p ON p.PedidoID = i.PedidoID
+      FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID
       WHERE p.Fecha >= ? AND p.Fecha < ? AND CAST(p.ServicioID AS TEXT) = CAST(? AS TEXT) ${ef}
       GROUP BY i.ProductoID, LOWER(i.Nombre), LOWER(i.Codigo) ORDER BY amount DESC LIMIT 15
     `).all(start, end, servicioId).map((r) => ({
@@ -572,13 +576,13 @@ router.get("/service/:serviceId", mustBeAdmin, (req, res) => {
     }));
 
     const by_day = db.prepare(`
-      SELECT SUBSTR(p.Fecha,1,10) AS day, COUNT(*) AS pedidos, COALESCE(SUM(p.Total),0) AS monto
+      SELECT SUBSTR(p.Fecha,1,10) AS day, COUNT(*) AS pedidos, COALESCE(SUM(${TOTAL_NETO()}),0) AS monto
       FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? AND CAST(p.ServicioID AS TEXT) = CAST(? AS TEXT) ${ef}
       GROUP BY day ORDER BY day
     `).all(start, end, servicioId).map((r) => ({ day: r.day, pedidos: Number(r.pedidos || 0), monto: Number(r.monto || 0) }));
 
     const orders = db.prepare(`
-      SELECT p.PedidoID AS id, p.Fecha AS fecha, COALESCE(p.Total,0) AS total
+      SELECT p.PedidoID AS id, p.Fecha AS fecha, COALESCE(${TOTAL_NETO()},0) AS total
       FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? AND CAST(p.ServicioID AS TEXT) = CAST(? AS TEXT) ${ef}
       ORDER BY p.Fecha DESC
     `).all(start, end, servicioId).map((r) => ({ id: Number(r.id), fecha: r.fecha, total: Number(r.total) }));
@@ -739,7 +743,7 @@ router.get("/category/by-name/:name", mustBeAdmin, (req, res) => {
 
     const totals = db.prepare(`
       SELECT COUNT(DISTINCT p.PedidoID) AS ordersCount, COALESCE(SUM(i.Cantidad), 0) AS itemsCount, COALESCE(SUM(i.Subtotal), 0) AS amount
-      FROM PedidoItems i JOIN Pedidos p ON p.PedidoID = i.PedidoID
+      FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID
       JOIN ${prod.table} pr ON CAST(pr.${prod.idCol} AS TEXT) = CAST(i.ProductoID AS TEXT)
       WHERE p.Fecha >= ? AND p.Fecha < ? AND CAST(pr.${catCol} AS TEXT) IN (${catPlaceholders}) ${ef}
     `).get(start, end, ...categoryIds) || { ordersCount: 0, itemsCount: 0, amount: 0 };
@@ -747,7 +751,7 @@ router.get("/category/by-name/:name", mustBeAdmin, (req, res) => {
     const top_products = db.prepare(`
       SELECT i.ProductoID AS productId, COALESCE(MAX(i.Codigo), '') AS code, COALESCE(MAX(i.Nombre), '') AS name,
              COUNT(DISTINCT i.PedidoID) AS pedidos, COALESCE(SUM(i.Cantidad), 0) AS qty, COALESCE(SUM(i.Subtotal), 0) AS amount
-      FROM PedidoItems i JOIN Pedidos p ON p.PedidoID = i.PedidoID
+      FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID
       JOIN ${prod.table} pr ON CAST(pr.${prod.idCol} AS TEXT) = CAST(i.ProductoID AS TEXT)
       WHERE p.Fecha >= ? AND p.Fecha < ? AND CAST(pr.${catCol} AS TEXT) IN (${catPlaceholders}) ${ef}
       GROUP BY i.ProductoID, LOWER(COALESCE(i.Nombre,'')), LOWER(COALESCE(i.Codigo,'')) ORDER BY amount DESC, qty DESC LIMIT 15
@@ -758,7 +762,7 @@ router.get("/category/by-name/:name", mustBeAdmin, (req, res) => {
 
     const by_service = db.prepare(`
       SELECT CAST(p.ServicioID AS TEXT) AS serviceId, COUNT(DISTINCT p.PedidoID) AS pedidos, COALESCE(SUM(i.Cantidad), 0) AS qty, COALESCE(SUM(i.Subtotal), 0) AS amount
-      FROM PedidoItems i JOIN Pedidos p ON p.PedidoID = i.PedidoID
+      FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID
       JOIN ${prod.table} pr ON CAST(pr.${prod.idCol} AS TEXT) = CAST(i.ProductoID AS TEXT)
       WHERE p.Fecha >= ? AND p.Fecha < ? AND CAST(pr.${catCol} AS TEXT) IN (${catPlaceholders}) AND p.ServicioID IS NOT NULL ${ef}
       GROUP BY p.ServicioID ORDER BY amount DESC
@@ -769,7 +773,7 @@ router.get("/category/by-name/:name", mustBeAdmin, (req, res) => {
 
     const by_day = db.prepare(`
       SELECT SUBSTR(p.Fecha, 1, 10) AS day, COUNT(DISTINCT p.PedidoID) AS pedidos, COALESCE(SUM(i.Subtotal), 0) AS monto, COALESCE(SUM(i.Cantidad), 0) AS qty
-      FROM PedidoItems i JOIN Pedidos p ON p.PedidoID = i.PedidoID
+      FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID
       JOIN ${prod.table} pr ON CAST(pr.${prod.idCol} AS TEXT) = CAST(i.ProductoID AS TEXT)
       WHERE p.Fecha >= ? AND p.Fecha < ? AND CAST(pr.${catCol} AS TEXT) IN (${catPlaceholders}) ${ef}
       GROUP BY day ORDER BY day
@@ -777,7 +781,7 @@ router.get("/category/by-name/:name", mustBeAdmin, (req, res) => {
 
     const orders = db.prepare(`
       SELECT p.PedidoID AS id, p.Fecha AS fecha, CAST(p.ServicioID AS TEXT) AS serviceId, COALESCE(SUM(i.Subtotal), 0) AS total, COALESCE(SUM(i.Cantidad), 0) AS qty
-      FROM PedidoItems i JOIN Pedidos p ON p.PedidoID = i.PedidoID
+      FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID
       JOIN ${prod.table} pr ON CAST(pr.${prod.idCol} AS TEXT) = CAST(i.ProductoID AS TEXT)
       WHERE p.Fecha >= ? AND p.Fecha < ? AND CAST(pr.${catCol} AS TEXT) IN (${catPlaceholders}) ${ef}
       GROUP BY p.PedidoID ORDER BY p.Fecha DESC

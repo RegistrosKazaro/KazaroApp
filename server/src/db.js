@@ -986,6 +986,93 @@ function ensureContabilizadoColumn() {
   }
 }
 ensureContabilizadoColumn();
+
+// Vistas de "neto de devoluciones": una devolución APROBADA descuenta lo que
+// realmente consumió el servicio. Informes, panel de pedidos y API leen de acá
+// para no mostrar de más cuando un pedido tuvo devolución. La devolución se
+// imputa al pedido original (y por lo tanto al mes del pedido), no a la fecha
+// en que se aprobó.
+function ensureDevolucionesViews() {
+  try {
+    // La tabla la crea la migración; se asegura acá para que las vistas no
+    // queden apuntando a algo inexistente en bases nuevas.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS devoluciones (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pedido_id INTEGER NOT NULL,
+        producto_id INTEGER NOT NULL,
+        cantidad INTEGER NOT NULL,
+        motivo TEXT,
+        empresa_id INTEGER,
+        solicitante_id INTEGER,
+        aprobador_id INTEGER,
+        estado TEXT NOT NULL DEFAULT 'pendiente',
+        fecha_solicitud TEXT NOT NULL DEFAULT (datetime('now')),
+        fecha_resolucion TEXT
+      );
+    `);
+
+    // Se recrean siempre, así un cambio de definición se aplica en el deploy.
+    db.exec(`DROP VIEW IF EXISTS v_pedidos_neto;`);
+    db.exec(`DROP VIEW IF EXISTS v_pedido_items_neto;`);
+    db.exec(`DROP VIEW IF EXISTS v_devoluciones_aprobadas;`);
+
+    db.exec(`
+      CREATE VIEW v_devoluciones_aprobadas AS
+        SELECT pedido_id, producto_id, COALESCE(SUM(cantidad),0) AS devuelto
+        FROM devoluciones
+        WHERE LOWER(COALESCE(estado,'')) = 'aprobada'
+        GROUP BY pedido_id, producto_id;
+    `);
+
+    // Un ítem por (pedido, producto) con la cantidad y el subtotal ya netos.
+    // Se agrupa porque un mismo producto puede estar en más de una fila del
+    // pedido, y la devolución se registra por producto.
+    db.exec(`
+      CREATE VIEW v_pedido_items_neto AS
+        SELECT
+          i.PedidoID   AS PedidoID,
+          i.ProductoID AS ProductoID,
+          MIN(i.Nombre) AS Nombre,
+          MIN(i.Codigo) AS Codigo,
+          COALESCE(MAX(i.Precio),0) AS Precio,
+          COALESCE(SUM(i.Cantidad),0) AS CantidadOriginal,
+          COALESCE(MAX(d.devuelto),0) AS Devuelto,
+          MAX(0, COALESCE(SUM(i.Cantidad),0) - COALESCE(MAX(d.devuelto),0)) AS Cantidad,
+          MAX(0, COALESCE(SUM(i.Subtotal),0) - COALESCE(MAX(d.devuelto),0) * COALESCE(MAX(i.Precio),0)) AS Subtotal
+        FROM PedidoItems i
+        LEFT JOIN v_devoluciones_aprobadas d
+          ON d.pedido_id = i.PedidoID AND d.producto_id = i.ProductoID
+        GROUP BY i.PedidoID, i.ProductoID;
+    `);
+
+    // Total del pedido neto de devoluciones (y cuánto se devolvió, valorizado).
+    db.exec(`
+      CREATE VIEW v_pedidos_neto AS
+        SELECT
+          p.PedidoID AS PedidoID,
+          COALESCE(p.Total,0) AS TotalOriginal,
+          COALESCE((
+            SELECT SUM(d.devuelto * COALESCE(i.Precio,0))
+            FROM v_devoluciones_aprobadas d
+            JOIN v_pedido_items_neto i
+              ON i.PedidoID = d.pedido_id AND i.ProductoID = d.producto_id
+            WHERE d.pedido_id = p.PedidoID
+          ),0) AS MontoDevuelto,
+          MAX(0, COALESCE(p.Total,0) - COALESCE((
+            SELECT SUM(d.devuelto * COALESCE(i.Precio,0))
+            FROM v_devoluciones_aprobadas d
+            JOIN v_pedido_items_neto i
+              ON i.PedidoID = d.pedido_id AND i.ProductoID = d.producto_id
+            WHERE d.pedido_id = p.PedidoID
+          ),0)) AS TotalNeto
+        FROM Pedidos p;
+    `);
+  } catch (e) {
+    console.warn("[db] ensureDevolucionesViews:", e?.message || e);
+  }
+}
+ensureDevolucionesViews();
 ensureVisibilitySchema();
 ensureServiceProductsPivot();
 ensureIncomingStockTable();

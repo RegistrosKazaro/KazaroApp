@@ -987,20 +987,29 @@ router.get("/pedidos", mustBeAdmin, (req, res) => {
       LIMIT @limit OFFSET @offset
     `).all(params);
 
+    // Se lee de la vista neta: cantidad y subtotal ya vienen descontando las
+    // devoluciones APROBADAS, pero se expone también lo pedido y lo devuelto
+    // para que quede trazable por qué el número cambió.
     const stmtItems = db.prepare(`
-      SELECT Codigo AS codigo, Nombre AS nombre, Cantidad AS cantidad,
-             Precio AS precio, Subtotal AS subtotal
-      FROM PedidoItems WHERE PedidoID = ? ORDER BY PedidoItemID
+      SELECT Codigo AS codigo, Nombre AS nombre, Precio AS precio,
+             CantidadOriginal AS cantidadOriginal, Devuelto AS devuelto,
+             Cantidad AS cantidad, Subtotal AS subtotal
+      FROM v_pedido_items_neto WHERE PedidoID = ? ORDER BY Nombre COLLATE NOCASE
     `);
+    const stmtNeto = db.prepare(`SELECT TotalOriginal, MontoDevuelto, TotalNeto FROM v_pedidos_neto WHERE PedidoID = ?`);
 
     const pedidos = rows.map((r) => {
       const items = stmtItems.all(r.id).map((i) => ({
         codigo: i.codigo || null,
         nombre: i.nombre || "",
         cantidad: Number(i.cantidad || 0),
+        cantidadOriginal: Number(i.cantidadOriginal || 0),
+        devuelto: Number(i.devuelto || 0),
         precio: Number(i.precio || 0),
-        subtotal: Number(i.subtotal ?? (Number(i.precio || 0) * Number(i.cantidad || 0))),
+        subtotal: Number(i.subtotal || 0),
       }));
+      const neto = stmtNeto.get(r.id) || {};
+      const montoDevuelto = Number(neto.MontoDevuelto || 0);
       const cerrado = r.closedAt != null || String(r.status || "").toLowerCase() === "closed";
       return {
         id: r.id,
@@ -1014,7 +1023,10 @@ router.get("/pedidos", mustBeAdmin, (req, res) => {
         estado: cerrado ? "cerrado" : "abierto",
         nota: r.nota || null,
         cantidadItems: items.reduce((a, i) => a + i.cantidad, 0),
-        total: Number(r.total || 0),
+        total: Number(neto.TotalNeto ?? r.total ?? 0),
+        totalOriginal: Number(neto.TotalOriginal ?? r.total ?? 0),
+        montoDevuelto,
+        tuvoDevolucion: montoDevuelto > 0 || items.some((i) => i.devuelto > 0),
         items,
       };
     });

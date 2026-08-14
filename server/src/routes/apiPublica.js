@@ -185,20 +185,28 @@ router.get("/pedidos", (req, res) => {
       LIMIT @limit OFFSET @offset
     `).all(params);
 
+    // Cantidades y totales NETOS de devoluciones aprobadas (se informa además
+    // lo pedido originalmente y lo devuelto, para que quede trazable).
     const stmtItems = db.prepare(`
-      SELECT Codigo AS codigo, Nombre AS nombre, Cantidad AS cantidad,
-             Precio AS precio, Subtotal AS subtotal
-      FROM PedidoItems WHERE PedidoID = ? ORDER BY PedidoItemID
+      SELECT Codigo AS codigo, Nombre AS nombre, Precio AS precio,
+             CantidadOriginal AS cantidadOriginal, Devuelto AS devuelto,
+             Cantidad AS cantidad, Subtotal AS subtotal
+      FROM v_pedido_items_neto WHERE PedidoID = ? ORDER BY Nombre COLLATE NOCASE
     `);
+    const stmtNeto = db.prepare(`SELECT TotalOriginal, MontoDevuelto, TotalNeto FROM v_pedidos_neto WHERE PedidoID = ?`);
 
     const pedidos = filas.map((r) => {
       const items = stmtItems.all(r.id).map((i) => ({
         codigo: i.codigo || null,
         insumo: i.nombre || "",
         cantidad: Number(i.cantidad || 0),
+        cantidadPedida: Number(i.cantidadOriginal || 0),
+        devuelto: Number(i.devuelto || 0),
         precioUnitario: Number(i.precio || 0),
-        subtotal: Number(i.subtotal ?? Number(i.precio || 0) * Number(i.cantidad || 0)),
+        subtotal: Number(i.subtotal || 0),
       }));
+      const neto = stmtNeto.get(r.id) || {};
+      const montoDevuelto = Number(neto.MontoDevuelto || 0);
       return {
         pedidoId: r.id,
         numero: String(r.id).padStart(7, "0"),
@@ -212,7 +220,10 @@ router.get("/pedidos", (req, res) => {
         rol: r.rol || null,
         estado: r.closedAt != null || String(r.status || "").toLowerCase() === "closed" ? "cerrado" : "abierto",
         nota: r.nota || null,
-        total: Number(r.total || 0),
+        total: Number(neto.TotalNeto ?? r.total ?? 0),
+        totalPedido: Number(neto.TotalOriginal ?? r.total ?? 0),
+        montoDevuelto,
+        tuvoDevolucion: montoDevuelto > 0 || items.some((i) => i.devuelto > 0),
         items,
       };
     });

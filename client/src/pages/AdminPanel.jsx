@@ -1919,7 +1919,8 @@ function OrdersSection() {
 
   const exportarCsv = () => {
     const cab = ["Pedido", "Fecha y hora", "Servicio", "Solicitante", "Estado",
-                 "Codigo", "Insumo", "Cantidad", "Precio unitario", "Subtotal", "Total del pedido"];
+                 "Codigo", "Insumo", "Cantidad pedida", "Devuelto", "Cantidad neta",
+                 "Precio unitario", "Subtotal", "Total del pedido"];
     const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     // Los importes y cantidades van SIN comillas y con coma decimal, para que
     // Excel en español los lea como números (con punto los toma como miles).
@@ -1927,13 +1928,15 @@ function OrdersSection() {
     for (const p of orders) {
       const base = [p.numero, p.fechaAr, p.servicio?.nombre ?? "(sin servicio)", p.solicitante, p.estado].map(esc);
       if (!p.items?.length) {
-        filas.push([...base, "", "", "", "", "", csvNumber(p.total)].join(";"));
+        filas.push([...base, "", "", "", "", "", "", "", csvNumber(p.total)].join(";"));
       } else {
         for (const i of p.items) {
           filas.push([
             ...base,
             esc(i.codigo ?? ""),
             esc(i.nombre),
+            csvNumber(i.cantidadOriginal ?? i.cantidad),
+            csvNumber(i.devuelto ?? 0),
             csvNumber(i.cantidad),
             csvNumber(i.precio),
             csvNumber(i.subtotal),
@@ -2212,6 +2215,12 @@ const onDeleteOrder = useCallback(async (o) => {
               </div>
               <div style={{ width: 110, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
                 {o.total == null ? "—" : money(o.total)}
+                {o.tuvoDevolucion && (
+                  <div title={`Tuvo devolución: se descontaron ${money(o.montoDevuelto)} del total pedido (${money(o.totalOriginal)})`}
+                    style={{ fontSize: "0.7rem", color: "#b45309", fontWeight: 600 }}>
+                    ↩ con devolución
+                  </div>
+                )}
               </div>
               <div style={{ width: 190, display: "flex", gap: 6, justifyContent: "flex-end" }}>
                 <button
@@ -2242,7 +2251,14 @@ const onDeleteOrder = useCallback(async (o) => {
                       <div style={{ width: 110, fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: "0.8rem" }}>
                         {i.codigo || <span className="muted">—</span>}
                       </div>
-                      <div style={{ flex: 2 }} className="truncate" title={i.nombre}>{i.nombre}</div>
+                      <div style={{ flex: 2 }} className="truncate" title={i.nombre}>
+                        {i.nombre}
+                        {i.devuelto > 0 && (
+                          <span style={{ marginLeft: 6, fontSize: "0.72rem", color: "#b45309", fontWeight: 600 }}>
+                            ↩ devueltos {i.devuelto} de {i.cantidadOriginal}
+                          </span>
+                        )}
+                      </div>
                       <div style={{ width: 80, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{i.cantidad}</div>
                       <div style={{ width: 110, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money(i.precio)}</div>
                       <div style={{ width: 120, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money(i.subtotal)}</div>

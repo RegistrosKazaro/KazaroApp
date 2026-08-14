@@ -138,14 +138,19 @@ curl -H "Authorization: Bearer <token>" \
       "rol": "supervisor",
       "estado": "cerrado",
       "nota": null,
-      "total": 41917.19,
+      "total": 29940.85,
+      "totalPedido": 41917.19,
+      "montoDevuelto": 11976.34,
+      "tuvoDevolucion": true,
       "items": [
         {
           "codigo": "100000218",
           "insumo": "ACEITE 10W30",
-          "cantidad": 7,
+          "cantidad": 5,
+          "cantidadPedida": 7,
+          "devuelto": 2,
           "precioUnitario": 5988.17,
-          "subtotal": 41917.19
+          "subtotal": 29940.85
         }
       ]
     }
@@ -166,8 +171,15 @@ curl -H "Authorization: Bearer <token>" \
 | `solicitante` | Nombre de quien hizo el pedido. |
 | `rol` | Rol con el que se hizo: `supervisor` o `administrativo`. |
 | `estado` | `cerrado` o `abierto`. |
-| `total` | Total del pedido. Coincide con la suma de los `subtotal`. |
+| `total` | Total **neto** del pedido, ya descontadas las devoluciones aprobadas. Coincide con la suma de los `subtotal`. Es el valor a usar. |
+| `totalPedido` | Total originalmente pedido, antes de descontar devoluciones. |
+| `montoDevuelto` | Importe devuelto y aprobado. `total = totalPedido - montoDevuelto`. |
+| `tuvoDevolucion` | `true` si el pedido tuvo alguna devolución aprobada. |
 | `items[]` | Insumos del pedido. |
+| `items[].cantidad` | Cantidad **neta**: lo que quedó efectivamente consumido. |
+| `items[].cantidadPedida` | Cantidad originalmente pedida. |
+| `items[].devuelto` | Unidades devueltas y aprobadas de ese insumo. |
+| `items[].subtotal` | Subtotal **neto** (cantidad neta × precio unitario). |
 
 ### Dos aclaraciones importantes sobre los datos
 
