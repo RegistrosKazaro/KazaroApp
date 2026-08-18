@@ -56,6 +56,27 @@ function BarrasPorDia({ datos, campo = "pedidos", formato = formatNumber }) {
   );
 }
 
+/** Barra de presupuesto consumido. Verde / ámbar / rojo según cuánto queda. */
+function Presupuesto({ gastado, presupuesto }) {
+  if (!presupuesto || presupuesto <= 0) {
+    return <span className="rs-sin-pres" title="Este servicio no tiene presupuesto cargado">—</span>;
+  }
+  const pct = (Number(gastado || 0) / Number(presupuesto)) * 100;
+  const nivel = pct >= 100 ? "excedido" : pct >= 85 ? "alto" : pct >= 60 ? "medio" : "ok";
+  return (
+    <div className="rs-pres">
+      <div className="rs-pres-top">
+        <span className={`rs-pres-pct is-${nivel}`}>{pct.toFixed(0)}%</span>
+        <span className="rs-pres-de">de {formatMoney(presupuesto)}</span>
+      </div>
+      <span className="rs-pres-track">
+        <span className={`rs-pres-fill is-${nivel}`} style={{ width: `${Math.min(100, pct)}%` }} />
+      </span>
+      {pct >= 100 && <span className="rs-pres-aviso">Excedido en {formatMoney(gastado - presupuesto)}</span>}
+    </div>
+  );
+}
+
 /** Ranking horizontal reutilizable (insumos, servicios). */
 function Ranking({ filas, etiqueta, valor, formato = formatNumber, vacio = "Sin datos." }) {
   if (!filas?.length) return <p className="rs-vacio">{vacio}</p>;
@@ -172,11 +193,15 @@ export default function ReportsSimple() {
 
   const exportar = () => {
     const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const filas = [["Seccion","Detalle","Pedidos","Unidades","Monto"].map(esc).join(";")];
-    filas.push([esc("Total"), esc(`${MESES[month-1]} ${year}`), csvNumber(totals.ordersCount), csvNumber(totals.itemsCount), csvNumber(totals.amount)].join(";"));
+    const filas = [["Seccion","Detalle","Pedidos","Unidades","Monto","Presupuesto","% consumido"].map(esc).join(";")];
+    filas.push([esc("Total"), esc(`${MESES[month-1]} ${year}`), csvNumber(totals.ordersCount), csvNumber(totals.itemsCount), csvNumber(totals.amount), "", ""].join(";"));
     const etiqueta = modo === "uniformes" ? "Uniforme" : "Insumo";
-    for (const p of productos) filas.push([esc(etiqueta), esc(p.name), csvNumber(p.pedidos), csvNumber(p.qty), csvNumber(p.amount)].join(";"));
-    for (const s of servicios) filas.push([esc("Servicio"), esc(nombreServicio(s)), csvNumber(s.pedidos), csvNumber(s.qty), csvNumber(s.amount)].join(";"));
+    for (const p of productos) filas.push([esc(etiqueta), esc(p.name), csvNumber(p.pedidos), csvNumber(p.qty), csvNumber(p.amount), "", ""].join(";"));
+    for (const s of servicios) filas.push([
+      esc("Servicio"), esc(nombreServicio(s)), csvNumber(s.pedidos), csvNumber(s.qty), csvNumber(s.amount),
+      s.budget ? csvNumber(s.budget) : "",
+      s.budget ? csvNumber(((s.amount / s.budget) * 100).toFixed(1)) : "",
+    ].join(";"));
     const blob = new Blob(["﻿" + filas.join("\r\n")], { type: "text/csv;charset=utf-8;" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -308,13 +333,17 @@ export default function ReportsSimple() {
               <h2 className="rs-card-title">Servicios del mes</h2>
               <p className="rs-nota">
                 Los pedidos administrativos no tienen servicio asignado: aparecen agrupados como
-                “Sin servicio”. Tocá un servicio para ver su detalle.
+                “Sin servicio”. Tocá un servicio para ver su detalle. La barra muestra cuánto del
+                presupuesto del mes lleva consumido cada servicio.
               </p>
               {servicios.length === 0 ? <p className="rs-vacio">Sin datos en el período.</p> : (
                 <div className="rs-table-wrap">
                   <table className="rs-table">
                     <thead>
-                      <tr><th>Servicio</th><th className="num">Pedidos</th><th className="num">Unidades</th><th className="num">Monto</th></tr>
+                      <tr>
+                        <th>Servicio</th><th className="num">Pedidos</th><th className="num">Unidades</th>
+                        <th className="num">Consumido</th><th style={{ width: 170 }}>Presupuesto del mes</th>
+                      </tr>
                     </thead>
                     <tbody>
                       {servicios.map((s) => (
@@ -340,6 +369,7 @@ export default function ReportsSimple() {
                           <td className="num">{formatNumber(s.pedidos)}</td>
                           <td className="num">{formatNumber(s.qty)}</td>
                           <td className="num">{formatMoney(s.amount)}</td>
+                          <td><Presupuesto gastado={s.amount} presupuesto={s.budget} /></td>
                         </tr>
                       ))}
                     </tbody>

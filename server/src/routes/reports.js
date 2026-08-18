@@ -272,10 +272,20 @@ router.get("/monthly", mustBeAdmin, (req, res) => {
              COALESCE(SUM(i.Cantidad),0) AS qty, COALESCE(SUM(i.Subtotal),0) AS amount
       ${DESDE_ITEMS}
       GROUP BY p.ServicioID ORDER BY amount DESC LIMIT 10
-    `, start, end).map((r) => ({
-      serviceId: r.serviceId || null, serviceName: resolveServiceName(r.serviceId),
-      pedidos: Number(r.pedidos || 0), qty: Number(r.qty || 0), amount: Number(r.amount || 0),
-    }));
+    `, start, end).map((r) => {
+      const amount = Number(r.amount || 0);
+      // Presupuesto mensual del servicio, para poder mostrar cuánto lleva
+      // consumido. null = no tiene presupuesto cargado.
+      let budget = null;
+      try { budget = r.serviceId ? (getBudgetByServiceId(r.serviceId) ?? null) : null; } catch { budget = null; }
+      const presupuesto = Number(budget || 0);
+      return {
+        serviceId: r.serviceId || null, serviceName: resolveServiceName(r.serviceId),
+        pedidos: Number(r.pedidos || 0), qty: Number(r.qty || 0), amount,
+        budget: presupuesto > 0 ? presupuesto : null,
+        utilization: presupuesto > 0 ? amount / presupuesto : null,
+      };
+    });
 
     const top_products = runAll(`
       SELECT COALESCE(i.ProductoID, 0) AS productId, COALESCE(MAX(i.Codigo), '') AS code, COALESCE(MAX(i.Nombre), '') AS name,

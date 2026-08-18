@@ -1748,11 +1748,14 @@ export function ensureServiceBudgetTable() {
 export function getBudgetSettingsByServiceId(servicioId) {
   ensureServiceBudgetTable();
   try {
+    // Comparar como entero: si se pasaba un Number, SQLite lo bindea como REAL y
+    // CAST(? AS TEXT) daba "61.0", que no matcheaba con el "61" de la columna.
+    // Resultado: el presupuesto no se encontraba nunca al llamar con número.
     const row = db.prepare(`
       SELECT Presupuesto AS budget,
              COALESCE(MaxPct, ${DEFAULT_SERVICE_PCT}) AS maxPct
       FROM service_budget
-      WHERE CAST(ServicioID AS TEXT) = CAST(? AS TEXT)
+      WHERE CAST(ServicioID AS INTEGER) = CAST(? AS INTEGER)
       LIMIT 1
     `).get(servicioId);
     return {

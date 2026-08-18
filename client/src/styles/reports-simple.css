@@ -92,6 +92,25 @@
 .rs-detalle { margin-top: 10px; padding: 10px; background: #f8fafc; border-radius: 8px; }
 .rs-detalle strong { display: block; font-size: 0.8rem; margin-bottom: 8px; color: #4b5563; }
 
+/* ── Presupuesto vs consumo ── */
+.rs-pres { display: flex; flex-direction: column; gap: 3px; min-width: 150px; }
+.rs-pres-top { display: flex; align-items: baseline; gap: 6px; }
+.rs-pres-pct { font-weight: 700; font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+.rs-pres-de { font-size: 0.72rem; color: #4b5563; }
+.rs-pres-track { display: block; height: 7px; background: #f1f5f9; border-radius: 999px; overflow: hidden; }
+.rs-pres-fill { display: block; height: 100%; border-radius: 999px; }
+/* Semáforo: verde tranquilo, ámbar atención, rojo excedido */
+.rs-pres-pct.is-ok        { color: #15803d; }
+.rs-pres-fill.is-ok       { background: #16a34a; }
+.rs-pres-pct.is-medio     { color: #a16207; }
+.rs-pres-fill.is-medio    { background: #eab308; }
+.rs-pres-pct.is-alto      { color: #c2410c; }
+.rs-pres-fill.is-alto     { background: #f97316; }
+.rs-pres-pct.is-excedido  { color: #b91c1c; }
+.rs-pres-fill.is-excedido { background: #dc2626; }
+.rs-pres-aviso { font-size: 0.7rem; color: #b91c1c; font-weight: 600; }
+.rs-sin-pres { color: #4b5563; font-size: 0.85rem; }
+
 /* ── Evolución ── */
 .rs-months { display: flex; align-items: flex-end; gap: 6px; height: 150px; }
 .rs-month { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; }
