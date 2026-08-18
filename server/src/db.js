@@ -1008,6 +1008,27 @@ function ensureControlColumns() {
 }
 ensureControlColumns();
 
+// Control insumo por insumo: el admin va tildando cada ítem del pedido a medida
+// que verifica que coincide con lo que salió. La identidad es (pedido, producto),
+// igual que en v_pedido_items_neto.
+function ensureItemControlTable() {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pedido_item_control (
+        pedido_id   INTEGER NOT NULL,
+        producto_id INTEGER NOT NULL,
+        controlado_at  TEXT DEFAULT (datetime('now')),
+        controlado_por INTEGER,
+        PRIMARY KEY (pedido_id, producto_id)
+      );
+    `);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_pic_pedido ON pedido_item_control(pedido_id);`);
+  } catch (e) {
+    console.warn("[db] ensureItemControlTable:", e?.message || e);
+  }
+}
+ensureItemControlTable();
+
 // Vistas de "neto de devoluciones": una devolución APROBADA descuenta lo que
 // realmente consumió el servicio. Informes, panel de pedidos y API leen de acá
 // para no mostrar de más cuando un pedido tuvo devolución. La devolución se

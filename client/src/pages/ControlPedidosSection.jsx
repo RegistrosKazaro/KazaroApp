@@ -77,6 +77,28 @@ export default function ControlPedidosSection() {
     } finally { setGuardando(null); }
   };
 
+  // Tildar un insumo suelto: sirve para ir verificando uno por uno que lo que
+  // figura coincide con lo que realmente salió.
+  const marcarItem = async (o, item, valor) => {
+    // Optimista: se ve al instante y se corrige si el servidor falla.
+    const aplicar = (v) => setPedidos((prev) => prev.map((p) => (p.id !== o.id ? p : {
+      ...p,
+      items: (p.items || []).map((i) => (i.productoId === item.productoId ? { ...i, controlado: v } : i)),
+    })));
+    aplicar(valor);
+    try {
+      await api.put(`/admin/pedidos/${o.id}/control/item`, { productoId: item.productoId, controlado: valor });
+    } catch (e) {
+      aplicar(!valor);
+      setErr(e?.response?.data?.error || "No se pudo marcar el insumo");
+    }
+  };
+
+  const avanceDe = (o) => {
+    const items = o.items || [];
+    return { hechos: items.filter((i) => i.controlado).length, total: items.length };
+  };
+
   const toggle = (id) => setAbiertos((prev) => {
     const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s;
   });
@@ -187,13 +209,25 @@ export default function ControlPedidosSection() {
 
               {abiertos.has(o.id) && (
                 <div className="cp-items">
+                  <p className="cp-items-ayuda">
+                    Tildá cada insumo a medida que verificás que coincide con lo que salió.
+                  </p>
                   <table>
                     <thead>
-                      <tr><th>Código</th><th>Insumo</th><th className="num">Cant.</th><th className="num">Subtotal</th></tr>
+                      <tr>
+                        <th className="chk">✓</th>
+                        <th>Código</th><th>Insumo</th>
+                        <th className="num">Cant.</th><th className="num">Subtotal</th>
+                      </tr>
                     </thead>
                     <tbody>
                       {(o.items || []).map((i, idx) => (
-                        <tr key={idx}>
+                        <tr key={i.productoId || idx} className={i.controlado ? "is-ok" : ""}>
+                          <td className="chk">
+                            <input type="checkbox" checked={!!i.controlado}
+                              aria-label={`Marcar ${i.nombre} como verificado`}
+                              onChange={(e) => marcarItem(o, i, e.target.checked)} />
+                          </td>
                           <td className="mono">{i.codigo || "—"}</td>
                           <td>
                             {i.nombre}
@@ -205,15 +239,40 @@ export default function ControlPedidosSection() {
                       ))}
                     </tbody>
                   </table>
+
+                  {/* Cuando están todos tildados, se ofrece cerrar el control del pedido. */}
+                  {(() => {
+                    const { hechos, total } = avanceDe(o);
+                    if (total === 0) return null;
+                    if (hechos < total) {
+                      return <p className="cp-items-pie">Faltan {total - hechos} de {total} insumos por verificar.</p>;
+                    }
+                    return o.controlado
+                      ? <p className="cp-items-pie is-ok">✓ Todos los insumos verificados y el pedido controlado.</p>
+                      : (
+                        <button type="button" className="cp-btn-ok" disabled={guardando === o.id}
+                          onClick={() => marcar(o, true)}>
+                          ✓ Todos verificados — marcar el pedido como controlado
+                        </button>
+                      );
+                  })()}
                 </div>
               )}
             </div>
 
             <div className="cp-derecha">
               <span className="cp-total">{formatMoney(o.total)}</span>
-              <span className="cp-cant">{o.cantidadItems} ít.</span>
+              {(() => {
+                const { hechos, total } = avanceDe(o);
+                if (!total) return <span className="cp-cant">{o.cantidadItems} ít.</span>;
+                return (
+                  <span className={`cp-avance${hechos === total ? " is-ok" : hechos > 0 ? " is-parcial" : ""}`}>
+                    {hechos} de {total} insumos
+                  </span>
+                );
+              })()}
               <button type="button" className="cp-btn-ghost" onClick={() => toggle(o.id)}>
-                {abiertos.has(o.id) ? "Ocultar" : "Ver insumos"}
+                {abiertos.has(o.id) ? "Ocultar" : "Verificar insumos"}
               </button>
             </div>
           </article>

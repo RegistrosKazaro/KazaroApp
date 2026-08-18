@@ -1007,15 +1007,20 @@ router.get("/pedidos", mustBeAdmin, (req, res) => {
     // devoluciones APROBADAS, pero se expone también lo pedido y lo devuelto
     // para que quede trazable por qué el número cambió.
     const stmtItems = db.prepare(`
-      SELECT Codigo AS codigo, Nombre AS nombre, Precio AS precio,
-             CantidadOriginal AS cantidadOriginal, Devuelto AS devuelto,
-             Cantidad AS cantidad, Subtotal AS subtotal
-      FROM v_pedido_items_neto WHERE PedidoID = ? ORDER BY Nombre COLLATE NOCASE
+      SELECT n.ProductoID AS productoId, n.Codigo AS codigo, n.Nombre AS nombre, n.Precio AS precio,
+             n.CantidadOriginal AS cantidadOriginal, n.Devuelto AS devuelto,
+             n.Cantidad AS cantidad, n.Subtotal AS subtotal,
+             (c.pedido_id IS NOT NULL) AS controlado
+      FROM v_pedido_items_neto n
+      LEFT JOIN pedido_item_control c
+        ON c.pedido_id = n.PedidoID AND c.producto_id = n.ProductoID
+      WHERE n.PedidoID = ? ORDER BY n.Nombre COLLATE NOCASE
     `);
     const stmtNeto = db.prepare(`SELECT TotalOriginal, MontoDevuelto, TotalNeto FROM v_pedidos_neto WHERE PedidoID = ?`);
 
     const pedidos = rows.map((r) => {
       const items = stmtItems.all(r.id).map((i) => ({
+        productoId: Number(i.productoId || 0),
         codigo: i.codigo || null,
         nombre: i.nombre || "",
         cantidad: Number(i.cantidad || 0),
@@ -1023,6 +1028,7 @@ router.get("/pedidos", mustBeAdmin, (req, res) => {
         devuelto: Number(i.devuelto || 0),
         precio: Number(i.precio || 0),
         subtotal: Number(i.subtotal || 0),
+        controlado: !!i.controlado,
       }));
       const neto = stmtNeto.get(r.id) || {};
       const montoDevuelto = Number(neto.MontoDevuelto || 0);
@@ -1105,6 +1111,51 @@ router.put("/pedidos/:id/control", mustBeAdmin, (req, res) => {
   } catch (e) {
     console.error("[admin/pedidos/control]", e?.message);
     res.status(500).json({ error: "No se pudo actualizar el control" });
+  }
+});
+
+/**
+ * Marca o desmarca UN INSUMO del pedido como verificado (coincide con lo que
+ * salió). Devuelve el avance del pedido para poder mostrar "3 de 5".
+ * Body: { productoId, controlado }
+ */
+router.put("/pedidos/:id/control/item", mustBeAdmin, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const productoId = Number(req.body?.productoId);
+    const empresaId = Number(req.user?.empresaId ?? 1);
+    if (!Number.isFinite(productoId) || productoId <= 0) {
+      return res.status(400).json({ error: "productoId inválido" });
+    }
+
+    const owner = db.prepare(`SELECT empresa_id FROM Pedidos WHERE PedidoID = ?`).get(id);
+    if (!owner) return res.status(404).json({ error: "Pedido no encontrado" });
+    if (owner.empresa_id != null && Number(owner.empresa_id) !== empresaId) {
+      return res.status(404).json({ error: "Pedido no encontrado" });
+    }
+
+    const marcar = req.body?.controlado !== false;
+    if (marcar) {
+      db.prepare(
+        `INSERT INTO pedido_item_control (pedido_id, producto_id, controlado_at, controlado_por)
+         VALUES (?, ?, datetime('now'), ?)
+         ON CONFLICT(pedido_id, producto_id) DO UPDATE SET controlado_at = datetime('now'), controlado_por = excluded.controlado_por`
+      ).run(id, productoId, req.user?.id ?? null);
+    } else {
+      db.prepare(`DELETE FROM pedido_item_control WHERE pedido_id = ? AND producto_id = ?`).run(id, productoId);
+    }
+
+    const totalItems = db.prepare(`SELECT COUNT(*) AS n FROM v_pedido_items_neto WHERE PedidoID = ?`).get(id).n;
+    const controlados = db.prepare(`
+      SELECT COUNT(*) AS n FROM pedido_item_control c
+      WHERE c.pedido_id = ?
+        AND EXISTS (SELECT 1 FROM v_pedido_items_neto n WHERE n.PedidoID = c.pedido_id AND n.ProductoID = c.producto_id)
+    `).get(id).n;
+
+    res.json({ ok: true, id, productoId, controlado: marcar, controlados, totalItems, completo: totalItems > 0 && controlados >= totalItems });
+  } catch (e) {
+    console.error("[admin/pedidos/control/item]", e?.message);
+    res.status(500).json({ error: "No se pudo marcar el insumo" });
   }
 });
 
