@@ -80,6 +80,14 @@ function resolveServiceName(serviceId, hintedName) {
 const M = 36;
 const BRAND_COLOR = "#2563EB";
 const LIGHT_GRAY = "#F3F4F6";
+
+// Marca del remito según la empresa del pedido. Antes estaba fijo en Kazaro, así
+// que los remitos de Pazar salían con la marca equivocada.
+const MARCAS = {
+  1: { nombre: "KAZARO", razonSocial: "Kazaro SRL", bajada: "Depósito y Distribución", color: "#2563EB" },
+  2: { nombre: "PAZAR",  razonSocial: "Pazar",      bajada: "Depósito y Distribución", color: "#1A7A4C" },
+};
+const marcaDe = (empresaId) => MARCAS[Number(empresaId)] || MARCAS[1];
 const BORDER_GRAY = "#E5E7EB";
 const TEXT_MUTED = "#6B7280";
 
@@ -88,17 +96,18 @@ const PIE_RESERVA = 18;
 // Alto del bloque de observaciones, cuando el pedido trae nota.
 const NOTA_ALTO = 80;
 
-function drawHeader(doc, nro, fecha, total) {
+function drawHeader(doc, nro, fecha, total, marca = MARCAS[1]) {
+  const BRAND_COLOR = marca.color;
   const contentW = doc.page.width - M * 2;
   doc.save().rect(0, 0, doc.page.width, 70).fill("#F9FAFB").restore();
 
-  doc.fillColor(BRAND_COLOR).font("Helvetica-Bold").fontSize(26).text("KAZARO", M, M - 4);
+  doc.fillColor(BRAND_COLOR).font("Helvetica-Bold").fontSize(26).text(marca.nombre, M, M - 4);
 
   doc
     .font("Helvetica").fontSize(9).fillColor("#374151")
-    .text("Kazaro SRL", M, M + 24)
-    .text("Depósito y Distribución", M, M + 36);
-    
+    .text(marca.razonSocial, M, M + 24)
+    .text(marca.bajada, M, M + 36);
+
   const RIGHT_W = 260;
   const xR = doc.page.width - M - RIGHT_W;
 
@@ -160,7 +169,8 @@ function drawMeta(doc, y, { empleado, rol, fecha, servicio }) {
   return yOut + 10;
 }
 
-function drawItemsTable(doc, y, rows, total, tieneNota = false) {
+function drawItemsTable(doc, y, rows, total, tieneNota = false, marca = MARCAS[1]) {
+  const BRAND_COLOR = marca.color;
   const contentW = doc.page.width - M * 2;
   const W_CODE = 70, W_QTY = 45, W_PRICE = 75, W_SUB = 80;
   const W_DESC = contentW - (W_CODE + W_QTY + W_PRICE + W_SUB);
@@ -281,7 +291,7 @@ function drawNote(doc, y, nota) {
   return y + ALTO_CAJA + 8;
 }
 
-function drawFooter(doc) {
+function drawFooter(doc, marca = MARCAS[1]) {
   // El pie va deliberadamente en el borde inferior, por debajo del margen.
   // PDFKit agrega una página automáticamente cuando se dibuja texto ahí, y eso
   // hacía que todo remito terminara con una hoja extra que sólo tenía esta
@@ -293,7 +303,7 @@ function drawFooter(doc) {
   doc.moveTo(M, y).lineTo(doc.page.width - M, y).strokeColor(BORDER_GRAY).lineWidth(0.5).stroke();
   doc.font("Helvetica").fontSize(8).fillColor(TEXT_MUTED)
     .text(
-      `Generado por Kazaro — ${nowLocal()}  |  Este documento es válido sin firma ni sello.`,
+      `Generado por ${marca.razonSocial} — ${nowLocal()}  |  Este documento es válido sin firma ni sello.`,
       M, y + 6, { width: doc.page.width - M * 2, align: "center", lineBreak: false }
     );
 
@@ -336,12 +346,22 @@ function normalizePedido(pedido) {
 
   const total = Number(cab?.Total ?? items.reduce((s, r) => s + (r.subtotal || 0), 0));
 
-  return { nro, pedidoId, empleado, rol, fecha, servicioNombre, items, total, nota: cab?.Nota };
+  // Empresa del pedido, para que el remito salga con la marca correcta. Si no
+  // viene en el objeto, se busca en la base por el id del pedido.
+  let empresaId = cab?.empresa_id ?? cab?.empresaId ?? null;
+  if (empresaId == null && pedidoId) {
+    try {
+      empresaId = db.prepare("SELECT empresa_id FROM Pedidos WHERE PedidoID = ? LIMIT 1").get(pedidoId)?.empresa_id ?? null;
+    } catch { /* sin dato: queda la marca por defecto */ }
+  }
+  const marca = marcaDe(empresaId);
+
+  return { nro, pedidoId, empleado, rol, fecha, servicioNombre, items, total, nota: cab?.Nota, marca };
 }
 
 /* ================= Generador principal ================= */
 export async function generateRemitoPDF({ pedido, outDir = path.resolve(process.cwd(), "tmp") }) {
-  const { nro, empleado, rol, fecha, servicioNombre, items, total, nota } = normalizePedido(pedido);
+  const { nro, empleado, rol, fecha, servicioNombre, items, total, nota, marca } = normalizePedido(pedido);
 
   fs.mkdirSync(outDir, { recursive: true });
   const outPath = path.join(outDir, `Remito-${nro}.pdf`);
@@ -349,16 +369,16 @@ export async function generateRemitoPDF({ pedido, outDir = path.resolve(process.
   const doc = new PDFDocument({
     size: "A4",
     margins: { top: M, right: M, bottom: M, left: M },
-    info: { Title: `Remito #${nro}`, Author: "Kazaro" },
+    info: { Title: `Remito #${nro}`, Author: marca.razonSocial },
   });
   const stream = fs.createWriteStream(outPath);
   doc.pipe(stream);
 
-  let y = drawHeader(doc, nro, fecha, total);
+  let y = drawHeader(doc, nro, fecha, total, marca);
   y = drawMeta(doc, y, { empleado, rol, fecha, servicio: servicioNombre });
-  y = drawItemsTable(doc, y, items, total, Boolean(nota));
+  y = drawItemsTable(doc, y, items, total, Boolean(nota), marca);
   y = drawNote(doc, y + 4, nota);
-  drawFooter(doc);
+  drawFooter(doc, marca);
 
   doc.end();
   await new Promise((resolve, reject) => {
@@ -369,9 +389,9 @@ export async function generateRemitoPDF({ pedido, outDir = path.resolve(process.
 }
 
 export async function generateRemitoPDFBuffer({ pedido }) {
-  const { nro, empleado, rol, fecha, servicioNombre, items, total, nota } = normalizePedido(pedido);
+  const { nro, empleado, rol, fecha, servicioNombre, items, total, nota, marca } = normalizePedido(pedido);
 
-  const doc = new PDFDocument({ size: "A4", margin: M });
+  const doc = new PDFDocument({ size: "A4", margin: M, info: { Title: `Remito #${nro}`, Author: marca.razonSocial } });
   const chunks = [];
   const passthrough = new PassThrough();
 
@@ -383,11 +403,11 @@ export async function generateRemitoPDFBuffer({ pedido }) {
     passthrough.on("error", reject);
   });
 
-  let y = drawHeader(doc, nro, fecha, total);
+  let y = drawHeader(doc, nro, fecha, total, marca);
   y = drawMeta(doc, y, { empleado, rol, fecha, servicio: servicioNombre });
-  y = drawItemsTable(doc, y, items, total, Boolean(nota));
+  y = drawItemsTable(doc, y, items, total, Boolean(nota), marca);
   y = drawNote(doc, y + 4, nota);
-  drawFooter(doc);
+  drawFooter(doc, marca);
 
   doc.end();
   const buffer = await done;
