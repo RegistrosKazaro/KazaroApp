@@ -77,12 +77,16 @@ function resolveServicesTableLocal() {
   return { table, idCol, nameCol, nameExpr };
 }
 
+// Límites del mes ARGENTINO expresados en UTC, que es como guarda las fechas la
+// base. Argentina es UTC-3, así que el 1° a las 00:00 local son las 03:00 UTC.
+// Antes se usaba 00:00 UTC: un pedido hecho el último día del mes después de las
+// 21:00 caía en el mes siguiente del informe.
 function monthRange(y, m) {
   const now   = new Date();
   const year  = Number(y)  || now.getFullYear();
   const month = Number(m)  || now.getMonth() + 1;
-  const start = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
-  const end   = new Date(Date.UTC(year, month,     1, 0, 0, 0));
+  const start = new Date(Date.UTC(year, month - 1, 1, 3, 0, 0));
+  const end   = new Date(Date.UTC(year, month,     1, 3, 0, 0));
   const fmt   = (d) => d.toISOString().slice(0, 19).replace("T", " ");
   return { year, month, start: fmt(start), end: fmt(end) };
 }
