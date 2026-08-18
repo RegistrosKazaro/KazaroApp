@@ -11,8 +11,10 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['icon-192.png', 'icon-512.png', 'icon-maskable-512.png'],
       manifest: {
-        name: 'Kazaro Insumos',
-        short_name: 'Kazaro',
+        // Nombre neutro: la misma app la usan Kazaro y Pazar, y el manifiesto es
+        // único para todo el despliegue (no se puede variar según quién entra).
+        name: 'Insumos',
+        short_name: 'Insumos',
         description: 'Gestión de pedidos de insumos',
         theme_color: '#0b1220',
         background_color: '#ffffff',
