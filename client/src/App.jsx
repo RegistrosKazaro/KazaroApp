@@ -23,6 +23,8 @@ import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import "./styles/app.css";
 import NotificationBell from "./components/NotificationBell";
+import logoKazaro from "./assets/LogoHorizWhite.png";
+import logoPazar from "./assets/LogoPazar.png";
 
 function Guarded() {
   const { user, loading } = useAuth();
@@ -97,6 +99,12 @@ function Layout() {
       ? auth.user.empresaSlug.charAt(0).toUpperCase() + auth.user.empresaSlug.slice(1)
       : "Kazaro");
 
+  // Marca de la barra. El logo de Kazaro es blanco (va directo sobre la barra
+  // oscura); el de Pazar es verde sobre claro, así que va dentro de una pastilla
+  // blanca para que se lea sobre el verde.
+  const empresaSlug = String(empresa?.slug || auth?.user?.empresaSlug || "kazaro").toLowerCase();
+  const esPazar = empresaSlug === "pazar";
+
   const handleLogout = async () => {
     try { await Promise.resolve(auth?.logout?.()); }
     finally { navigate("/", { replace: true }); }
@@ -109,8 +117,21 @@ function Layout() {
       <a href="#main-content" className="skip-link">Saltar al contenido</a>
       <nav className="appbar" role="navigation" aria-label="Navegación principal" ref={navRef}>
         {/* Brand muestra el nombre de la empresa activa */}
-        <Link to={isAdmin ? `${base}/admin` : `${base}/cart`} className="brand">
-          {empresaNombre}
+        <Link
+          to={isAdmin ? `${base}/admin` : `${base}/cart`}
+          className={`brand${esPazar ? " brand--pazar" : ""}`}
+          aria-label={`${empresaNombre} — ir al inicio`}
+        >
+          {esPazar ? (
+            <>
+              <span className="brand-mark">
+                <img src={logoPazar} alt="" aria-hidden="true" />
+              </span>
+              <span className="brand-name">{empresaNombre}</span>
+            </>
+          ) : (
+            <img src={logoKazaro} alt={empresaNombre} className="brand-logo-appbar" />
+          )}
         </Link>
 
         {/* Botón de menú: sólo visible en mobile (lo controla el CSS) */}

@@ -11,6 +11,53 @@
   font-size:20px;
   color:#fff;
   text-decoration:none;
+  display:inline-flex;
+  align-items:center;
+  flex:0 0 auto;
+}
+
+/* Logo de la barra. El de Kazaro ya es blanco, así que va directo sobre el
+   fondo oscuro. */
+.appbar .brand-logo-appbar{
+  height:30px;
+  width:auto;
+  display:block;
+  object-fit:contain;
+}
+
+/* Pazar: su logo es cuadrado y verde sobre claro. Se usa como isotipo dentro de
+   un círculo blanco (para que se lea sobre la barra verde) y al lado el nombre,
+   que en el logo original sería ilegible a este tamaño. */
+.appbar .brand-mark{
+  width:34px;
+  height:34px;
+  border-radius:50%;
+  background:#fff;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  overflow:hidden;
+  flex:0 0 auto;
+}
+.appbar .brand-mark img{
+  width:32px;
+  height:32px;
+  object-fit:contain;
+  display:block;
+}
+.appbar .brand-name{
+  margin-left:10px;
+  color:#fff;
+  font-weight:800;
+  font-size:20px;
+  letter-spacing:.01em;
+}
+
+@media (max-width: 720px){
+  .appbar .brand-logo-appbar{ height:24px; }
+  .appbar .brand-mark{ width:30px; height:30px; }
+  .appbar .brand-mark img{ width:28px; height:28px; }
+  .appbar .brand-name{ font-size:18px; margin-left:8px; }
 }
 .appbar-right{
   display:flex;

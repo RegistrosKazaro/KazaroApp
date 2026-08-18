@@ -5,6 +5,7 @@ import App from "./App.jsx";
 
 import AuthProvider from "./context/AuthProvider.jsx";
 import EmpresaProvider from "./context/EmpresaProvider.jsx";
+import EmpresaThemeSync from "./context/EmpresaThemeSync.jsx";
 import CartProvider from "./context/CartProvider.jsx";
 
 import "./styles/global.css";
@@ -27,6 +28,7 @@ createRoot(document.getElementById("root")).render(
         <AuthProvider>
         <CartProvider>
           <Boot>
+            <EmpresaThemeSync />
             <App />
           </Boot>
         </CartProvider>
