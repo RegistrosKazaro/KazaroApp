@@ -2223,8 +2223,8 @@ const onDeleteOrder = useCallback(async (o) => {
           <div style={{ width: 34 }} />
           <div style={{ width: 88 }}>Pedido</div>
           <div style={{ width: 140 }}>Fecha y hora</div>
-          <div style={{ flex: 2 }}>Servicio</div>
-          <div style={{ flex: 1.4 }}>Solicitante</div>
+          <div style={{ flex: 2.6 }}>Servicio</div>
+          <div style={{ flex: 1.2 }}>Solicitante</div>
           <div style={{ width: 70, textAlign: "right" }}>Ítems</div>
           <div style={{ width: 110, textAlign: "right" }}>Total</div>
           <div style={{ width: 190 }} />
@@ -2251,10 +2251,12 @@ const onDeleteOrder = useCallback(async (o) => {
               </div>
               <div style={{ width: 88, fontVariantNumeric: "tabular-nums" }}>{o.numero}</div>
               <div style={{ width: 140, fontVariantNumeric: "tabular-nums" }}>{o.fechaAr}</div>
-              <div style={{ flex: 2 }} className="truncate" title={o.servicio?.nombre || ""}>
+              {/* El nombre del servicio se muestra completo: los nombres son largos
+                  y antes se cortaban con "…" al forzarlos a una sola línea. */}
+              <div style={{ flex: 2.6 }} className="servicio-cell" title={o.servicio?.nombre || ""}>
                 {o.servicio?.nombre || <span className="muted">Sin servicio ({o.rol || "—"})</span>}
               </div>
-              <div style={{ flex: 1.4 }} className="truncate">{o.solicitante || "—"}</div>
+              <div style={{ flex: 1.2 }} className="servicio-cell">{o.solicitante || "—"}</div>
               <div style={{ width: 70, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
                 {o.cantidadItems}
               </div>

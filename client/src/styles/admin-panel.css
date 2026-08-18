@@ -458,6 +458,17 @@
   white-space: nowrap;
 }
 
+/* Nombre de servicio / solicitante en la tabla de Pedidos. Se muestran enteros
+   (los de servicio son largos y con truncate se veía sólo un pedazo): el texto
+   baja de renglón en vez de cortarse, con una letra un poco más chica. */
+.admin-panel .servicio-cell {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 0.84rem;
+  line-height: 1.3;
+}
+
 /* =====================  LISTAS / ASIGNACIONES  ===================== */
 
 .admin-panel .list {
