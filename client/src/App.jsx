@@ -15,7 +15,8 @@ import Products       from "./pages/Products";
 import Cart           from "./pages/Cart";
 import Services       from "./pages/Services";
 const AdminPanel = lazy(() => import("./pages/AdminPanel"));
-const Reports = lazy(() => import("./pages/Reports"));
+const Reports = lazy(() => import("./pages/Reports"));           // informe completo (histórico)
+const ReportsSimple = lazy(() => import("./pages/ReportsSimple")); // informe simplificado (el que se abre por defecto)
 const Deposito = lazy(() => import("./pages/Deposito"));
 const MisPedidos = lazy(() => import("./pages/MisPedidos"));
 const ServiceBudgets = lazy(() => import("./pages/ServiceBudgets"));
@@ -209,7 +210,8 @@ export default function App() {
         <Route element={<Layout />}>
           <Route path="admin"         element={<AdminOnly><Suspense fallback={<div className="state">Cargando…</div>}><AdminPanel /></Suspense></AdminOnly>} />
           <Route path="admin/budgets" element={<AdminOnly><ServiceBudgets /></AdminOnly>} />
-          <Route path="reports"       element={<AdminOnly><Suspense fallback={<div className="state">Cargando…</div>}><Reports /></Suspense></AdminOnly>} />
+          <Route path="reports"          element={<AdminOnly><Suspense fallback={<div className="state">Cargando…</div>}><ReportsSimple /></Suspense></AdminOnly>} />
+          <Route path="reports/completo" element={<AdminOnly><Suspense fallback={<div className="state">Cargando…</div>}><Reports /></Suspense></AdminOnly>} />
           <Route path="products"      element={<Products />} />
           <Route path="services"      element={<Services />} />
           <Route path="deposito"      element={<Deposito />} />

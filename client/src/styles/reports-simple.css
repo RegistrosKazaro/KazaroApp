@@ -1,0 +1,110 @@
+/* reports-simple.css — Informes simplificados. Colores tomados de las variables
+   de empresa (--rp-primary), así Pazar se ve verde y Kazaro azul. */
+
+.rs-page { padding: 18px; max-width: 1180px; margin: 0 auto; }
+
+/* ── Encabezado ── */
+.rs-header {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; margin-bottom: 18px;
+}
+.rs-title { margin: 0; font-size: 1.5rem; color: #0f172a; }
+.rs-sub { margin: 2px 0 0; color: #4b5563; font-size: 0.92rem; text-transform: capitalize; }
+.rs-controls { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.rs-field { display: flex; flex-direction: column; gap: 3px; font-size: 0.78rem; color: #4b5563; }
+.rs-field select {
+  padding: 7px 10px; border: 1px solid #d1d5db; border-radius: 8px;
+  background: #fff; color: #0f172a; font-size: 0.9rem; min-width: 120px;
+}
+.rs-btn {
+  padding: 8px 14px; border-radius: 8px; border: 1px solid var(--rp-primary, #2563eb);
+  background: var(--rp-primary, #2563eb); color: #fff; font-weight: 600; cursor: pointer;
+}
+.rs-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ── KPIs ── */
+.rs-kpis {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px; margin-bottom: 18px;
+}
+.rs-kpi { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px 16px; }
+.rs-kpi-label { font-size: 0.82rem; color: #4b5563; }
+.rs-kpi-value { font-size: 1.75rem; font-weight: 700; color: #0f172a; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.rs-kpi-delta { font-size: 0.78rem; margin-top: 2px; }
+.rs-kpi-delta.is-up { color: #15803d; }
+.rs-kpi-delta.is-down { color: #b91c1c; }
+.rs-kpi-delta.is-flat { color: #6b7280; }
+
+/* ── Solapas ── */
+.rs-tabs { display: flex; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid #e5e7eb; margin-bottom: 16px; }
+.rs-tab {
+  padding: 8px 16px; border: 0; background: transparent; cursor: pointer;
+  font-size: 0.92rem; font-weight: 600; color: #4b5563; border-bottom: 2px solid transparent;
+}
+.rs-tab:hover { color: #0f172a; }
+.rs-tab.is-active { color: var(--rp-primary, #2563eb); border-bottom-color: var(--rp-primary, #2563eb); }
+
+/* ── Tarjetas ── */
+.rs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+.rs-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; }
+.rs-card--wide { grid-column: 1 / -1; }
+.rs-card-title { margin: 0 0 12px; font-size: 1rem; color: #0f172a; }
+.rs-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.rs-card-head .rs-card-title { margin: 0; }
+.rs-search { padding: 7px 12px; border: 1px solid #d1d5db; border-radius: 8px; min-width: 220px; font-size: 0.9rem; }
+.rs-nota { margin: -4px 0 12px; font-size: 0.82rem; color: #4b5563; }
+.rs-vacio { color: #4b5563; font-size: 0.9rem; padding: 10px 0; }
+
+/* ── Barras por día ── */
+.rs-bars { display: flex; align-items: flex-end; gap: 4px; height: 150px; }
+.rs-bar-col { flex: 1; min-width: 10px; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; }
+.rs-bar { width: 100%; background: var(--rp-primary, #2563eb); border-radius: 3px 3px 0 0; min-height: 3px; }
+.rs-bar-lbl { font-size: 0.68rem; color: #4b5563; margin-top: 4px; }
+
+/* ── Ranking ── */
+.rs-rank { display: flex; flex-direction: column; gap: 8px; }
+.rs-rank-row { display: grid; grid-template-columns: minmax(0, 1.6fr) 1fr auto auto; align-items: center; gap: 8px; font-size: 0.86rem; }
+.rs-rank-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #0f172a; }
+.rs-rank-track { background: #f1f5f9; border-radius: 999px; height: 8px; overflow: hidden; }
+.rs-rank-fill { display: block; height: 100%; background: var(--rp-primary, #2563eb); border-radius: 999px; }
+.rs-rank-val { font-variant-numeric: tabular-nums; font-weight: 600; color: #0f172a; }
+.rs-rank-pct { font-size: 0.75rem; color: #4b5563; min-width: 34px; text-align: right; }
+
+/* ── Tablas ── */
+.rs-table-wrap { overflow-x: auto; }
+.rs-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+.rs-table th, .rs-table td { padding: 8px 10px; border-bottom: 1px solid #f1f5f9; text-align: left; }
+.rs-table th { font-size: 0.76rem; text-transform: uppercase; letter-spacing: .04em; color: #4b5563; background: #f8fafc; }
+.rs-table td.num, .rs-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.rs-table td.mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.78rem; color: #4b5563; }
+.rs-row-click { cursor: pointer; }
+.rs-row-click:hover { background: #f8fafc; }
+.rs-total-row td { font-weight: 700; background: #f8fafc; border-top: 2px solid #e5e7eb; }
+.rs-detalle { margin-top: 10px; padding: 10px; background: #f8fafc; border-radius: 8px; }
+.rs-detalle strong { display: block; font-size: 0.8rem; margin-bottom: 8px; color: #4b5563; }
+
+/* ── Evolución ── */
+.rs-months { display: flex; align-items: flex-end; gap: 6px; height: 150px; }
+.rs-month { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; }
+.rs-month-bar { width: 100%; background: var(--rp-primary, #2563eb); border-radius: 3px 3px 0 0; min-height: 2px; }
+.rs-month-lbl { font-size: 0.68rem; color: #4b5563; margin-top: 4px; }
+
+.rs-pie { margin-top: 18px; font-size: 0.8rem; color: #4b5563; line-height: 1.5; }
+.rs-link { color: var(--rp-primary, #2563eb); }
+
+/* ── Mobile ── */
+@media (max-width: 720px) {
+  .rs-page { padding: 12px; }
+  .rs-header { align-items: stretch; }
+  .rs-controls { width: 100%; }
+  .rs-field { flex: 1 1 auto; }
+  .rs-field select { width: 100%; min-width: 0; }
+  .rs-btn { width: 100%; }
+  .rs-kpi-value { font-size: 1.45rem; }
+  .rs-tabs { overflow-x: auto; flex-wrap: nowrap; }
+  .rs-tab { white-space: nowrap; padding: 8px 12px; }
+  .rs-rank-row { grid-template-columns: minmax(0, 1.4fr) 1fr auto; }
+  .rs-rank-pct { display: none; }
+  .rs-bars, .rs-months { height: 120px; }
+  .rs-bar-lbl { font-size: 0.6rem; }
+}
