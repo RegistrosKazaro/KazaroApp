@@ -972,8 +972,21 @@ router.get("/pedidos", mustBeAdmin, (req, res) => {
       )`);
     }
 
+    // Filtro de control interno: sin controlar / controlados / todos.
+    const control = String(req.query.control || "").toLowerCase();
+    if (control === "si")  where.push("p.controlado_at IS NOT NULL");
+    if (control === "no")  where.push("p.controlado_at IS NULL");
+
     const whereSql = `WHERE ${where.join(" AND ")}`;
     const fromSql  = `FROM Pedidos p LEFT JOIN Servicios s ON s.ServiciosID = p.ServicioID`;
+
+    // "Último movimiento" del pedido: se retiró > se cerró > se creó. Sirve para
+    // ordenar por cuándo se terminó y no por cuándo se pidió (un pedido del 10
+    // que se cerró el 12 aparece en el 12).
+    const ULTIMO_MOV = `COALESCE(p.retiro_at, p.closedat, p.Fecha)`;
+    const orden = String(req.query.orden || "").toLowerCase() === "movimiento"
+      ? `${ULTIMO_MOV} DESC, p.PedidoID DESC`
+      : `p.Fecha DESC, p.PedidoID DESC`;
 
     const { total } = db.prepare(`SELECT COUNT(*) AS total ${fromSql} ${whereSql}`).get(params);
 
@@ -981,9 +994,12 @@ router.get("/pedidos", mustBeAdmin, (req, res) => {
       SELECT p.PedidoID AS id, p.Fecha AS fecha, p.Total AS total, p.Rol AS rol,
              p.Nota AS nota, p.EmpleadoID AS empleadoId, p.Status AS status,
              p.closedat AS closedAt, p.retiro_at AS retiroAt,
+             p.controlado_at AS controladoAt, p.controlado_por AS controladoPor,
+             p.control_nota AS controlNota,
+             ${ULTIMO_MOV} AS ultimoMovimiento,
              p.ServicioID AS servicioId, s.ServicioNombre AS servicioNombre
       ${fromSql} ${whereSql}
-      ORDER BY p.Fecha DESC, p.PedidoID DESC
+      ORDER BY ${orden}
       LIMIT @limit OFFSET @offset
     `).all(params);
 
@@ -1022,6 +1038,17 @@ router.get("/pedidos", mustBeAdmin, (req, res) => {
         rol: r.rol || null,
         estado: cerrado ? "cerrado" : "abierto",
         nota: r.nota || null,
+        // Fechas del recorrido, para poder ordenar/controlar por cuándo se terminó.
+        cerradoEn: toISO(r.closedAt),
+        cerradoEnAr: r.closedAt ? fmtAr(r.closedAt) : null,
+        retiradoEn: toISO(r.retiroAt),
+        retiradoEnAr: r.retiroAt ? fmtAr(r.retiroAt) : null,
+        ultimoMovimientoAr: r.ultimoMovimiento ? fmtAr(r.ultimoMovimiento) : null,
+        // Control interno del admin
+        controlado: r.controladoAt != null,
+        controladoEnAr: r.controladoAt ? fmtAr(r.controladoAt) : null,
+        controladoPor: r.controladoPor ? (getEmployeeDisplayName(r.controladoPor) || null) : null,
+        controlNota: r.controlNota || null,
         cantidadItems: items.reduce((a, i) => a + i.cantidad, 0),
         total: Number(neto.TotalNeto ?? r.total ?? 0),
         totalOriginal: Number(neto.TotalOriginal ?? r.total ?? 0),
@@ -1035,6 +1062,49 @@ router.get("/pedidos", mustBeAdmin, (req, res) => {
   } catch (e) {
     console.error("[admin/pedidos]", e?.message);
     res.status(500).json({ error: "Error al listar pedidos" });
+  }
+});
+
+/**
+ * Marca o desmarca un pedido como CONTROLADO. Es sólo control interno del admin:
+ * no cambia el estado del pedido, ni el stock, ni los informes.
+ * Body: { controlado: boolean, nota?: string }
+ */
+router.put("/pedidos/:id/control", mustBeAdmin, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const empresaId = Number(req.user?.empresaId ?? 1);
+    const owner = db.prepare(`SELECT empresa_id FROM Pedidos WHERE PedidoID = ?`).get(id);
+    if (!owner) return res.status(404).json({ error: "Pedido no encontrado" });
+    if (owner.empresa_id != null && Number(owner.empresa_id) !== empresaId) {
+      return res.status(404).json({ error: "Pedido no encontrado" });
+    }
+
+    const marcar = req.body?.controlado !== false; // por defecto marca
+    const nota = String(req.body?.nota ?? "").trim().slice(0, 500) || null;
+
+    if (marcar) {
+      db.prepare(
+        `UPDATE Pedidos SET controlado_at = datetime('now'), controlado_por = ?, control_nota = ? WHERE PedidoID = ?`
+      ).run(req.user?.id ?? null, nota, id);
+    } else {
+      db.prepare(
+        `UPDATE Pedidos SET controlado_at = NULL, controlado_por = NULL, control_nota = NULL WHERE PedidoID = ?`
+      ).run(id);
+    }
+
+    const r = db.prepare(`SELECT controlado_at, controlado_por, control_nota FROM Pedidos WHERE PedidoID = ?`).get(id);
+    res.json({
+      ok: true,
+      id,
+      controlado: r.controlado_at != null,
+      controladoEnAr: r.controlado_at ? fmtAr(r.controlado_at) : null,
+      controladoPor: r.controlado_por ? (getEmployeeDisplayName(r.controlado_por) || null) : null,
+      controlNota: r.control_nota || null,
+    });
+  } catch (e) {
+    console.error("[admin/pedidos/control]", e?.message);
+    res.status(500).json({ error: "No se pudo actualizar el control" });
   }
 });
 

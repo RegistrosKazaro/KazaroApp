@@ -12,6 +12,7 @@ import EmployeesSection from "./EmployeesSection";
 import MassReassignServicesSection from "./MassReassignServicesSection";
 import TwoFactorSection from "./TwoFactorSection";
 import StockCriticoSection from "./StockCriticoSection";
+import ControlPedidosSection from "./ControlPedidosSection";
 const API_BASE_URL =
   (import.meta?.env && import.meta.env.VITE_API_URL) || "http://localhost:4000";
 
@@ -2959,6 +2960,7 @@ const NAV_GROUPS = [
     title: "Operación",
     items: [
       { id: "orders",    label: "Pedidos" },
+      { id: "control",   label: "Control de pedidos" },
       { id: "historial", label: "Historial" },
       { to: "/admin/budgets", icon: "budgets", label: "Presupuestos" },
       { to: "/reports",       icon: "reports", label: "Informes" },
@@ -3149,6 +3151,7 @@ export default function AdminPanel() {
           {tab === "incomingStock" && <IncomingStockSection />}
           {tab === "massReassign" && <MassReassignServicesSection />}
           {tab === "orders" && <OrdersSection />}
+          {tab === "control" && <ControlPedidosSection />}
           {tab === "historial" && <ProductHistorialSection />}
           {tab === "employees" && <EmployeesSection />}
           {tab === "twofa" && <TwoFactorSection />}

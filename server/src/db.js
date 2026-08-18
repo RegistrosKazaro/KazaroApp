@@ -987,6 +987,27 @@ function ensureContabilizadoColumn() {
 }
 ensureContabilizadoColumn();
 
+// Marca de control interno: el admin va tildando qué pedidos ya revisó contra
+// sus insumos. No afecta el circuito del pedido ni los informes; es sólo para
+// llevar el control manual.
+function ensureControlColumns() {
+  try {
+    const cols = db.prepare("PRAGMA table_info(Pedidos)").all().map(c => c.name.toLowerCase());
+    if (!cols.includes("controlado_at")) {
+      db.prepare("ALTER TABLE Pedidos ADD COLUMN controlado_at TEXT DEFAULT NULL").run();
+    }
+    if (!cols.includes("controlado_por")) {
+      db.prepare("ALTER TABLE Pedidos ADD COLUMN controlado_por INTEGER DEFAULT NULL").run();
+    }
+    if (!cols.includes("control_nota")) {
+      db.prepare("ALTER TABLE Pedidos ADD COLUMN control_nota TEXT DEFAULT NULL").run();
+    }
+  } catch (e) {
+    console.warn("[db] ensureControlColumns:", e?.message || e);
+  }
+}
+ensureControlColumns();
+
 // Vistas de "neto de devoluciones": una devolución APROBADA descuenta lo que
 // realmente consumió el servicio. Informes, panel de pedidos y API leen de acá
 // para no mostrar de más cuando un pedido tuvo devolución. La devolución se
