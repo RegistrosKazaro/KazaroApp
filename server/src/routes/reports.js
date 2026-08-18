@@ -158,38 +158,45 @@ function buildGeneralReportFilter() {
     }
   } catch (e) { /* tabla no existe → no filtramos */ }
 
-  // 2) Excluir pedidos con productos de categorías separadas
-  try {
-    const catIdsSeparadas = [];
-    const catRows = db.prepare(`SELECT CategoriaID AS id, CategoriaNombre AS name FROM Categorias`).all();
-    const normalize = (s) => String(s || "").normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
-    for (const r of catRows) {
-      const nm = normalize(r.name);
-      if (CATEGORIAS_SEPARADAS.some(c => normalize(c) === nm)) catIdsSeparadas.push(String(r.id));
-    }
-    if (catIdsSeparadas.length) {
-      const prod = resolveProductsTableLocal();
-      if (prod) {
-        const prodInfo = _tinfo(prod.table);
-        const catCol = _pickCol(prodInfo, ["CategoriaID", "IdCategoria", "categoria_id"]);
-        if (catCol) {
-          const catPlaceholders = catIdsSeparadas.map(() => "?").join(",");
-          exclusions.push(`
-            AND NOT EXISTS (
-              SELECT 1 FROM PedidoItems pi2
-              JOIN ${prod.table} pr2 ON CAST(pr2.${prod.idCol} AS TEXT) = CAST(pi2.ProductoID AS TEXT)
-              WHERE pi2.PedidoID = p.PedidoID AND CAST(pr2.${catCol} AS TEXT) IN (${catPlaceholders})
-            )
-          `);
-          params.push(...catIdsSeparadas);
-        }
-      }
-    }
-  } catch (e) {
-    console.warn("[reports] buildGeneralReportFilter categorias warn:", e?.message || e);
-  }
+  // 2) Las categorías separadas (Uniformes) NO se excluyen acá: se excluyen por
+  //    ÍTEM (ver filtroItemsSinCategoriaSeparada). Antes se descartaba el pedido
+  //    entero si tenía aunque sea un uniforme, y con él se perdían sus insumos.
 
   return { sqlExclusions: exclusions.join(" "), params };
+}
+
+/**
+ * Filtro a nivel ÍTEM para dejar afuera las categorías que tienen informe
+ * aparte (Uniformes). Se aplica sobre el alias de v_pedido_items_neto, así un
+ * pedido mixto aporta sus insumos al informe general y sus uniformes al informe
+ * de Uniformes, sin perderse ni mezclarse.
+ */
+function filtroItemsSinCategoriaSeparada(alias = "i") {
+  try {
+    const normalize = (s) => String(s || "").normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
+    const catRows = db.prepare(`SELECT CategoriaID AS id, CategoriaNombre AS name FROM Categorias`).all();
+    const ids = catRows
+      .filter((r) => CATEGORIAS_SEPARADAS.some((c) => normalize(c) === normalize(r.name)))
+      .map((r) => String(r.id));
+    if (!ids.length) return { sql: "", params: [] };
+
+    const prod = resolveProductsTableLocal();
+    if (!prod) return { sql: "", params: [] };
+    const catCol = _pickCol(_tinfo(prod.table), ["CategoriaID", "IdCategoria", "categoria_id"]);
+    if (!catCol) return { sql: "", params: [] };
+
+    return {
+      sql: ` AND NOT EXISTS (
+        SELECT 1 FROM ${prod.table} pr_x
+        WHERE CAST(pr_x.${prod.idCol} AS TEXT) = CAST(${alias}.ProductoID AS TEXT)
+          AND CAST(pr_x.${catCol} AS TEXT) IN (${ids.map(() => "?").join(",")})
+      )`,
+      params: ids,
+    };
+  } catch (e) {
+    console.warn("[reports] filtroItemsSinCategoriaSeparada:", e?.message || e);
+    return { sql: "", params: [] };
+  }
 }
 
 /* ======================= LISTA DE SERVICIOS ======================= */
@@ -229,24 +236,41 @@ router.get("/monthly", mustBeAdmin, (req, res) => {
   const ef        = empresaFilter("Pedidos", empresaId, "p");
 
   try {
+    // Filtro de pedidos (servicios de depósito) + filtro de ítems (Uniformes,
+    // que tienen su propio informe). Todo el informe general se calcula a nivel
+    // ÍTEM, así un pedido mixto aporta sólo sus insumos y no se pierde nada.
     const { sqlExclusions, params: exclusionParams } = buildGeneralReportFilter();
-    const allExcl = `${ef} ${sqlExclusions}`;
+    const { sql: sinCat, params: catParams } = filtroItemsSinCategoriaSeparada("i");
+    const allExcl = `${ef} ${sqlExclusions} ${sinCat}`;
+    const extraParams = [...exclusionParams, ...catParams];
 
-    const runSql = (sql, ...before) => db.prepare(sql).get(...before, ...exclusionParams);
-    const runAll = (sql, ...before) => db.prepare(sql).all(...before, ...exclusionParams);
+    const runSql = (sql, ...before) => db.prepare(sql).get(...before, ...extraParams);
+    const runAll = (sql, ...before) => db.prepare(sql).all(...before, ...extraParams);
 
-    const totals = (() => {
-      const ordersCount = runSql(`SELECT COUNT(*) AS c FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}`, start, end)?.c || 0;
-      const itemsCount  = runSql(`SELECT COALESCE(SUM(i.Cantidad),0) AS c FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}`, start, end)?.c || 0;
-      const amount      = runSql(`SELECT COALESCE(SUM(${TOTAL_NETO()}),0) AS s FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}`, start, end)?.s || 0;
-      return { ordersCount: Number(ordersCount), itemsCount: Number(itemsCount), amount: Number(amount) };
-    })();
+    // Base común: ítems (sin uniformes) unidos a su pedido.
+    const DESDE_ITEMS = `FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID
+      WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}`;
+
+    const totalsDe = (desde, hasta) => {
+      const r = runSql(`
+        SELECT COUNT(DISTINCT p.PedidoID) AS ordersCount,
+               COALESCE(SUM(i.Cantidad),0) AS itemsCount,
+               COALESCE(SUM(i.Subtotal),0) AS amount
+        ${DESDE_ITEMS}
+      `, desde, hasta) || {};
+      return {
+        ordersCount: Number(r.ordersCount || 0),
+        itemsCount: Number(r.itemsCount || 0),
+        amount: Number(r.amount || 0),
+      };
+    };
+
+    const totals = totalsDe(start, end);
 
     const top_services = runAll(`
       SELECT COALESCE(p.ServicioID,'') AS serviceId, COUNT(DISTINCT p.PedidoID) AS pedidos,
              COALESCE(SUM(i.Cantidad),0) AS qty, COALESCE(SUM(i.Subtotal),0) AS amount
-      FROM Pedidos p LEFT JOIN v_pedido_items_neto i ON i.PedidoID = p.PedidoID
-      WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}
+      ${DESDE_ITEMS}
       GROUP BY p.ServicioID ORDER BY amount DESC LIMIT 10
     `, start, end).map((r) => ({
       serviceId: r.serviceId || null, serviceName: resolveServiceName(r.serviceId),
@@ -256,8 +280,7 @@ router.get("/monthly", mustBeAdmin, (req, res) => {
     const top_products = runAll(`
       SELECT COALESCE(i.ProductoID, 0) AS productId, COALESCE(MAX(i.Codigo), '') AS code, COALESCE(MAX(i.Nombre), '') AS name,
              COUNT(DISTINCT i.PedidoID) AS pedidos, COALESCE(SUM(i.Cantidad),0) AS qty, COALESCE(SUM(i.Subtotal),0) AS amount
-      FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID
-      WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}
+      ${DESDE_ITEMS}
       GROUP BY i.ProductoID, LOWER(i.Nombre), LOWER(i.Codigo) ORDER BY amount DESC LIMIT 10
     `, start, end).map((r) => ({
       productId: Number(r.productId || 0), code: String(r.code || ""), name: String(r.name || ""),
@@ -265,20 +288,17 @@ router.get("/monthly", mustBeAdmin, (req, res) => {
     }));
 
     const by_day = runAll(`
-      SELECT SUBSTR(p.Fecha,1,10) AS day, COUNT(*) AS pedidos, COALESCE(SUM(${TOTAL_NETO()}),0) AS monto
-      FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}
+      SELECT SUBSTR(p.Fecha,1,10) AS day, COUNT(DISTINCT p.PedidoID) AS pedidos,
+             COALESCE(SUM(i.Subtotal),0) AS monto
+      ${DESDE_ITEMS}
       GROUP BY day ORDER BY day
     `, start, end).map((r) => ({ day: r.day, pedidos: Number(r.pedidos || 0), monto: Number(r.monto || 0) }));
 
     const prevMonthRange = (() => { let pm = month - 1, py = year; if (pm <= 0) { pm = 12; py--; } return monthRange(py, pm); })();
 
     const prev_totals = (() => {
-      try {
-        const ordersCount = runSql(`SELECT COUNT(*) AS c FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}`, prevMonthRange.start, prevMonthRange.end)?.c || 0;
-        const itemsCount  = runSql(`SELECT COALESCE(SUM(i.Cantidad),0) AS c FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}`, prevMonthRange.start, prevMonthRange.end)?.c || 0;
-        const amount      = runSql(`SELECT COALESCE(SUM(${TOTAL_NETO()}),0) AS s FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? ${allExcl}`, prevMonthRange.start, prevMonthRange.end)?.s || 0;
-        return { ordersCount: Number(ordersCount), itemsCount: Number(itemsCount), amount: Number(amount) };
-      } catch { return null; }
+      try { return totalsDe(prevMonthRange.start, prevMonthRange.end); }
+      catch { return null; }
     })();
 
     return res.json({ ok: true, period: { year, month, start, end }, totals, top_services, top_products, by_day, prev_totals });
@@ -306,30 +326,38 @@ function wma(series, key, weights) {
   return series.reduce((acc, s, i) => acc + Number(s[key] || 0) * w[i], 0);
 }
 
+// Totales de un rango, calculados a nivel ÍTEM (igual que /monthly) para que el
+// anual y el general den lo mismo. Con un servicio puntual no se excluyen ni
+// depósitos ni Uniformes: se quiere ver todo lo de ese servicio.
 function totalsForRange(start, end, serviceId, empresaId) {
   const hasService = String(serviceId ?? "").trim() !== "";
-  const efP     = empresaFilter("Pedidos", empresaId, "p");
-  const efPlain = empresaFilter("Pedidos", empresaId);
+  const efP = empresaFilter("Pedidos", empresaId, "p");
 
-  // Con servicio específico: no aplicamos exclusiones generales.
-  // Sin servicio: aplicamos exclusiones (depósitos/uniformes).
   const { sqlExclusions, params: exclusionParams } = hasService
     ? { sqlExclusions: "", params: [] }
     : buildGeneralReportFilter();
+  const { sql: sinCat, params: catParams } = hasService
+    ? { sql: "", params: [] }
+    : filtroItemsSinCategoriaSeparada("i");
 
-  const ordersCount = hasService
-    ? (db.prepare(`SELECT COUNT(*) AS c FROM Pedidos WHERE Fecha >= ? AND Fecha < ? AND CAST(ServicioID AS TEXT) = CAST(? AS TEXT) ${efPlain}`).get(start, end, serviceId)?.c || 0)
-    : (db.prepare(`SELECT COUNT(*) AS c FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? ${efP} ${sqlExclusions}`).get(start, end, ...exclusionParams)?.c || 0);
+  const filtroServicio = hasService ? `AND CAST(p.ServicioID AS TEXT) = CAST(? AS TEXT)` : "";
+  const params = hasService
+    ? [start, end, serviceId]
+    : [start, end, ...exclusionParams, ...catParams];
 
-  const itemsCount = hasService
-    ? (db.prepare(`SELECT COALESCE(SUM(i.Cantidad),0) AS c FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID WHERE p.Fecha >= ? AND p.Fecha < ? AND CAST(p.ServicioID AS TEXT) = CAST(? AS TEXT) ${efP}`).get(start, end, serviceId)?.c || 0)
-    : (db.prepare(`SELECT COALESCE(SUM(i.Cantidad),0) AS c FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID WHERE p.Fecha >= ? AND p.Fecha < ? ${efP} ${sqlExclusions}`).get(start, end, ...exclusionParams)?.c || 0);
+  const r = db.prepare(`
+    SELECT COUNT(DISTINCT p.PedidoID) AS ordersCount,
+           COALESCE(SUM(i.Cantidad),0) AS itemsCount,
+           COALESCE(SUM(i.Subtotal),0) AS amount
+    FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID
+    WHERE p.Fecha >= ? AND p.Fecha < ? ${filtroServicio} ${efP} ${sqlExclusions} ${sinCat}
+  `).get(...params) || {};
 
-  const amount = hasService
-    ? (db.prepare(`SELECT COALESCE(SUM(${TOTAL_NETO("Pedidos")}),0) AS s FROM Pedidos WHERE Fecha >= ? AND Fecha < ? AND CAST(ServicioID AS TEXT) = CAST(? AS TEXT) ${efPlain}`).get(start, end, serviceId)?.s || 0)
-    : (db.prepare(`SELECT COALESCE(SUM(${TOTAL_NETO()}),0) AS s FROM Pedidos p WHERE p.Fecha >= ? AND p.Fecha < ? ${efP} ${sqlExclusions}`).get(start, end, ...exclusionParams)?.s || 0);
-
-  return { ordersCount: Number(ordersCount), itemsCount: Number(itemsCount), amount: Number(amount) };
+  return {
+    ordersCount: Number(r.ordersCount || 0),
+    itemsCount: Number(r.itemsCount || 0),
+    amount: Number(r.amount || 0),
+  };
 }
 
 function yearlySummary(year, serviceId, empresaId) {

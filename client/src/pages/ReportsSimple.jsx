@@ -84,6 +84,8 @@ export default function ReportsSimple() {
   const [year, setYear] = useState(HOY.getFullYear());
   const [month, setMonth] = useState(HOY.getMonth() + 1);
   const [tab, setTab] = useState("resumen");
+  // Insumos y Uniformes son informes separados: nunca se mezclan sus números.
+  const [modo, setModo] = useState("insumos");
 
   const [data, setData] = useState(null);
   const [anual, setAnual] = useState(null);
@@ -95,16 +97,40 @@ export default function ReportsSimple() {
   const [detalle, setDetalle] = useState(null);
   const [detalleCargando, setDetalleCargando] = useState(false);
 
+  const mesAnterior = useCallback(() => {
+    let m = month - 1, y = year;
+    if (m <= 0) { m = 12; y -= 1; }
+    return { year: y, month: m };
+  }, [year, month]);
+
   const cargar = useCallback(async () => {
     setCargando(true); setError("");
     try {
-      const { data: m } = await api.get("/reports/monthly", { params: { year, month } });
-      setData(m);
+      if (modo === "insumos") {
+        const { data: m } = await api.get("/reports/monthly", { params: { year, month } });
+        setData(m);
+      } else {
+        // Uniformes: informe propio por categoría. Se pide también el mes
+        // anterior para poder mostrar la variación en los KPIs.
+        const prevQ = mesAnterior();
+        const [act, ant] = await Promise.all([
+          api.get("/reports/category/by-name/Uniformes", { params: { year, month } }),
+          api.get("/reports/category/by-name/Uniformes", { params: prevQ }).catch(() => null),
+        ]);
+        setData({
+          ...act.data,
+          top_services: act.data?.by_service || [],
+          prev_totals: ant?.data?.totals || null,
+        });
+      }
     } catch (e) {
-      setError(e?.response?.data?.error || "No se pudieron cargar los informes");
+      const msg = e?.response?.status === 404 && modo === "uniformes"
+        ? "No hay una categoría “Uniformes” cargada en esta empresa."
+        : (e?.response?.data?.error || "No se pudieron cargar los informes");
+      setError(msg);
       setData(null);
     } finally { setCargando(false); }
-  }, [year, month]);
+  }, [year, month, modo, mesAnterior]);
 
   useEffect(() => { cargar(); }, [cargar]);
 
@@ -148,20 +174,22 @@ export default function ReportsSimple() {
     const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const filas = [["Seccion","Detalle","Pedidos","Unidades","Monto"].map(esc).join(";")];
     filas.push([esc("Total"), esc(`${MESES[month-1]} ${year}`), csvNumber(totals.ordersCount), csvNumber(totals.itemsCount), csvNumber(totals.amount)].join(";"));
-    for (const p of productos) filas.push([esc("Insumo"), esc(p.name), csvNumber(p.pedidos), csvNumber(p.qty), csvNumber(p.amount)].join(";"));
+    const etiqueta = modo === "uniformes" ? "Uniforme" : "Insumo";
+    for (const p of productos) filas.push([esc(etiqueta), esc(p.name), csvNumber(p.pedidos), csvNumber(p.qty), csvNumber(p.amount)].join(";"));
     for (const s of servicios) filas.push([esc("Servicio"), esc(nombreServicio(s)), csvNumber(s.pedidos), csvNumber(s.qty), csvNumber(s.amount)].join(";"));
     const blob = new Blob(["﻿" + filas.join("\r\n")], { type: "text/csv;charset=utf-8;" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `informe_${year}-${String(month).padStart(2,"0")}.csv`;
+    a.download = `informe_${modo}_${year}-${String(month).padStart(2,"0")}.csv`;
     a.click(); URL.revokeObjectURL(a.href);
   };
 
+  // El anual sólo existe para el informe general; Uniformes no tiene endpoint anual.
   const TABS = [
     ["resumen", "Resumen"],
-    ["insumos", "Insumos"],
+    ["insumos", modo === "uniformes" ? "Artículos" : "Insumos"],
     ["servicios", "Servicios"],
-    ["evolucion", "Evolución"],
+    ...(modo === "insumos" ? [["evolucion", "Evolución"]] : []),
   ];
 
   return (
@@ -170,7 +198,17 @@ export default function ReportsSimple() {
       <header className="rs-header">
         <div>
           <h1 className="rs-title">Informes</h1>
-          <p className="rs-sub">{MESES[month - 1]} de {year}</p>
+          <p className="rs-sub">
+            {modo === "insumos" ? "Insumos" : "Uniformes"} · {MESES[month - 1]} de {year}
+          </p>
+          {/* Insumos y Uniformes son informes separados: sus números nunca se suman. */}
+          <div className="rs-modos" role="tablist" aria-label="Tipo de informe">
+            {[["insumos", "Insumos"], ["uniformes", "Uniformes"]].map(([k, l]) => (
+              <button key={k} type="button" role="tab" aria-selected={modo === k}
+                className={`rs-modo${modo === k ? " is-active" : ""}`}
+                onClick={() => { setModo(k); setTab("resumen"); }}>{l}</button>
+            ))}
+          </div>
         </div>
         <div className="rs-controls">
           <label className="rs-field">
@@ -218,7 +256,7 @@ export default function ReportsSimple() {
                 <BarrasPorDia datos={porDia} campo="pedidos" />
               </div>
               <div className="rs-card">
-                <h2 className="rs-card-title">Insumos más pedidos</h2>
+                <h2 className="rs-card-title">{modo === "uniformes" ? "Artículos más pedidos" : "Insumos más pedidos"}</h2>
                 <Ranking filas={productos.slice(0, 5)} etiqueta={(p) => p.name} valor={(p) => p.qty}
                   vacio="Sin insumos en el período." />
               </div>
@@ -233,8 +271,8 @@ export default function ReportsSimple() {
           {tab === "insumos" && (
             <section className="rs-card">
               <div className="rs-card-head">
-                <h2 className="rs-card-title">Insumos del mes</h2>
-                <input type="search" className="rs-search" placeholder="Buscar insumo o código…"
+                <h2 className="rs-card-title">{modo === "uniformes" ? "Artículos de uniformes" : "Insumos del mes"}</h2>
+                <input type="search" className="rs-search" placeholder="Buscar por nombre o código…"
                   value={q} onChange={(e) => setQ(e.target.value)} />
               </div>
               {productosFiltrados.length === 0 ? (
@@ -354,7 +392,10 @@ export default function ReportsSimple() {
           )}
 
           <p className="rs-pie">
-            Los montos y cantidades son netos de devoluciones aprobadas. Se cuentan los pedidos
+            {modo === "insumos"
+              ? "Este informe cuenta sólo insumos: los artículos de Uniformes se informan aparte, en su propia solapa. Si un pedido tiene de los dos, cada parte va a su informe."
+              : "Este informe cuenta sólo los artículos de la categoría Uniformes. El resto de los insumos se informa en la solapa Insumos."}
+            {" "}Los montos y cantidades son netos de devoluciones aprobadas, y se cuentan los pedidos
             confirmados (los administrativos al crearse; los de supervisor al marcarse retirados).
             {" "}<Link to="completo" className="rs-link">Ver el informe completo</Link>
           </p>
