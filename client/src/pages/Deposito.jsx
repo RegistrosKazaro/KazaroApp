@@ -261,12 +261,23 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
   const guardar = async () => {
     setBusy(true); setMsg(""); setFaltantes([]);
     try {
-      await api.put(`/deposito/orders/${order.id}/items`, {
+      const { data } = await api.put(`/deposito/orders/${order.id}/items`, {
         items: items.map((it) => ({ productId: it.productId, cantidad: it.cantidad })),
       });
-      setDirty(false); setMsg("Cambios guardados.");
-    } catch (e) { setMsg(e?.response?.data?.error || "No se pudieron guardar los cambios"); }
-    finally { setBusy(false); }
+      setDirty(false);
+      setMsg(data?.stockAjustado
+        ? "Cambios guardados. Se ajustó el stock por la diferencia."
+        : "Cambios guardados.");
+    } catch (e) {
+      const data = e?.response?.data;
+      // Al aumentar cantidades en un pedido que ya descontó stock, puede no alcanzar.
+      if (data?.faltantes) {
+        setFaltantes(data.faltantes);
+        setMsg("No alcanza el stock para aumentar esas cantidades.");
+      } else {
+        setMsg(data?.error || "No se pudieron guardar los cambios");
+      }
+    } finally { setBusy(false); }
   };
 
   const confirmar = async () => {
@@ -761,8 +772,10 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                         <button type="button" className="pill pill--ghost" onClick={() => onPreviewRemito(o)}>
                           Ver remito
                         </button>
-                        {(tab === "open" || tab === "preparing" || tab === "closed")
-                          && String(o.rol || "").toLowerCase() === "supervisor" && (
+                        {/* Editable en cualquier etapa previa al retiro, sea de
+                            supervisor o administrativo. En los administrativos el
+                            backend ajusta la diferencia de stock. */}
+                        {(tab === "open" || tab === "preparing" || tab === "closed") && (
                           <button type="button" className="pill pill--ghost" onClick={() => toggleEdit(o.id)}
                             style={{ borderColor: "#2563eb", color: "#1d4ed8" }}>
                             {editingOrders.has(o.id) ? "Cerrar edición" : "Editar"}

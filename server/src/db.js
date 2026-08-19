@@ -1457,6 +1457,95 @@ export function applyOrderStockDiscount(pedidoId) {
   return { ok: true };
 }
 
+/**
+ * Ajusta el stock por la DIFERENCIA cuando se edita un pedido cuyo stock YA se
+ * había descontado (los administrativos descuentan al crearse). Recibe deltas
+ * en unidades: positivo = hay que sacar más stock, negativo = hay que devolver.
+ *
+ * Valida primero todos los aumentos contra el stock actual: si alguno no
+ * alcanza, no toca nada y devuelve { ok:false, faltantes }. Nunca deja negativo.
+ */
+export function applyOrderStockDelta(pedidoId, deltas) {
+  let getWarehouseForChildService, getWarehouseForLinkedService,
+      warehouseDecrementStock, warehouseIncrementStock, getWarehouseStock;
+  try {
+    const wh = globalThis.__warehousesModule;
+    if (wh) {
+      getWarehouseForChildService  = wh.getWarehouseForChildService;
+      getWarehouseForLinkedService = wh.getWarehouseForLinkedService;
+      warehouseDecrementStock      = wh.warehouseDecrementStock;
+      warehouseIncrementStock      = wh.warehouseIncrementStock;
+      getWarehouseStock            = wh.getWarehouseStock;
+    }
+  } catch { /* sin depósitos configurados */ }
+
+  const cambios = (deltas || []).filter((d) => Number(d.delta) !== 0);
+  if (!cambios.length) return { ok: true, sinCambios: true };
+
+  const ped = db.prepare(`SELECT PedidoID, ServicioID FROM Pedidos WHERE PedidoID = ?`).get(pedidoId);
+  if (!ped) return { ok: false, error: "Pedido no encontrado" };
+
+  const servicioId = ped.ServicioID || null;
+  const childWarehouse = (servicioId && getWarehouseForChildService)
+    ? getWarehouseForChildService(servicioId) : null;
+  const linkedWarehouse = (!childWarehouse && servicioId && getWarehouseForLinkedService)
+    ? getWarehouseForLinkedService(servicioId) : null;
+
+  const sch = discoverCatalogSchema();
+  if (!sch.ok) return { ok: false, error: sch.reason };
+  const { products } = sch.tables;
+  const { prodId, prodStock } = sch.cols;
+  const hasStock = !!prodStock;
+
+  const disponibleDe = (pid) => {
+    if (childWarehouse && getWarehouseStock) return Number(getWarehouseStock(childWarehouse.id, pid) ?? 0);
+    if (hasStock) {
+      const r = db.prepare(`SELECT COALESCE(${prodStock},0) AS stock FROM ${products} WHERE ${prodId} = ? LIMIT 1`).get(pid);
+      return Number(r?.stock ?? 0);
+    }
+    return Infinity;
+  };
+
+  // Fase 1: validar sólo los aumentos. Las devoluciones nunca fallan.
+  const faltantes = [];
+  for (const c of cambios) {
+    const delta = Number(c.delta);
+    if (delta <= 0) continue;
+    const disp = disponibleDe(c.productId);
+    if (disp < delta) {
+      faltantes.push({ productId: c.productId, nombre: c.nombre || `Producto ${c.productId}`,
+        disponible: disp === Infinity ? null : disp, pedido: delta });
+    }
+  }
+  if (faltantes.length) return { ok: false, faltantes };
+
+  // Fase 2: aplicar todo junto.
+  const tx = db.transaction(() => {
+    for (const c of cambios) {
+      const delta = Number(c.delta);
+      const pid = c.productId;
+      const abs = Math.abs(delta);
+      if (childWarehouse && warehouseDecrementStock && warehouseIncrementStock) {
+        const mover = delta > 0 ? warehouseDecrementStock : warehouseIncrementStock;
+        mover({ warehouseId: childWarehouse.id, productId: pid, qty: abs, serviceId: servicioId,
+                pedidoId, name: c.nombre || null, code: null, price: 0 });
+      } else if (linkedWarehouse && warehouseIncrementStock && warehouseDecrementStock) {
+        if (hasStock) {
+          db.prepare(`UPDATE ${products} SET ${prodStock} = ${prodStock} - ? WHERE ${prodId} = ?`).run(delta, pid);
+        }
+        const mover = delta > 0 ? warehouseIncrementStock : warehouseDecrementStock;
+        mover({ warehouseId: linkedWarehouse.id, productId: pid, qty: abs, serviceId: servicioId,
+                pedidoId, name: c.nombre || null, code: null, price: 0 });
+      } else if (hasStock) {
+        // delta positivo resta stock; negativo lo devuelve
+        db.prepare(`UPDATE ${products} SET ${prodStock} = ${prodStock} - ? WHERE ${prodId} = ?`).run(delta, pid);
+      }
+    }
+  });
+  tx();
+  return { ok: true };
+}
+
 export function getFullOrder(pedidoId) {
   const ped = db.prepare(`
     SELECT p.PedidoID AS id, p.EmpleadoID, p.Rol, p.Nota, p.Total, p.Fecha, p.ServicioID

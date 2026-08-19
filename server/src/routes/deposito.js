@@ -11,6 +11,7 @@ import {
   getUserById,
   getFullOrder,
   applyOrderStockDiscount,
+  applyOrderStockDelta,
 } from "../db.js";
 import { sendMail } from "../utils/mailer.js";
 
@@ -409,11 +410,15 @@ router.get("/productos", mustWarehouse, (req, res) => {
 // Los administrativos descuentan stock al crearse, así que no se editan por acá
 // (editarlos desincronizaría su stock).
 function pedidoEditable(id, empresaId) {
-  const p = db.prepare(`SELECT PedidoID, empresa_id, Status, Rol, retiro_at FROM Pedidos WHERE PedidoID = ?`).get(id);
+  const p = db.prepare(
+    `SELECT PedidoID, empresa_id, Status, Rol, retiro_at, contabilizado_at FROM Pedidos WHERE PedidoID = ?`
+  ).get(id);
   if (!p) return { error: 404 };
   if (p.empresa_id != null && Number(p.empresa_id) !== Number(empresaId)) return { error: 404 };
+  // Editable hasta que se retira, sin importar el rol. Los administrativos ya
+  // descontaron stock al crearse, así que al editarlos hay que ajustar la
+  // diferencia (lo resuelve el endpoint con applyOrderStockDelta).
   if (p.retiro_at != null && String(p.retiro_at).trim() !== "") return { error: 409 };
-  if (String(p.Rol || "").toLowerCase() !== "supervisor") return { error: 403 };
   return { ok: true, pedido: p };
 }
 
@@ -425,7 +430,6 @@ router.put("/orders/:id/items", mustWarehouse, (req, res) => {
     const chk = pedidoEditable(id, empresaId);
     if (chk.error === 404) return res.status(404).json({ error: "Pedido no encontrado" });
     if (chk.error === 409) return res.status(409).json({ error: "El pedido ya fue retirado y no se puede editar" });
-    if (chk.error === 403) return res.status(403).json({ error: "Solo se pueden editar pedidos de supervisor" });
 
     const nuevos = Array.isArray(req.body?.items) ? req.body.items : null;
     if (!nuevos || !nuevos.length) return res.status(400).json({ error: "Enviá al menos un insumo" });
@@ -456,6 +460,42 @@ router.put("/orders/:id/items", mustWarehouse, (req, res) => {
       filas.push({ pid, name: row.name, precio, cantidad, subtotal, code: row.code || "" });
     }
 
+    // Si el pedido YA descontó stock (administrativos, que descuentan al crearse,
+    // o supervisores ya retirados), hay que ajustar la DIFERENCIA: devolver lo
+    // que se saca y descontar lo que se agrega. Si no alcanza, no se guarda nada.
+    const yaDescontado = chk.pedido?.contabilizado_at != null
+      && String(chk.pedido.contabilizado_at).trim() !== "";
+
+    if (yaDescontado) {
+      const previos = db.prepare(
+        `SELECT ProductoID AS pid, COALESCE(SUM(Cantidad),0) AS cant, MAX(Nombre) AS nombre
+         FROM PedidoItems WHERE PedidoID = ? GROUP BY ProductoID`
+      ).all(id);
+      const antes = new Map(previos.map((r) => [Number(r.pid), { cant: Number(r.cant || 0), nombre: r.nombre }]));
+      const ahora = new Map();
+      for (const f of filas) ahora.set(f.pid, (ahora.get(f.pid) || 0) + f.cantidad);
+
+      const deltas = [];
+      for (const [pid, info] of antes) {
+        const nueva = ahora.get(pid) || 0;
+        if (nueva !== info.cant) deltas.push({ productId: pid, delta: nueva - info.cant, nombre: info.nombre });
+      }
+      for (const [pid, cant] of ahora) {
+        if (!antes.has(pid)) deltas.push({ productId: pid, delta: cant, nombre: filas.find((f) => f.pid === pid)?.name });
+      }
+
+      const r = applyOrderStockDelta(id, deltas);
+      if (!r.ok) {
+        if (r.faltantes) {
+          return res.status(400).json({
+            error: "No hay stock suficiente para aumentar esas cantidades",
+            faltantes: r.faltantes,
+          });
+        }
+        return res.status(400).json({ error: r.error || "No se pudo ajustar el stock" });
+      }
+    }
+
     const tx = db.transaction(() => {
       db.prepare(`DELETE FROM PedidoItems WHERE PedidoID = ?`).run(id);
       const ins = db.prepare(`INSERT INTO PedidoItems (PedidoID, ProductoID, Nombre, Precio, Cantidad, Subtotal, Codigo) VALUES (?, ?, ?, ?, ?, ?, ?)`);
@@ -464,7 +504,7 @@ router.put("/orders/:id/items", mustWarehouse, (req, res) => {
     });
     tx();
 
-    res.json({ ok: true, total, items: filas.length });
+    res.json({ ok: true, total, items: filas.length, stockAjustado: yaDescontado });
   } catch (e) {
     console.error("[deposito/items]", e?.message || e);
     res.status(500).json({ error: "No se pudieron guardar los cambios" });
