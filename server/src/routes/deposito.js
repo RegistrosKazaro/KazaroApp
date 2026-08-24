@@ -414,43 +414,35 @@ router.get("/despachos", mustWarehouse, (req, res) => {
       pedidos: Number(r.pedidos || 0), unidades: Number(r.unidades || 0), monto: Number(r.monto || 0),
     }));
 
-    // Detalle de un artículo: UNA fila por servicio con el total del período.
-    // Si un servicio pidió el mismo insumo varias veces, se suma y se muestra
-    // una sola vez (se informa en cuántos pedidos fue).
-    // Los administrativos no tienen servicio: se agrupan por solicitante.
+    // Detalle de un artículo: UNA fila por pedido. Si un servicio pidió dos
+    // veces, aparecen las dos, sin sumarse. Se ordena por FECHA (cuándo quedó
+    // listo para retirar), no por cantidad.
     let detalle = [];
     const productId = Number(req.query.productId);
     if (Number.isFinite(productId) && productId > 0) {
+      const orden = String(req.query.orden || "").toLowerCase() === "fecha_asc"
+        ? `${FECHA_DESPACHO} ASC, p.PedidoID ASC`
+        : `${FECHA_DESPACHO} DESC, p.PedidoID DESC`;
+
       detalle = db.prepare(`
-        SELECT COALESCE(CAST(p.ServicioID AS TEXT), 'emp:' || p.EmpleadoID) AS clave,
-               MAX(p.ServicioID) AS servicioId,
-               MAX(p.EmpleadoID) AS empleadoId,
-               MAX(p.Rol) AS rol,
-               COUNT(DISTINCT p.PedidoID) AS pedidos,
-               COALESCE(SUM(i.Cantidad),0) AS cantidad,
-               COALESCE(SUM(i.CantidadOriginal),0) AS cantidadOriginal,
-               COALESCE(SUM(i.Devuelto),0) AS devuelto,
-               COALESCE(SUM(i.Subtotal),0) AS subtotal,
-               MAX(${FECHA_DESPACHO}) AS ultimaSalida,
-               GROUP_CONCAT(DISTINCT p.PedidoID) AS pedidoIds
+        SELECT p.PedidoID AS pedidoId, p.ServicioID AS servicioId, p.Rol AS rol,
+               p.EmpleadoID AS empleadoId, i.Cantidad AS cantidad,
+               i.CantidadOriginal AS cantidadOriginal, i.Devuelto AS devuelto,
+               i.Subtotal AS subtotal, ${FECHA_DESPACHO} AS fechaDespacho
         FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID
         ${where} AND i.ProductoID = @productId
-        GROUP BY clave
-        HAVING cantidad > 0
-        ORDER BY cantidad DESC
+        ORDER BY ${orden}
       `).all({ ...params, productId }).map((r) => ({
-        clave: r.clave,
+        pedidoId: r.pedidoId,
+        numero: pad7(r.pedidoId),
         servicio: r.servicioId ? (getServiceNameById(r.servicioId) || `Servicio ${r.servicioId}`) : null,
         rol: r.rol || null,
         solicitante: r.empleadoId ? (getEmployeeDisplayName(r.empleadoId) || null) : null,
-        pedidos: Number(r.pedidos || 0),
-        // Números de pedido que componen el total, para poder rastrearlo.
-        numeros: String(r.pedidoIds || "").split(",").filter(Boolean).map((x) => pad7(x.trim())),
         cantidad: Number(r.cantidad || 0),
         cantidadOriginal: Number(r.cantidadOriginal || 0),
         devuelto: Number(r.devuelto || 0),
         subtotal: Number(r.subtotal || 0),
-        retiradoAr: r.ultimaSalida ? fmtAr(r.ultimaSalida) : null,
+        retiradoAr: r.fechaDespacho ? fmtAr(r.fechaDespacho) : null,
       }));
     }
 

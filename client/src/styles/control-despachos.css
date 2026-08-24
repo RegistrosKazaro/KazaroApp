@@ -61,10 +61,13 @@
 .cd-tabla--interna { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; }
 .cd-admin { color: #4b5563; font-style: italic; }
 .cd-dev { font-size: 0.72rem; color: #b45309; font-weight: 600; }
-/* Aviso de que la fila junta varios pedidos del mismo servicio. */
-.cd-pedidos {
-  display: block; font-size: 0.7rem; color: #1d4ed8; font-weight: 600;
-  margin-top: 2px; cursor: help;
+
+/* Orden del detalle: por fecha, no por cantidad. */
+.cd-detalle-acciones { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cd-orden { display: flex; align-items: center; gap: 6px; font-size: 0.76rem; color: #4b5563; }
+.cd-orden select {
+  padding: 5px 9px; border: 1px solid #d1d5db; border-radius: 8px;
+  background: #fff; color: #0f172a; font-size: 0.8rem;
 }
 .cd-total-row td { font-weight: 700; background: #f8fafc; border-top: 2px solid #e5e7eb; }
 

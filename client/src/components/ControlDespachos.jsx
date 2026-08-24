@@ -28,6 +28,8 @@ export default function ControlDespachos() {
   const [abierto, setAbierto] = useState(null);   // productId desplegado
   const [detalle, setDetalle] = useState([]);
   const [cargandoDet, setCargandoDet] = useState(false);
+  // El detalle se ordena por fecha (no por cantidad). Se puede invertir.
+  const [ordenDet, setOrdenDet] = useState("fecha_desc");
 
   const cargar = useCallback(async () => {
     setCargando(true); setError(""); setAbierto(null); setDetalle([]);
@@ -42,16 +44,26 @@ export default function ControlDespachos() {
 
   useEffect(() => { cargar(); }, [cargar]);
 
-  const abrir = async (art) => {
-    if (abierto === art.productId) { setAbierto(null); setDetalle([]); return; }
-    setAbierto(art.productId); setDetalle([]); setCargandoDet(true);
+  const traerDetalle = useCallback(async (productId, orden) => {
+    setCargandoDet(true);
     try {
       const { data: d } = await api.get("/deposito/despachos", {
-        params: { desde, hasta, productId: art.productId },
+        params: { desde, hasta, productId, orden },
       });
       setDetalle(d?.detalle || []);
     } catch { setDetalle([]); }
     finally { setCargandoDet(false); }
+  }, [desde, hasta]);
+
+  const abrir = async (art) => {
+    if (abierto === art.productId) { setAbierto(null); setDetalle([]); return; }
+    setAbierto(art.productId); setDetalle([]);
+    await traerDetalle(art.productId, ordenDet);
+  };
+
+  const cambiarOrden = async (nuevo) => {
+    setOrdenDet(nuevo);
+    if (abierto) await traerDetalle(abierto, nuevo);
   };
 
   const articulos = useMemo(() => {
@@ -84,10 +96,10 @@ export default function ControlDespachos() {
     if (!detalle.length) return;
     const art = articulos.find((x) => x.productId === abierto);
     const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const filas = [["Servicio", "Solicitante", "Pedidos", "Cantidad total", "Ultima salida", "Nros de pedido"].map(esc).join(";")];
+    const filas = [["Pedido", "Servicio", "Solicitante", "Cantidad", "Listo para retirar"].map(esc).join(";")];
     for (const d of detalle) {
-      filas.push([esc(d.servicio || "(administrativo)"), esc(d.solicitante), csvNumber(d.pedidos),
-        csvNumber(d.cantidad), esc(d.retiradoAr), esc((d.numeros || []).join(" "))].join(";"));
+      filas.push([esc(d.numero), esc(d.servicio || "(administrativo)"), esc(d.solicitante),
+        csvNumber(d.cantidad), esc(d.retiradoAr)].join(";"));
     }
     const blob = new Blob(["﻿" + filas.join("\r\n")], { type: "text/csv;charset=utf-8;" });
     const a = document.createElement("a");
@@ -103,9 +115,8 @@ export default function ControlDespachos() {
           <h2 className="cd-title">Control de despachos</h2>
           <p className="cd-sub">
             Pedidos desde que se marcan <strong>listos para retirar</strong>, que es el momento en
-            que se genera el movimiento en Flexxus. Cada servicio aparece <strong>una sola vez</strong> por
-            artículo, con el total del período aunque haya pedido varias veces. Las cantidades ya
-            vienen netas de devoluciones aprobadas.
+            que se genera el movimiento en Flexxus. El detalle muestra cada pedido por separado y
+            ordenado por fecha. Las cantidades ya vienen netas de devoluciones aprobadas.
           </p>
         </div>
       </header>
@@ -168,29 +179,32 @@ export default function ControlDespachos() {
                             {cargandoDet ? <div className="cd-vacio">Cargando detalle…</div> : (
                               <div className="cd-detalle">
                                 <div className="cd-detalle-head">
-                                  <strong>Total por servicio en el período</strong>
-                                  <button type="button" className="cd-btn-ghost" onClick={exportarDetalle}>
-                                    Exportar detalle
-                                  </button>
+                                  <strong>Quién pidió este artículo</strong>
+                                  <div className="cd-detalle-acciones">
+                                    <label className="cd-orden">
+                                      <span>Ordenar por fecha</span>
+                                      <select value={ordenDet} onChange={(e) => cambiarOrden(e.target.value)}>
+                                        <option value="fecha_desc">Más reciente primero</option>
+                                        <option value="fecha_asc">Más antiguo primero</option>
+                                      </select>
+                                    </label>
+                                    <button type="button" className="cd-btn-ghost" onClick={exportarDetalle}>
+                                      Exportar detalle
+                                    </button>
+                                  </div>
                                 </div>
                                 <table className="cd-tabla cd-tabla--interna">
                                   <thead>
                                     <tr>
-                                      <th>Servicio</th><th>Solicitante</th>
-                                      <th className="col-cant">Cantidad</th><th>Última salida</th>
+                                      <th>Pedido</th><th>Servicio</th><th>Solicitante</th>
+                                      <th className="col-cant">Cantidad</th><th>Listo para retirar</th>
                                     </tr>
                                   </thead>
                                   <tbody>
                                     {detalle.map((d) => (
-                                      <tr key={d.clave}>
-                                        <td>
-                                          {d.servicio || <em className="cd-admin">Sin servicio (administrativo)</em>}
-                                          {d.pedidos > 1 && (
-                                            <span className="cd-pedidos" title={d.numeros.map((n) => `#${n}`).join("  ")}>
-                                              {d.pedidos} pedidos sumados
-                                            </span>
-                                          )}
-                                        </td>
+                                      <tr key={d.pedidoId}>
+                                        <td className="mono">#{d.numero}</td>
+                                        <td>{d.servicio || <em className="cd-admin">Sin servicio (administrativo)</em>}</td>
                                         <td>{d.solicitante || "—"}</td>
                                         <td className="col-cant cd-fuerte">
                                           {formatNumber(d.cantidad)}
@@ -202,7 +216,7 @@ export default function ControlDespachos() {
                                       </tr>
                                     ))}
                                     <tr className="cd-total-row">
-                                      <td colSpan={2}>Total despachado</td>
+                                      <td colSpan={3}>Total despachado</td>
                                       <td className="col-cant">{formatNumber(detalle.reduce((s, d) => s + d.cantidad, 0))}</td>
                                       <td />
                                     </tr>
