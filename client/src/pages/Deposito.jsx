@@ -7,6 +7,7 @@ import useDebounced from "../hooks/useDebounced";
 import { formatMoney, formatNumber } from "../utils/format";
 import "../styles/deposito.css";
 import DevolucionesPendientes from "../components/DevolucionesPendientes";
+import ControlDespachos from "../components/ControlDespachos";
 
 function isoToday() { return new Date().toISOString().slice(0, 10); }
 function isoFirstOfMonth() {
@@ -964,7 +965,9 @@ export default function Deposito() {
   // El panel abre directo en Pedidos. La vista "Stock y alertas" queda en el
   // código pero sin botón que la active. Para reactivarla, cambiar este valor
   // inicial a "overview" y volver a mostrar el switcher del topbar.
-  const [activeView] = useState("pedidos");
+  // "pedidos" = trabajo diario; "despachos" = control de lo que ya salió.
+  // ("overview" es la vista vieja de stock, que quedó oculta.)
+  const [activeView, setActiveView] = useState("pedidos");
 
   const threshold = useMemo(() => {
     const p = parseInt(thresholdInput, 10);
@@ -1137,6 +1140,13 @@ export default function Deposito() {
     <section className="admin-panel deposito-page">
       <div className="dep-topbar">
         <h1 className="deposito-title">Panel de Depósito</h1>
+        <div className="dep-vistas" role="tablist" aria-label="Vista del panel">
+          {[["pedidos", "Pedidos"], ["despachos", "Control de despachos"]].map(([k, l]) => (
+            <button key={k} type="button" role="tab" aria-selected={activeView === k}
+              className={`pill${activeView === k ? "" : " pill--ghost"}`}
+              onClick={() => setActiveView(k)}>{l}</button>
+          ))}
+        </div>
       </div>
 
       {/* Filtros globales de stock: ocultos mientras la vista es Pedidos.
@@ -1439,6 +1449,13 @@ export default function Deposito() {
       {activeView === "pedidos" && (
         <div style={{ marginTop: 16 }}>
           <DepositoOrdersPanel pedidosPorDia={[]} />
+        </div>
+      )}
+
+      {/* ===== CONTROL DE DESPACHOS ===== */}
+      {activeView === "despachos" && (
+        <div style={{ marginTop: 16 }}>
+          <ControlDespachos />
         </div>
       )}
     </section>

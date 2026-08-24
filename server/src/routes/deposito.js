@@ -14,6 +14,7 @@ import {
   applyOrderStockDelta,
 } from "../db.js";
 import { sendMail } from "../utils/mailer.js";
+import { fmtAr } from "../utils/fechas.js";
 
 const router = Router();
 console.log("[deposito] Router cargado: Modo Seguro (JS JOIN)");
@@ -360,6 +361,95 @@ router.get("/orders", mustWarehouse, (req, res) => {
   } catch (e) {
     console.error("[deposito] Error listing orders:", e);
     res.json([]);
+  }
+});
+
+/* ===================== Control de despachos =====================
+   Salidas REALES del depósito: sólo pedidos ya RETIRADOS, que son los mismos
+   que alimentan los informes oficiales. Las cantidades salen de
+   v_pedido_items_neto, así ya vienen netas de devoluciones aprobadas.
+   El período se filtra por la FECHA DE RETIRO (cuando el material salió), no
+   por la fecha del pedido: es lo que hay que cruzar contra el ERP.
+   Por ahora la comparación contra Flexxus se hace a mano, con el CSV.
+================================================================== */
+router.get("/despachos", mustWarehouse, (req, res) => {
+  try {
+    const empresaId = getEmpresaId(req);
+
+    // Rango por día argentino (la base guarda UTC y Argentina es UTC-3).
+    const dia = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "").trim()) ? String(v).trim() : null);
+    const desde = dia(req.query.desde);
+    const hasta = dia(req.query.hasta);
+    const cond = [
+      "p.retiro_at IS NOT NULL", "TRIM(p.retiro_at) <> ''",
+      "p.deleted_at IS NULL", "p.empresa_id = @empresaId",
+    ];
+    const params = { empresaId };
+    if (desde) { cond.push("p.retiro_at >= @desdeUtc"); params.desdeUtc = `${desde} 03:00:00`; }
+    if (hasta) {
+      const d = new Date(`${hasta}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1);
+      cond.push("p.retiro_at < @hastaUtc"); params.hastaUtc = `${d.toISOString().slice(0, 10)} 03:00:00`;
+    }
+    const where = `WHERE ${cond.join(" AND ")}`;
+
+    // Totales por artículo
+    const articulos = db.prepare(`
+      SELECT i.ProductoID AS productId,
+             COALESCE(NULLIF(TRIM(MAX(i.Codigo)),''),'') AS codigo,
+             COALESCE(NULLIF(TRIM(MAX(i.Nombre)),''),'Sin nombre') AS nombre,
+             COUNT(DISTINCT p.PedidoID) AS pedidos,
+             COALESCE(SUM(i.Cantidad),0) AS unidades,
+             COALESCE(SUM(i.Subtotal),0) AS monto
+      FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID
+      ${where}
+      GROUP BY i.ProductoID
+      HAVING unidades > 0
+      ORDER BY unidades DESC, nombre COLLATE NOCASE
+    `).all(params).map((r) => ({
+      productId: Number(r.productId || 0), codigo: r.codigo, nombre: r.nombre,
+      pedidos: Number(r.pedidos || 0), unidades: Number(r.unidades || 0), monto: Number(r.monto || 0),
+    }));
+
+    // Detalle de un artículo: qué servicio lo pidió, cuánto y cuándo se retiró.
+    let detalle = [];
+    const productId = Number(req.query.productId);
+    if (Number.isFinite(productId) && productId > 0) {
+      detalle = db.prepare(`
+        SELECT p.PedidoID AS pedidoId, p.ServicioID AS servicioId, p.Rol AS rol,
+               p.EmpleadoID AS empleadoId, i.Cantidad AS cantidad,
+               i.CantidadOriginal AS cantidadOriginal, i.Devuelto AS devuelto,
+               i.Subtotal AS subtotal, p.retiro_at AS retiroAt
+        FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID
+        ${where} AND i.ProductoID = @productId
+        ORDER BY p.retiro_at DESC, p.PedidoID DESC
+      `).all({ ...params, productId }).map((r) => ({
+        pedidoId: r.pedidoId,
+        numero: pad7(r.pedidoId),
+        servicio: r.servicioId ? (getServiceNameById(r.servicioId) || `Servicio ${r.servicioId}`) : null,
+        rol: r.rol || null,
+        solicitante: r.empleadoId ? (getEmployeeDisplayName(r.empleadoId) || null) : null,
+        cantidad: Number(r.cantidad || 0),
+        cantidadOriginal: Number(r.cantidadOriginal || 0),
+        devuelto: Number(r.devuelto || 0),
+        subtotal: Number(r.subtotal || 0),
+        retiradoAr: r.retiroAt ? fmtAr(r.retiroAt) : null,
+      }));
+    }
+
+    res.json({
+      ok: true,
+      periodo: { desde: desde || null, hasta: hasta || null },
+      totales: {
+        articulos: articulos.length,
+        unidades: articulos.reduce((a, x) => a + x.unidades, 0),
+        pedidos: db.prepare(`SELECT COUNT(DISTINCT p.PedidoID) AS n FROM Pedidos p ${where}`).get(params).n,
+      },
+      articulos,
+      detalle,
+    });
+  } catch (e) {
+    console.error("[deposito/despachos]", e?.message || e);
+    res.status(500).json({ error: "No se pudieron cargar los despachos" });
   }
 });
 
