@@ -36,30 +36,68 @@
 /* Tablas */
 .cd-tabla-wrap { overflow-x: auto; background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; }
 .cd-tabla { width: 100%; border-collapse: collapse; font-size: 0.87rem; }
-.cd-tabla th, .cd-tabla td { padding: 8px 11px; text-align: left; border-bottom: 1px solid #f1f5f9; }
+.cd-tabla th, .cd-tabla td { padding: 9px 12px; text-align: left; border-bottom: 1px solid #f1f5f9; }
 .cd-tabla th {
   font-size: 0.72rem; text-transform: uppercase; letter-spacing: .05em;
-  color: #4b5563; background: #f8fafc; font-weight: 700;
+  color: #4b5563; background: #f8fafc; font-weight: 700; white-space: nowrap;
 }
 .cd-tabla td.num, .cd-tabla th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .cd-tabla td.mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.78rem; color: #4b5563; }
 .cd-fuerte { font-weight: 700; color: #0f172a; }
+.cd-tabla tbody tr:hover td { background: #f8fafc; }
 .cd-tabla tr.is-abierto td { background: #eff6ff; }
+.cd-tabla tr.is-abierto:hover td { background: #eff6ff; }
+
+/* Anchos: sin esto el nombre del artículo empujaba los números al borde y
+   quedaban lejísimos de lo que describen. */
+.cd-tabla .col-cod    { width: 110px; }
+.cd-tabla .col-n      { width: 96px; }
+.cd-tabla .col-monto  { width: 130px; }
+.cd-tabla .col-accion { width: 120px; text-align: right; }
+.cd-articulo { overflow-wrap: anywhere; }
 
 .cd-fila-detalle td { background: #f8fafc; padding: 0; }
+.cd-fila-detalle:hover td { background: #f8fafc; }
 .cd-detalle { padding: 12px 14px; }
 .cd-detalle-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
 .cd-detalle-head strong { font-size: 0.82rem; color: #4b5563; }
-.cd-tabla--interna { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; }
+.cd-tabla--interna { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+.cd-tabla--interna tbody tr:nth-child(even) td { background: #fcfdfe; }
+.cd-tabla--interna tbody tr:hover td { background: #f1f5f9; }
+
+/* Columnas del detalle */
+.cd-tabla .col-pedido  { width: 104px; }
+.cd-tabla .col-persona { width: 150px; }
+.cd-tabla .col-cant    { width: 120px; }
+.cd-tabla .col-fecha   { width: 108px; }
+.cd-servicio { overflow-wrap: anywhere; line-height: 1.3; }
 .cd-admin { color: #4b5563; font-style: italic; }
-.cd-dev { font-size: 0.72rem; color: #b45309; font-weight: 600; }
-.cd-total-row td { font-weight: 700; background: #f8fafc; border-top: 2px solid #e5e7eb; }
+
+/* La cantidad estaba pegada a la fecha y se leía como un solo número
+   ("5020/08/2026"). Ahora tiene aire propio y la fecha va en dos renglones. */
+.cd-cant { display: block; font-weight: 700; color: #0f172a; font-size: 0.95rem; }
+.cd-dev { display: block; font-size: 0.7rem; color: #b45309; font-weight: 600; margin-top: 1px; }
+.cd-dia  { display: block; white-space: nowrap; color: #0f172a; }
+.cd-hora { display: block; font-size: 0.72rem; color: #4b5563; }
+
+.cd-total-row td { font-weight: 700; background: #f1f5f9; border-top: 2px solid #e2e8f0; }
+.cd-total-row:hover td { background: #f1f5f9; }
 
 .cd-pie { margin: 0; font-size: 0.8rem; color: #4b5563; line-height: 1.5; }
+
+@media (max-width: 900px) {
+  /* En pantallas medianas se sacan las columnas menos críticas para que la
+     cantidad y la fecha no queden apretadas. */
+  .cd-tabla .col-monto, .cd-tabla .col-persona { display: none; }
+}
 
 @media (max-width: 720px) {
   .cd-filtros > * { flex: 1 1 100%; }
   .cd-field input, .cd-search, .cd-btn { width: 100%; }
   .cd-kpi-n { font-size: 1.25rem; }
   .cd-tabla { font-size: 0.8rem; }
+  .cd-tabla th, .cd-tabla td { padding: 7px 8px; }
+  .cd-tabla .col-cod { display: none; }
+  .cd-tabla .col-n, .cd-tabla .col-cant, .cd-tabla .col-fecha { width: auto; }
+  .cd-detalle { padding: 8px; }
 }
