@@ -9,15 +9,6 @@ import { formatMoney, formatNumber, csvNumber } from "../utils/format";
 import useDebounced from "../hooks/useDebounced";
 import "../styles/control-despachos.css";
 
-// La fecha completa ("20/08/2026, 16:47") competía con la cantidad al lado.
-// Se parte en día y hora, que se leen mucho mejor en la tabla.
-function partirFecha(txt) {
-  const s = String(txt || "").trim();
-  if (!s) return { dia: "—", hora: "" };
-  const [dia, hora] = s.split(",");
-  return { dia: (dia || "").trim(), hora: (hora || "").trim() };
-}
-
 const hoy = () => new Date().toISOString().slice(0, 10);
 const primeroDelMes = () => {
   const d = new Date();
@@ -150,24 +141,21 @@ export default function ControlDespachos() {
               <table className="cd-tabla">
                 <thead>
                   <tr>
-                    <th className="col-cod">Código</th>
-                    <th>Artículo</th>
-                    <th className="num col-n">Pedidos</th>
-                    <th className="num col-n">Unidades</th>
-                    <th className="num col-monto">Monto</th>
-                    <th className="col-accion" />
+                    <th>Código</th><th>Artículo</th>
+                    <th className="num">Pedidos</th><th className="num">Unidades</th>
+                    <th className="num">Monto</th><th style={{ width: 130 }} />
                   </tr>
                 </thead>
                 <tbody>
                   {articulos.map((a) => (
                     <Fragment key={a.productId}>
                       <tr className={abierto === a.productId ? "is-abierto" : ""}>
-                        <td className="mono col-cod">{a.codigo || "—"}</td>
-                        <td className="cd-articulo">{a.nombre}</td>
-                        <td className="num col-n">{formatNumber(a.pedidos)}</td>
-                        <td className="num col-n cd-fuerte">{formatNumber(a.unidades)}</td>
-                        <td className="num col-monto">{formatMoney(a.monto)}</td>
-                        <td className="col-accion">
+                        <td className="mono">{a.codigo || "—"}</td>
+                        <td>{a.nombre}</td>
+                        <td className="num">{formatNumber(a.pedidos)}</td>
+                        <td className="num cd-fuerte">{formatNumber(a.unidades)}</td>
+                        <td className="num">{formatMoney(a.monto)}</td>
+                        <td className="num">
                           <button type="button" className="cd-btn-ghost" onClick={() => abrir(a)}>
                             {abierto === a.productId ? "Ocultar" : "Ver detalle"}
                           </button>
@@ -187,40 +175,29 @@ export default function ControlDespachos() {
                                 <table className="cd-tabla cd-tabla--interna">
                                   <thead>
                                     <tr>
-                                      <th className="col-pedido">Pedido</th>
-                                      <th>Servicio</th>
-                                      <th className="col-persona">Solicitante</th>
-                                      <th className="num col-cant">Cantidad</th>
-                                      <th className="col-fecha">Retirado</th>
+                                      <th>Pedido</th><th>Servicio</th><th>Solicitante</th>
+                                      <th className="col-cant">Cantidad</th><th>Retirado</th>
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {detalle.map((d) => {
-                                      const f = partirFecha(d.retiradoAr);
-                                      return (
-                                        <tr key={d.pedidoId}>
-                                          <td className="mono col-pedido">#{d.numero}</td>
-                                          <td className="cd-servicio">
-                                            {d.servicio || <em className="cd-admin">Sin servicio (administrativo)</em>}
-                                          </td>
-                                          <td className="col-persona">{d.solicitante || "—"}</td>
-                                          <td className="num col-cant">
-                                            <span className="cd-cant">{formatNumber(d.cantidad)}</span>
-                                            {d.devuelto > 0 && (
-                                              <span className="cd-dev">pidió {d.cantidadOriginal}, devolvió {d.devuelto}</span>
-                                            )}
-                                          </td>
-                                          <td className="col-fecha">
-                                            <span className="cd-dia">{f.dia}</span>
-                                            {f.hora && <span className="cd-hora">{f.hora}</span>}
-                                          </td>
-                                        </tr>
-                                      );
-                                    })}
+                                    {detalle.map((d) => (
+                                      <tr key={d.pedidoId}>
+                                        <td className="mono">#{d.numero}</td>
+                                        <td>{d.servicio || <em className="cd-admin">Sin servicio (administrativo)</em>}</td>
+                                        <td>{d.solicitante || "—"}</td>
+                                        <td className="col-cant cd-fuerte">
+                                          {formatNumber(d.cantidad)}
+                                          {d.devuelto > 0 && (
+                                            <span className="cd-dev"> (pidió {d.cantidadOriginal}, devolvió {d.devuelto})</span>
+                                          )}
+                                        </td>
+                                        <td>{d.retiradoAr || "—"}</td>
+                                      </tr>
+                                    ))}
                                     <tr className="cd-total-row">
                                       <td colSpan={3}>Total despachado</td>
-                                      <td className="num col-cant">{formatNumber(detalle.reduce((s, d) => s + d.cantidad, 0))}</td>
-                                      <td className="col-fecha" />
+                                      <td className="col-cant">{formatNumber(detalle.reduce((s, d) => s + d.cantidad, 0))}</td>
+                                      <td />
                                     </tr>
                                   </tbody>
                                 </table>
