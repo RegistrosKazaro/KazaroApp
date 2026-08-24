@@ -365,13 +365,16 @@ router.get("/orders", mustWarehouse, (req, res) => {
 });
 
 /* ===================== Control de despachos =====================
-   Salidas REALES del depósito: sólo pedidos ya RETIRADOS, que son los mismos
-   que alimentan los informes oficiales. Las cantidades salen de
-   v_pedido_items_neto, así ya vienen netas de devoluciones aprobadas.
-   El período se filtra por la FECHA DE RETIRO (cuando el material salió), no
-   por la fecha del pedido: es lo que hay que cruzar contra el ERP.
-   Por ahora la comparación contra Flexxus se hace a mano, con el CSV.
+   Salidas del depósito para cruzar contra Flexxus. Se toman los pedidos desde
+   que se marcan LISTOS PARA RETIRAR: ese es el momento en que se genera el
+   movimiento en el ERP, así que es la fecha que tiene que coincidir.
+   Las cantidades salen de v_pedido_items_neto, o sea netas de devoluciones
+   aprobadas. Por ahora la comparación con Flexxus se hace a mano, con el CSV.
 ================================================================== */
+// Fecha del despacho = cuando se marcó listo para retirar. Se cae a retiro_at
+// sólo por si algún pedido viejo quedó retirado sin haber pasado por cerrado.
+const FECHA_DESPACHO = `COALESCE(NULLIF(TRIM(p.closedat),''), p.retiro_at)`;
+
 router.get("/despachos", mustWarehouse, (req, res) => {
   try {
     const empresaId = getEmpresaId(req);
@@ -381,14 +384,15 @@ router.get("/despachos", mustWarehouse, (req, res) => {
     const desde = dia(req.query.desde);
     const hasta = dia(req.query.hasta);
     const cond = [
-      "p.retiro_at IS NOT NULL", "TRIM(p.retiro_at) <> ''",
+      `${FECHA_DESPACHO} IS NOT NULL`,
+      `TRIM(${FECHA_DESPACHO}) <> ''`,
       "p.deleted_at IS NULL", "p.empresa_id = @empresaId",
     ];
     const params = { empresaId };
-    if (desde) { cond.push("p.retiro_at >= @desdeUtc"); params.desdeUtc = `${desde} 03:00:00`; }
+    if (desde) { cond.push(`${FECHA_DESPACHO} >= @desdeUtc`); params.desdeUtc = `${desde} 03:00:00`; }
     if (hasta) {
       const d = new Date(`${hasta}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1);
-      cond.push("p.retiro_at < @hastaUtc"); params.hastaUtc = `${d.toISOString().slice(0, 10)} 03:00:00`;
+      cond.push(`${FECHA_DESPACHO} < @hastaUtc`); params.hastaUtc = `${d.toISOString().slice(0, 10)} 03:00:00`;
     }
     const where = `WHERE ${cond.join(" AND ")}`;
 
@@ -410,29 +414,43 @@ router.get("/despachos", mustWarehouse, (req, res) => {
       pedidos: Number(r.pedidos || 0), unidades: Number(r.unidades || 0), monto: Number(r.monto || 0),
     }));
 
-    // Detalle de un artículo: qué servicio lo pidió, cuánto y cuándo se retiró.
+    // Detalle de un artículo: UNA fila por servicio con el total del período.
+    // Si un servicio pidió el mismo insumo varias veces, se suma y se muestra
+    // una sola vez (se informa en cuántos pedidos fue).
+    // Los administrativos no tienen servicio: se agrupan por solicitante.
     let detalle = [];
     const productId = Number(req.query.productId);
     if (Number.isFinite(productId) && productId > 0) {
       detalle = db.prepare(`
-        SELECT p.PedidoID AS pedidoId, p.ServicioID AS servicioId, p.Rol AS rol,
-               p.EmpleadoID AS empleadoId, i.Cantidad AS cantidad,
-               i.CantidadOriginal AS cantidadOriginal, i.Devuelto AS devuelto,
-               i.Subtotal AS subtotal, p.retiro_at AS retiroAt
+        SELECT COALESCE(CAST(p.ServicioID AS TEXT), 'emp:' || p.EmpleadoID) AS clave,
+               MAX(p.ServicioID) AS servicioId,
+               MAX(p.EmpleadoID) AS empleadoId,
+               MAX(p.Rol) AS rol,
+               COUNT(DISTINCT p.PedidoID) AS pedidos,
+               COALESCE(SUM(i.Cantidad),0) AS cantidad,
+               COALESCE(SUM(i.CantidadOriginal),0) AS cantidadOriginal,
+               COALESCE(SUM(i.Devuelto),0) AS devuelto,
+               COALESCE(SUM(i.Subtotal),0) AS subtotal,
+               MAX(${FECHA_DESPACHO}) AS ultimaSalida,
+               GROUP_CONCAT(DISTINCT p.PedidoID) AS pedidoIds
         FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID
         ${where} AND i.ProductoID = @productId
-        ORDER BY p.retiro_at DESC, p.PedidoID DESC
+        GROUP BY clave
+        HAVING cantidad > 0
+        ORDER BY cantidad DESC
       `).all({ ...params, productId }).map((r) => ({
-        pedidoId: r.pedidoId,
-        numero: pad7(r.pedidoId),
+        clave: r.clave,
         servicio: r.servicioId ? (getServiceNameById(r.servicioId) || `Servicio ${r.servicioId}`) : null,
         rol: r.rol || null,
         solicitante: r.empleadoId ? (getEmployeeDisplayName(r.empleadoId) || null) : null,
+        pedidos: Number(r.pedidos || 0),
+        // Números de pedido que componen el total, para poder rastrearlo.
+        numeros: String(r.pedidoIds || "").split(",").filter(Boolean).map((x) => pad7(x.trim())),
         cantidad: Number(r.cantidad || 0),
         cantidadOriginal: Number(r.cantidadOriginal || 0),
         devuelto: Number(r.devuelto || 0),
         subtotal: Number(r.subtotal || 0),
-        retiradoAr: r.retiroAt ? fmtAr(r.retiroAt) : null,
+        retiradoAr: r.ultimaSalida ? fmtAr(r.ultimaSalida) : null,
       }));
     }
 

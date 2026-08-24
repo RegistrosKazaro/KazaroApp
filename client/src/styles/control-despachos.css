@@ -61,6 +61,11 @@
 .cd-tabla--interna { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; }
 .cd-admin { color: #4b5563; font-style: italic; }
 .cd-dev { font-size: 0.72rem; color: #b45309; font-weight: 600; }
+/* Aviso de que la fila junta varios pedidos del mismo servicio. */
+.cd-pedidos {
+  display: block; font-size: 0.7rem; color: #1d4ed8; font-weight: 600;
+  margin-top: 2px; cursor: help;
+}
 .cd-total-row td { font-weight: 700; background: #f8fafc; border-top: 2px solid #e5e7eb; }
 
 .cd-pie { margin: 0; font-size: 0.8rem; color: #4b5563; line-height: 1.5; }

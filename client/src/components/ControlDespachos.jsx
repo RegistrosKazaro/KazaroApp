@@ -84,10 +84,10 @@ export default function ControlDespachos() {
     if (!detalle.length) return;
     const art = articulos.find((x) => x.productId === abierto);
     const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const filas = [["Pedido", "Servicio", "Solicitante", "Cantidad", "Retirado"].map(esc).join(";")];
+    const filas = [["Servicio", "Solicitante", "Pedidos", "Cantidad total", "Ultima salida", "Nros de pedido"].map(esc).join(";")];
     for (const d of detalle) {
-      filas.push([esc(d.numero), esc(d.servicio || "(administrativo)"), esc(d.solicitante),
-        csvNumber(d.cantidad), esc(d.retiradoAr)].join(";"));
+      filas.push([esc(d.servicio || "(administrativo)"), esc(d.solicitante), csvNumber(d.pedidos),
+        csvNumber(d.cantidad), esc(d.retiradoAr), esc((d.numeros || []).join(" "))].join(";"));
     }
     const blob = new Blob(["﻿" + filas.join("\r\n")], { type: "text/csv;charset=utf-8;" });
     const a = document.createElement("a");
@@ -102,15 +102,16 @@ export default function ControlDespachos() {
         <div>
           <h2 className="cd-title">Control de despachos</h2>
           <p className="cd-sub">
-            Lo que realmente salió del depósito: sólo pedidos <strong>retirados</strong>, que son los
-            mismos que alimentan los informes. Las cantidades ya vienen netas de devoluciones
-            aprobadas. Exportá el listado y cruzalo contra las salidas de Flexxus.
+            Pedidos desde que se marcan <strong>listos para retirar</strong>, que es el momento en
+            que se genera el movimiento en Flexxus. Cada servicio aparece <strong>una sola vez</strong> por
+            artículo, con el total del período aunque haya pedido varias veces. Las cantidades ya
+            vienen netas de devoluciones aprobadas.
           </p>
         </div>
       </header>
 
       <div className="cd-filtros">
-        <label className="cd-field"><span>Desde (fecha de retiro)</span>
+        <label className="cd-field"><span>Desde (listo para retirar)</span>
           <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} /></label>
         <label className="cd-field"><span>Hasta</span>
           <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} /></label>
@@ -129,7 +130,7 @@ export default function ControlDespachos() {
           <div className="cd-kpis">
             <div className="cd-kpi"><span className="cd-kpi-n">{formatNumber(articulos.length)}</span><span>artículos</span></div>
             <div className="cd-kpi"><span className="cd-kpi-n">{formatNumber(totalFiltrado)}</span><span>unidades despachadas</span></div>
-            <div className="cd-kpi"><span className="cd-kpi-n">{formatNumber(data.totales?.pedidos)}</span><span>pedidos retirados</span></div>
+            <div className="cd-kpi"><span className="cd-kpi-n">{formatNumber(data.totales?.pedidos)}</span><span>pedidos despachados</span></div>
           </div>
 
           {articulos.length === 0 ? (
@@ -167,7 +168,7 @@ export default function ControlDespachos() {
                             {cargandoDet ? <div className="cd-vacio">Cargando detalle…</div> : (
                               <div className="cd-detalle">
                                 <div className="cd-detalle-head">
-                                  <strong>Quién pidió este artículo</strong>
+                                  <strong>Total por servicio en el período</strong>
                                   <button type="button" className="cd-btn-ghost" onClick={exportarDetalle}>
                                     Exportar detalle
                                   </button>
@@ -175,15 +176,21 @@ export default function ControlDespachos() {
                                 <table className="cd-tabla cd-tabla--interna">
                                   <thead>
                                     <tr>
-                                      <th>Pedido</th><th>Servicio</th><th>Solicitante</th>
-                                      <th className="col-cant">Cantidad</th><th>Retirado</th>
+                                      <th>Servicio</th><th>Solicitante</th>
+                                      <th className="col-cant">Cantidad</th><th>Última salida</th>
                                     </tr>
                                   </thead>
                                   <tbody>
                                     {detalle.map((d) => (
-                                      <tr key={d.pedidoId}>
-                                        <td className="mono">#{d.numero}</td>
-                                        <td>{d.servicio || <em className="cd-admin">Sin servicio (administrativo)</em>}</td>
+                                      <tr key={d.clave}>
+                                        <td>
+                                          {d.servicio || <em className="cd-admin">Sin servicio (administrativo)</em>}
+                                          {d.pedidos > 1 && (
+                                            <span className="cd-pedidos" title={d.numeros.map((n) => `#${n}`).join("  ")}>
+                                              {d.pedidos} pedidos sumados
+                                            </span>
+                                          )}
+                                        </td>
                                         <td>{d.solicitante || "—"}</td>
                                         <td className="col-cant cd-fuerte">
                                           {formatNumber(d.cantidad)}
@@ -195,7 +202,7 @@ export default function ControlDespachos() {
                                       </tr>
                                     ))}
                                     <tr className="cd-total-row">
-                                      <td colSpan={3}>Total despachado</td>
+                                      <td colSpan={2}>Total despachado</td>
                                       <td className="col-cant">{formatNumber(detalle.reduce((s, d) => s + d.cantidad, 0))}</td>
                                       <td />
                                     </tr>
@@ -214,8 +221,9 @@ export default function ControlDespachos() {
           )}
 
           <p className="cd-pie">
-            Período tomado por <strong>fecha de retiro</strong> (cuando el material salió), que es lo
-            que corresponde cruzar contra el ERP — no la fecha en que se hizo el pedido.
+            El período se toma por la fecha en que el pedido pasó a <strong>listo para retirar</strong>,
+            no por la fecha en que se hizo el pedido: ese es el momento que coincide con el
+            movimiento en Flexxus.
           </p>
         </>
       )}
