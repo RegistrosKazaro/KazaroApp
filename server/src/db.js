@@ -1049,13 +1049,14 @@ function ensureDespachoSnapshot() {
         creado_at      TEXT DEFAULT (datetime('now'))
       );
       CREATE TABLE IF NOT EXISTS pedido_despacho_items (
-        pedido_id   INTEGER NOT NULL,
-        producto_id INTEGER NOT NULL,
-        codigo      TEXT,
-        nombre      TEXT,
-        precio      REAL,
-        cantidad    INTEGER NOT NULL,
-        subtotal    REAL,
+        pedido_id        INTEGER NOT NULL,
+        producto_id      INTEGER NOT NULL,
+        codigo           TEXT,
+        nombre           TEXT,
+        precio           REAL,
+        cantidad         INTEGER NOT NULL,
+        cantidad_inicial INTEGER,
+        subtotal         REAL,
         PRIMARY KEY (pedido_id, producto_id)
       );
       CREATE INDEX IF NOT EXISTS idx_pdi_pedido ON pedido_despacho_items(pedido_id);
@@ -1095,10 +1096,22 @@ export function snapshotDespacho(pedidoId, fecha = null) {
   ).get(id);
   if (!ped) return { ok: false, error: "Pedido no encontrado" };
 
+  // Si ya había foto (el pedido se despachó y ahora se está corrigiendo), se
+  // conserva la FECHA original del despacho: el movimiento en Flexxus quedó ese
+  // día, aunque la corrección se haga después.
+  const previa = db.prepare(`SELECT fecha_despacho FROM pedido_despacho WHERE pedido_id = ?`).get(id);
   const cuando = fecha
+    || previa?.fecha_despacho
     || (ped.closedat && String(ped.closedat).trim())
     || (ped.retiro_at && String(ped.retiro_at).trim())
     || new Date().toISOString().slice(0, 19).replace("T", " ");
+
+  // Y se conserva la cantidad de la PRIMERA foto, para saber qué se había
+  // registrado al despachar y qué quedó después de corregir.
+  const iniciales = new Map(
+    db.prepare(`SELECT producto_id, COALESCE(cantidad_inicial, cantidad) AS ini FROM pedido_despacho_items WHERE pedido_id = ?`)
+      .all(id).map((r) => [Number(r.producto_id), Number(r.ini)])
+  );
 
   const items = db.prepare(
     `SELECT ProductoID AS pid, MAX(Codigo) AS codigo, MAX(Nombre) AS nombre,
@@ -1119,13 +1132,14 @@ export function snapshotDespacho(pedidoId, fecha = null) {
     ).run(id, cuando, ped.ServicioID ?? null, ped.EmpleadoID ?? null, ped.Rol ?? null, ped.empresa_id ?? null, Number(ped.Total || 0));
 
     const ins = db.prepare(
-      `INSERT INTO pedido_despacho_items (pedido_id, producto_id, codigo, nombre, precio, cantidad, subtotal)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO pedido_despacho_items (pedido_id, producto_id, codigo, nombre, precio, cantidad, cantidad_inicial, subtotal)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     );
     for (const it of items) {
       if (Number(it.cantidad) <= 0) continue;
+      const ini = iniciales.has(Number(it.pid)) ? iniciales.get(Number(it.pid)) : Number(it.cantidad || 0);
       ins.run(id, it.pid, it.codigo || "", it.nombre || "", Number(it.precio || 0),
-        Number(it.cantidad || 0), Number(it.subtotal || 0));
+        Number(it.cantidad || 0), ini, Number(it.subtotal || 0));
     }
   });
   tx();
@@ -1570,7 +1584,7 @@ export function applyOrderStockDiscount(pedidoId) {
  * Valida primero todos los aumentos contra el stock actual: si alguno no
  * alcanza, no toca nada y devuelve { ok:false, faltantes }. Nunca deja negativo.
  */
-export function applyOrderStockDelta(pedidoId, deltas) {
+export function applyOrderStockDelta(pedidoId, deltas, { permitirNegativo = false } = {}) {
   let getWarehouseForChildService, getWarehouseForLinkedService,
       warehouseDecrementStock, warehouseIncrementStock, getWarehouseStock;
   try {
@@ -1612,6 +1626,8 @@ export function applyOrderStockDelta(pedidoId, deltas) {
   };
 
   // Fase 1: validar sólo los aumentos. Las devoluciones nunca fallan.
+  // Si el pedido YA se despachó, el material salió físicamente: la corrección se
+  // aplica igual (permitirNegativo) y sólo se informa qué quedó en descubierto.
   const faltantes = [];
   for (const c of cambios) {
     const delta = Number(c.delta);
@@ -1622,13 +1638,23 @@ export function applyOrderStockDelta(pedidoId, deltas) {
         disponible: disp === Infinity ? null : disp, pedido: delta });
     }
   }
-  if (faltantes.length) return { ok: false, faltantes };
+  if (faltantes.length && !permitirNegativo) return { ok: false, faltantes };
 
   // Fase 2: aplicar todo junto.
+  // Con permitirNegativo (corrección de un pedido ya despachado) el stock no
+  // puede quedar negativo: la base lo prohíbe. Se descuenta lo que hay, la
+  // corrección del pedido se guarda igual y el faltante se informa aparte.
+  const tope = new Map();
+  if (permitirNegativo) {
+    for (const f of faltantes) tope.set(f.productId, Number(f.disponible ?? 0));
+  }
+
   const tx = db.transaction(() => {
     for (const c of cambios) {
-      const delta = Number(c.delta);
+      let delta = Number(c.delta);
       const pid = c.productId;
+      if (delta > 0 && tope.has(pid)) delta = Math.max(0, tope.get(pid));
+      if (delta === 0) continue;
       const abs = Math.abs(delta);
       if (childWarehouse && warehouseDecrementStock && warehouseIncrementStock) {
         const mover = delta > 0 ? warehouseDecrementStock : warehouseIncrementStock;
@@ -1648,7 +1674,9 @@ export function applyOrderStockDelta(pedidoId, deltas) {
     }
   });
   tx();
-  return { ok: true };
+  // `descubierto` avisa qué insumos quedaron sin respaldo de stock al corregir
+  // un pedido ya despachado (se aplicó igual porque el material ya había salido).
+  return { ok: true, descubierto: faltantes.length ? faltantes : null };
 }
 
 export function getFullOrder(pedidoId) {

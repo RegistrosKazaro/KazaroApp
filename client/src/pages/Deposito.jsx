@@ -266,9 +266,15 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
         items: items.map((it) => ({ productId: it.productId, cantidad: it.cantidad })),
       });
       setDirty(false);
-      setMsg(data?.stockAjustado
-        ? "Cambios guardados. Se ajustó el stock por la diferencia."
-        : "Cambios guardados.");
+      // Al corregir un pedido ya despachado se avisa que impacta en el control
+      // de despachos, y si el stock quedó en descubierto.
+      const partes = ["Cambios guardados."];
+      if (data?.stockAjustado) partes.push("Se ajustó el stock por la diferencia.");
+      if (data?.conciliacionActualizada) partes.push("La corrección se reflejó en el control de despachos.");
+      if (data?.descubierto?.length) {
+        partes.push(`Ojo: ${data.descubierto.map((f) => f.nombre).join(", ")} quedó sin stock suficiente (hay que regularizarlo).`);
+      }
+      setMsg(partes.join(" "));
     } catch (e) {
       const data = e?.response?.data;
       // Al aumentar cantidades en un pedido que ya descontó stock, puede no alcanzar.

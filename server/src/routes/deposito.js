@@ -424,24 +424,27 @@ router.get("/despachos", mustWarehouse, (req, res) => {
       detalle = db.prepare(`
         SELECT d.pedido_id AS pedidoId, d.servicio_id AS servicioId, d.rol AS rol,
                d.empleado_id AS empleadoId, i.cantidad AS cantidad,
-               i.subtotal AS subtotal, d.fecha_despacho AS fechaDespacho,
-               -- Si el pedido se editó DESPUÉS del despacho, se avisa.
-               COALESCE((SELECT SUM(pi.Cantidad) FROM PedidoItems pi
-                         WHERE pi.PedidoID = d.pedido_id AND pi.ProductoID = i.producto_id), 0) AS cantidadActual
+               COALESCE(i.cantidad_inicial, i.cantidad) AS cantidadInicial,
+               i.subtotal AS subtotal, d.fecha_despacho AS fechaDespacho
         ${FROM} ${where} AND i.producto_id = @productId
         ORDER BY ${orden}
-      `).all({ ...params, productId }).map((r) => ({
-        pedidoId: r.pedidoId,
-        numero: pad7(r.pedidoId),
-        servicio: r.servicioId ? (getServiceNameById(r.servicioId) || `Servicio ${r.servicioId}`) : null,
-        rol: r.rol || null,
-        solicitante: r.empleadoId ? (getEmployeeDisplayName(r.empleadoId) || null) : null,
-        cantidad: Number(r.cantidad || 0),
-        cantidadActual: Number(r.cantidadActual || 0),
-        editadoDespues: Number(r.cantidadActual || 0) !== Number(r.cantidad || 0),
-        subtotal: Number(r.subtotal || 0),
-        retiradoAr: r.fechaDespacho ? fmtAr(r.fechaDespacho) : null,
-      }));
+      `).all({ ...params, productId }).map((r) => {
+        const cantidad = Number(r.cantidad || 0);
+        const inicial = Number(r.cantidadInicial || 0);
+        return {
+          pedidoId: r.pedidoId,
+          numero: pad7(r.pedidoId),
+          servicio: r.servicioId ? (getServiceNameById(r.servicioId) || `Servicio ${r.servicioId}`) : null,
+          rol: r.rol || null,
+          solicitante: r.empleadoId ? (getEmployeeDisplayName(r.empleadoId) || null) : null,
+          cantidad,
+          // Lo que se había registrado al despachar, si después se corrigió.
+          cantidadInicial: inicial,
+          corregido: inicial !== cantidad,
+          subtotal: Number(r.subtotal || 0),
+          retiradoAr: r.fechaDespacho ? fmtAr(r.fechaDespacho) : null,
+        };
+      });
     }
 
     res.json({
@@ -564,6 +567,12 @@ router.put("/orders/:id/items", mustWarehouse, (req, res) => {
     const yaDescontado = chk.pedido?.contabilizado_at != null
       && String(chk.pedido.contabilizado_at).trim() !== "";
 
+    // ¿El pedido ya se despachó (se marcó listo para retirar)? Si es así, esta
+    // edición es una CORRECCIÓN de lo que realmente salió: se aplica aunque el
+    // stock no alcance (el material ya salió) y se regraba la foto.
+    const yaDespachado = !!db.prepare(`SELECT 1 FROM pedido_despacho WHERE pedido_id = ?`).get(id);
+    let descubierto = null;
+
     if (yaDescontado) {
       const previos = db.prepare(
         `SELECT ProductoID AS pid, COALESCE(SUM(Cantidad),0) AS cant, MAX(Nombre) AS nombre
@@ -582,7 +591,7 @@ router.put("/orders/:id/items", mustWarehouse, (req, res) => {
         if (!antes.has(pid)) deltas.push({ productId: pid, delta: cant, nombre: filas.find((f) => f.pid === pid)?.name });
       }
 
-      const r = applyOrderStockDelta(id, deltas);
+      const r = applyOrderStockDelta(id, deltas, { permitirNegativo: yaDespachado });
       if (!r.ok) {
         if (r.faltantes) {
           return res.status(400).json({
@@ -592,6 +601,7 @@ router.put("/orders/:id/items", mustWarehouse, (req, res) => {
         }
         return res.status(400).json({ error: r.error || "No se pudo ajustar el stock" });
       }
+      descubierto = r.descubierto || null;
     }
 
     const tx = db.transaction(() => {
@@ -602,7 +612,19 @@ router.put("/orders/:id/items", mustWarehouse, (req, res) => {
     });
     tx();
 
-    res.json({ ok: true, total, items: filas.length, stockAjustado: yaDescontado });
+    // La corrección de un pedido ya despachado es lo que realmente salió:
+    // se regraba la foto (conservando la fecha y la cantidad original).
+    if (yaDespachado) {
+      try { snapshotDespacho(id); }
+      catch (e) { console.warn("[deposito] resnapshot:", e?.message || e); }
+    }
+
+    res.json({
+      ok: true, total, items: filas.length,
+      stockAjustado: yaDescontado,
+      conciliacionActualizada: yaDespachado,
+      descubierto,
+    });
   } catch (e) {
     console.error("[deposito/items]", e?.message || e);
     res.status(500).json({ error: "No se pudieron guardar los cambios" });

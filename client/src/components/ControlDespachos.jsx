@@ -209,10 +209,10 @@ export default function ControlDespachos() {
                                         <td>{d.solicitante || "—"}</td>
                                         <td className="col-cant cd-fuerte">
                                           {formatNumber(d.cantidad)}
-                                          {d.editadoDespues && (
+                                          {d.corregido && (
                                             <span className="cd-editado"
-                                              title={`Este pedido se editó después del despacho: hoy figura con ${formatNumber(d.cantidadActual)}. La conciliación mantiene lo que salió (${formatNumber(d.cantidad)}), que es lo que quedó en Flexxus.`}>
-                                              editado luego: {formatNumber(d.cantidadActual)}
+                                              title={`Al despachar se había registrado ${formatNumber(d.cantidadInicial)} y el depósito lo corrigió a ${formatNumber(d.cantidad)}. Se muestra la corrección, que es lo que realmente salió.`}>
+                                              corregido (era {formatNumber(d.cantidadInicial)})
                                             </span>
                                           )}
                                         </td>
