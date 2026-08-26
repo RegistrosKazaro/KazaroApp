@@ -61,6 +61,11 @@
 .cd-tabla--interna { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; }
 .cd-admin { color: #4b5563; font-style: italic; }
 .cd-dev { font-size: 0.72rem; color: #b45309; font-weight: 600; }
+/* El pedido se editó después de haberse despachado: la foto no cambia. */
+.cd-editado {
+  display: block; font-size: 0.68rem; color: #b45309; font-weight: 600;
+  margin-top: 2px; cursor: help;
+}
 
 /* Orden del detalle: por fecha, no por cantidad. */
 .cd-detalle-acciones { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

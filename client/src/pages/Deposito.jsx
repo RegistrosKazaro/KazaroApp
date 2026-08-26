@@ -773,10 +773,11 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                         <button type="button" className="pill pill--ghost" onClick={() => onPreviewRemito(o)}>
                           Ver remito
                         </button>
-                        {/* Editable en cualquier etapa previa al retiro, sea de
-                            supervisor o administrativo. En los administrativos el
-                            backend ajusta la diferencia de stock. */}
-                        {(tab === "open" || tab === "preparing" || tab === "closed") && (
+                        {/* Editable en cualquier etapa, incluso ya retirado, para
+                            poder corregir errores detectados después. El backend
+                            ajusta la diferencia de stock si ya se había descontado.
+                            La conciliación no cambia: usa la foto del despacho. */}
+                        {tab !== "revision_deposito" && tab !== "devoluciones" && (
                           <button type="button" className="pill pill--ghost" onClick={() => toggleEdit(o.id)}
                             style={{ borderColor: "#2563eb", color: "#1d4ed8" }}>
                             {editingOrders.has(o.id) ? "Cerrar edición" : "Editar"}
@@ -826,8 +827,8 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                       </td>
                     </tr>
                   )}
-                  {/* Editor en pestañas de trabajo (no revisión, no retirado) */}
-                  {tab !== "revision_deposito" && tab !== "retirado" && editingOrders.has(o.id) && (
+                  {/* Editor en todas las pestañas de trabajo, incluida Retirados */}
+                  {tab !== "revision_deposito" && editingOrders.has(o.id) && (
                     <tr key={`${o.id}-edit`} className="deposito-row--items-container">
                       <td colSpan={6} style={{ padding: 0 }}>
                         <RevisionOrderEditor order={o} onDone={list} canConfirm={false}

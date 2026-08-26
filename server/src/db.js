@@ -1029,6 +1029,111 @@ function ensureItemControlTable() {
 }
 ensureItemControlTable();
 
+/* ============ Foto del despacho (para la conciliación) ============
+   Cuando un pedido se marca LISTO PARA RETIRAR se guarda el detalle exacto de
+   ese momento. Es lo que quedó registrado como movimiento en Flexxus, así que
+   la conciliación lee de acá y no cambia aunque después se edite el pedido.
+   Los informes siguen leyendo el pedido vivo (estado al retirarse).
+=================================================================== */
+function ensureDespachoSnapshot() {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pedido_despacho (
+        pedido_id      INTEGER PRIMARY KEY,
+        fecha_despacho TEXT NOT NULL,
+        servicio_id    INTEGER,
+        empleado_id    INTEGER,
+        rol            TEXT,
+        empresa_id     INTEGER,
+        total          REAL,
+        creado_at      TEXT DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS pedido_despacho_items (
+        pedido_id   INTEGER NOT NULL,
+        producto_id INTEGER NOT NULL,
+        codigo      TEXT,
+        nombre      TEXT,
+        precio      REAL,
+        cantidad    INTEGER NOT NULL,
+        subtotal    REAL,
+        PRIMARY KEY (pedido_id, producto_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_pdi_pedido ON pedido_despacho_items(pedido_id);
+      CREATE INDEX IF NOT EXISTS idx_pd_fecha   ON pedido_despacho(fecha_despacho);
+    `);
+
+    // Backfill: los pedidos históricos ya despachados no tienen foto. Se arma
+    // con su detalle actual y la fecha que haya (listo para retirar, o retiro).
+    const pendientes = db.prepare(`
+      SELECT p.PedidoID AS id,
+             COALESCE(NULLIF(TRIM(p.closedat),''), p.retiro_at) AS fecha
+      FROM Pedidos p
+      WHERE COALESCE(NULLIF(TRIM(p.closedat),''), p.retiro_at) IS NOT NULL
+        AND p.deleted_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM pedido_despacho d WHERE d.pedido_id = p.PedidoID)
+    `).all();
+    for (const p of pendientes) {
+      try { snapshotDespacho(p.id, p.fecha); } catch { /* sigue con los demás */ }
+    }
+    if (pendientes.length) {
+      console.log(`[db] Foto de despacho generada para ${pendientes.length} pedidos ya despachados`);
+    }
+  } catch (e) {
+    console.warn("[db] ensureDespachoSnapshot:", e?.message || e);
+  }
+}
+
+/**
+ * Guarda (o regraba) la foto del despacho de un pedido con su detalle actual.
+ * Se llama al marcarlo listo para retirar. `fecha` permite fijar la del backfill.
+ */
+export function snapshotDespacho(pedidoId, fecha = null) {
+  const id = Number(pedidoId);
+  const ped = db.prepare(
+    `SELECT PedidoID, ServicioID, EmpleadoID, Rol, empresa_id, Total, closedat, retiro_at
+     FROM Pedidos WHERE PedidoID = ?`
+  ).get(id);
+  if (!ped) return { ok: false, error: "Pedido no encontrado" };
+
+  const cuando = fecha
+    || (ped.closedat && String(ped.closedat).trim())
+    || (ped.retiro_at && String(ped.retiro_at).trim())
+    || new Date().toISOString().slice(0, 19).replace("T", " ");
+
+  const items = db.prepare(
+    `SELECT ProductoID AS pid, MAX(Codigo) AS codigo, MAX(Nombre) AS nombre,
+            MAX(Precio) AS precio, COALESCE(SUM(Cantidad),0) AS cantidad,
+            COALESCE(SUM(Subtotal),0) AS subtotal
+     FROM PedidoItems WHERE PedidoID = ? GROUP BY ProductoID`
+  ).all(id);
+
+  const tx = db.transaction(() => {
+    db.prepare(`DELETE FROM pedido_despacho_items WHERE pedido_id = ?`).run(id);
+    db.prepare(
+      `INSERT INTO pedido_despacho (pedido_id, fecha_despacho, servicio_id, empleado_id, rol, empresa_id, total)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(pedido_id) DO UPDATE SET
+         fecha_despacho = excluded.fecha_despacho, servicio_id = excluded.servicio_id,
+         empleado_id = excluded.empleado_id, rol = excluded.rol,
+         empresa_id = excluded.empresa_id, total = excluded.total`
+    ).run(id, cuando, ped.ServicioID ?? null, ped.EmpleadoID ?? null, ped.Rol ?? null, ped.empresa_id ?? null, Number(ped.Total || 0));
+
+    const ins = db.prepare(
+      `INSERT INTO pedido_despacho_items (pedido_id, producto_id, codigo, nombre, precio, cantidad, subtotal)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    );
+    for (const it of items) {
+      if (Number(it.cantidad) <= 0) continue;
+      ins.run(id, it.pid, it.codigo || "", it.nombre || "", Number(it.precio || 0),
+        Number(it.cantidad || 0), Number(it.subtotal || 0));
+    }
+  });
+  tx();
+  return { ok: true, items: items.length, fecha: cuando };
+}
+
+ensureDespachoSnapshot();
+
 // Vistas de "neto de devoluciones": una devolución APROBADA descuenta lo que
 // realmente consumió el servicio. Informes, panel de pedidos y API leen de acá
 // para no mostrar de más cuando un pedido tuvo devolución. La devolución se

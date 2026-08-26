@@ -114,9 +114,10 @@ export default function ControlDespachos() {
         <div>
           <h2 className="cd-title">Control de despachos</h2>
           <p className="cd-sub">
-            Pedidos desde que se marcan <strong>listos para retirar</strong>, que es el momento en
-            que se genera el movimiento en Flexxus. El detalle muestra cada pedido por separado y
-            ordenado por fecha. Las cantidades ya vienen netas de devoluciones aprobadas.
+            Muestra el detalle <strong>tal como estaba al marcarse listo para retirar</strong>, que
+            es el movimiento que quedó en Flexxus. Si después se edita el pedido, este listado no
+            cambia (se avisa al lado de la cantidad). Cada pedido va en su propia fila, ordenado por
+            fecha.
           </p>
         </div>
       </header>
@@ -208,8 +209,11 @@ export default function ControlDespachos() {
                                         <td>{d.solicitante || "—"}</td>
                                         <td className="col-cant cd-fuerte">
                                           {formatNumber(d.cantidad)}
-                                          {d.devuelto > 0 && (
-                                            <span className="cd-dev"> (pidió {d.cantidadOriginal}, devolvió {d.devuelto})</span>
+                                          {d.editadoDespues && (
+                                            <span className="cd-editado"
+                                              title={`Este pedido se editó después del despacho: hoy figura con ${formatNumber(d.cantidadActual)}. La conciliación mantiene lo que salió (${formatNumber(d.cantidad)}), que es lo que quedó en Flexxus.`}>
+                                              editado luego: {formatNumber(d.cantidadActual)}
+                                            </span>
                                           )}
                                         </td>
                                         <td>{d.retiradoAr || "—"}</td>

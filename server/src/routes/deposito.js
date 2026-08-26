@@ -12,6 +12,7 @@ import {
   getFullOrder,
   applyOrderStockDiscount,
   applyOrderStockDelta,
+  snapshotDespacho,
 } from "../db.js";
 import { sendMail } from "../utils/mailer.js";
 import { fmtAr } from "../utils/fechas.js";
@@ -371,42 +372,38 @@ router.get("/orders", mustWarehouse, (req, res) => {
    Las cantidades salen de v_pedido_items_neto, o sea netas de devoluciones
    aprobadas. Por ahora la comparación con Flexxus se hace a mano, con el CSV.
 ================================================================== */
-// Fecha del despacho = cuando se marcó listo para retirar. Se cae a retiro_at
-// sólo por si algún pedido viejo quedó retirado sin haber pasado por cerrado.
-const FECHA_DESPACHO = `COALESCE(NULLIF(TRIM(p.closedat),''), p.retiro_at)`;
-
 router.get("/despachos", mustWarehouse, (req, res) => {
   try {
     const empresaId = getEmpresaId(req);
 
-    // Rango por día argentino (la base guarda UTC y Argentina es UTC-3).
+    // Se lee de la FOTO del despacho: el detalle tal como estaba cuando el
+    // pedido se marcó listo para retirar. Es lo que quedó en Flexxus, así que
+    // no cambia aunque después se edite el pedido.
     const dia = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "").trim()) ? String(v).trim() : null);
     const desde = dia(req.query.desde);
     const hasta = dia(req.query.hasta);
-    const cond = [
-      `${FECHA_DESPACHO} IS NOT NULL`,
-      `TRIM(${FECHA_DESPACHO}) <> ''`,
-      "p.deleted_at IS NULL", "p.empresa_id = @empresaId",
-    ];
+    const cond = ["d.empresa_id = @empresaId", "p.deleted_at IS NULL"];
     const params = { empresaId };
-    if (desde) { cond.push(`${FECHA_DESPACHO} >= @desdeUtc`); params.desdeUtc = `${desde} 03:00:00`; }
+    if (desde) { cond.push("d.fecha_despacho >= @desdeUtc"); params.desdeUtc = `${desde} 03:00:00`; }
     if (hasta) {
-      const d = new Date(`${hasta}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1);
-      cond.push(`${FECHA_DESPACHO} < @hastaUtc`); params.hastaUtc = `${d.toISOString().slice(0, 10)} 03:00:00`;
+      const dd = new Date(`${hasta}T00:00:00Z`); dd.setUTCDate(dd.getUTCDate() + 1);
+      cond.push("d.fecha_despacho < @hastaUtc"); params.hastaUtc = `${dd.toISOString().slice(0, 10)} 03:00:00`;
     }
     const where = `WHERE ${cond.join(" AND ")}`;
+    const FROM = `FROM pedido_despacho d
+      JOIN pedido_despacho_items i ON i.pedido_id = d.pedido_id
+      JOIN Pedidos p ON p.PedidoID = d.pedido_id`;
 
     // Totales por artículo
     const articulos = db.prepare(`
-      SELECT i.ProductoID AS productId,
-             COALESCE(NULLIF(TRIM(MAX(i.Codigo)),''),'') AS codigo,
-             COALESCE(NULLIF(TRIM(MAX(i.Nombre)),''),'Sin nombre') AS nombre,
-             COUNT(DISTINCT p.PedidoID) AS pedidos,
-             COALESCE(SUM(i.Cantidad),0) AS unidades,
-             COALESCE(SUM(i.Subtotal),0) AS monto
-      FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID
-      ${where}
-      GROUP BY i.ProductoID
+      SELECT i.producto_id AS productId,
+             COALESCE(NULLIF(TRIM(MAX(i.codigo)),''),'') AS codigo,
+             COALESCE(NULLIF(TRIM(MAX(i.nombre)),''),'Sin nombre') AS nombre,
+             COUNT(DISTINCT d.pedido_id) AS pedidos,
+             COALESCE(SUM(i.cantidad),0) AS unidades,
+             COALESCE(SUM(i.subtotal),0) AS monto
+      ${FROM} ${where}
+      GROUP BY i.producto_id
       HAVING unidades > 0
       ORDER BY unidades DESC, nombre COLLATE NOCASE
     `).all(params).map((r) => ({
@@ -421,16 +418,17 @@ router.get("/despachos", mustWarehouse, (req, res) => {
     const productId = Number(req.query.productId);
     if (Number.isFinite(productId) && productId > 0) {
       const orden = String(req.query.orden || "").toLowerCase() === "fecha_asc"
-        ? `${FECHA_DESPACHO} ASC, p.PedidoID ASC`
-        : `${FECHA_DESPACHO} DESC, p.PedidoID DESC`;
+        ? `d.fecha_despacho ASC, d.pedido_id ASC`
+        : `d.fecha_despacho DESC, d.pedido_id DESC`;
 
       detalle = db.prepare(`
-        SELECT p.PedidoID AS pedidoId, p.ServicioID AS servicioId, p.Rol AS rol,
-               p.EmpleadoID AS empleadoId, i.Cantidad AS cantidad,
-               i.CantidadOriginal AS cantidadOriginal, i.Devuelto AS devuelto,
-               i.Subtotal AS subtotal, ${FECHA_DESPACHO} AS fechaDespacho
-        FROM v_pedido_items_neto i JOIN Pedidos p ON p.PedidoID = i.PedidoID
-        ${where} AND i.ProductoID = @productId
+        SELECT d.pedido_id AS pedidoId, d.servicio_id AS servicioId, d.rol AS rol,
+               d.empleado_id AS empleadoId, i.cantidad AS cantidad,
+               i.subtotal AS subtotal, d.fecha_despacho AS fechaDespacho,
+               -- Si el pedido se editó DESPUÉS del despacho, se avisa.
+               COALESCE((SELECT SUM(pi.Cantidad) FROM PedidoItems pi
+                         WHERE pi.PedidoID = d.pedido_id AND pi.ProductoID = i.producto_id), 0) AS cantidadActual
+        ${FROM} ${where} AND i.producto_id = @productId
         ORDER BY ${orden}
       `).all({ ...params, productId }).map((r) => ({
         pedidoId: r.pedidoId,
@@ -439,8 +437,8 @@ router.get("/despachos", mustWarehouse, (req, res) => {
         rol: r.rol || null,
         solicitante: r.empleadoId ? (getEmployeeDisplayName(r.empleadoId) || null) : null,
         cantidad: Number(r.cantidad || 0),
-        cantidadOriginal: Number(r.cantidadOriginal || 0),
-        devuelto: Number(r.devuelto || 0),
+        cantidadActual: Number(r.cantidadActual || 0),
+        editadoDespues: Number(r.cantidadActual || 0) !== Number(r.cantidad || 0),
         subtotal: Number(r.subtotal || 0),
         retiradoAr: r.fechaDespacho ? fmtAr(r.fechaDespacho) : null,
       }));
@@ -452,7 +450,7 @@ router.get("/despachos", mustWarehouse, (req, res) => {
       totales: {
         articulos: articulos.length,
         unidades: articulos.reduce((a, x) => a + x.unidades, 0),
-        pedidos: db.prepare(`SELECT COUNT(DISTINCT p.PedidoID) AS n FROM Pedidos p ${where}`).get(params).n,
+        pedidos: db.prepare(`SELECT COUNT(DISTINCT d.pedido_id) AS n ${FROM} ${where}`).get(params).n,
       },
       articulos,
       detalle,
@@ -515,10 +513,10 @@ function pedidoEditable(id, empresaId) {
   ).get(id);
   if (!p) return { error: 404 };
   if (p.empresa_id != null && Number(p.empresa_id) !== Number(empresaId)) return { error: 404 };
-  // Editable hasta que se retira, sin importar el rol. Los administrativos ya
-  // descontaron stock al crearse, así que al editarlos hay que ajustar la
-  // diferencia (lo resuelve el endpoint con applyOrderStockDelta).
-  if (p.retiro_at != null && String(p.retiro_at).trim() !== "") return { error: 409 };
+  // Editable en cualquier etapa, incluso ya retirado: el depósito necesita poder
+  // corregir errores detectados después. Si el pedido ya descontó stock, el
+  // endpoint ajusta la diferencia con applyOrderStockDelta. La conciliación NO
+  // cambia: usa la foto tomada al marcarlo listo para retirar.
   return { ok: true, pedido: p };
 }
 
@@ -743,6 +741,11 @@ router.put("/orders/:id/:action", mustWarehouse, async (req, res) => {
     const r = db.prepare(`UPDATE Pedidos SET ${sets.join(", ")} WHERE ${idCol} = ?`).run(...params);
     if (r.changes === 0) return res.status(404).json({ error: "Pedido no encontrado" });
     if (action === "close") {
+      // Foto del despacho: el detalle exacto de este momento, que es el que
+      // quedó como movimiento en Flexxus. La conciliación lee de acá.
+      try { snapshotDespacho(id); }
+      catch (e) { console.warn("[deposito] snapshotDespacho:", e?.message || e); }
+
       try {
         const ped = db.prepare(`SELECT EmpleadoID, empresa_id FROM Pedidos WHERE ${idCol} = ?`).get(id);
         if (ped?.EmpleadoID) {
