@@ -1289,6 +1289,27 @@ export function getServiceById(serviceId) {
   }
 }
 
+// Categorías que se manejan aparte del circuito normal de insumos: tienen su
+// propio informe y NO consumen el presupuesto del servicio.
+export const CATEGORIAS_SEPARADAS = ["Uniformes"];
+
+/** IDs de producto que pertenecen a una categoría separada (Uniformes). */
+export function getProductIdsCategoriasSeparadas() {
+  try {
+    const norm = (s) => String(s || "").normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
+    const catIds = db.prepare(`SELECT CategoriaID AS id, CategoriaNombre AS name FROM Categorias`).all()
+      .filter((r) => CATEGORIAS_SEPARADAS.some((c) => norm(c) === norm(r.name)))
+      .map((r) => r.id);
+    if (!catIds.length) return new Set();
+    const ph = catIds.map(() => "?").join(",");
+    const rows = db.prepare(`SELECT ProductID FROM Productos WHERE CategoriaID IN (${ph})`).all(...catIds);
+    return new Set(rows.map((r) => Number(r.ProductID)));
+  } catch (e) {
+    console.warn("[db] getProductIdsCategoriasSeparadas:", e?.message || e);
+    return new Set();
+  }
+}
+
 export function createOrder({ empleadoId, servicioId, nota, items, asRole = null, maxTotalAllowed = null }) {
   if (!empleadoId || !Array.isArray(items) || items.length === 0) {
     throw new Error("Datos de pedido inválidos");
@@ -1326,8 +1347,16 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
     ? getWarehouseForLinkedService(servicioIdForInsert)
     : null;
 
+  // Los uniformes no consumen el presupuesto del servicio: se controla sólo la
+  // parte de insumos. Así un pedido de uniformes nunca queda bloqueado, y
+  // tampoco se puede esquivar el límite metiendo un uniforme en un pedido común.
+  const idsSinPresupuesto = Number.isFinite(maxTotalAllowed)
+    ? getProductIdsCategoriasSeparadas()
+    : new Set();
+
   const tx = db.transaction(() => {
     let total = 0;
+    let totalPresupuestable = 0;
 
     const sch = discoverCatalogSchema();
     if (!sch.ok) throw new Error(sch.reason);
@@ -1479,10 +1508,13 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
 
       const subtotal = precio * cantidad;
       total += subtotal;
+      // Los uniformes suman al total del pedido pero no al que se compara
+      // contra el presupuesto del servicio.
+      if (!idsSinPresupuesto.has(Number(pid))) totalPresupuestable += subtotal;
       insItem.run(pedidoId, pid, row.name, precio, cantidad, subtotal, row.code || "");
     }
 
-    if (Number.isFinite(maxTotalAllowed) && total > maxTotalAllowed) {
+    if (Number.isFinite(maxTotalAllowed) && totalPresupuestable > maxTotalAllowed) {
       const err = new Error("ORDER_OVER_LIMIT");
       err.code = "ORDER_OVER_LIMIT";
       throw err;

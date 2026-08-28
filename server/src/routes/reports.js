@@ -8,6 +8,7 @@ import {
   getServiceNameById,
   getServiceById,
   getEmployeeDisplayName,
+  CATEGORIAS_SEPARADAS,
 } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import {
@@ -140,7 +141,8 @@ function resolveEmployeesTableLocal() {
 /* =====================================================================
    FILTRO DEL REPORTE GENERAL (excluye depósitos y categorías separadas)
    ===================================================================== */
-const CATEGORIAS_SEPARADAS = ["Uniformes"];
+// La lista vive en db.js: es la misma que decide que los uniformes no consumen
+// el presupuesto del servicio. Un solo lugar para no divergir.
 
 function buildGeneralReportFilter() {
   const exclusions = [];
