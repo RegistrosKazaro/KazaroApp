@@ -7,6 +7,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { formatMoney, formatNumber, csvNumber } from "../utils/format";
 import useDebounced from "../hooks/useDebounced";
+import { normalizeText } from "../utils/text";
 import "../styles/control-despachos.css";
 
 const hoy = () => new Date().toISOString().slice(0, 10);
@@ -67,12 +68,12 @@ export default function ControlDespachos() {
   };
 
   const articulos = useMemo(() => {
-    const t = qDeb.trim().toLowerCase();
+    // normalizeText saca acentos, así "algodon" encuentra "ALGODÓN".
+    const t = normalizeText(qDeb);
     const lista = data?.articulos || [];
     if (!t) return lista;
     return lista.filter((a) =>
-      String(a.nombre || "").toLowerCase().includes(t) ||
-      String(a.codigo || "").toLowerCase().includes(t));
+      normalizeText(a.nombre).includes(t) || normalizeText(a.codigo).includes(t));
   }, [data, qDeb]);
 
   const totalFiltrado = useMemo(

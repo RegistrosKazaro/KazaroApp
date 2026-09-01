@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { formatMoney, formatNumber, csvNumber } from "../utils/format";
+import { normalizeText } from "../utils/text";
 import "../styles/reports-simple.css";
 
 const MESES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
@@ -182,10 +183,11 @@ export default function ReportsSimple() {
   const porDia = useMemo(() => data?.by_day || [], [data]);
 
   const productosFiltrados = useMemo(() => {
-    const t = q.trim().toLowerCase();
+    // normalizeText saca acentos, así "algodon" encuentra "ALGODÓN".
+    const t = normalizeText(q);
     if (!t) return productos;
     return productos.filter((p) =>
-      String(p.name || "").toLowerCase().includes(t) || String(p.code || "").toLowerCase().includes(t));
+      normalizeText(p.name).includes(t) || normalizeText(p.code).includes(t));
   }, [productos, q]);
 
   const nombreServicio = (s) =>

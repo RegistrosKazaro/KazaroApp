@@ -16,6 +16,7 @@ import {
 } from "../db.js";
 import { sendMail } from "../utils/mailer.js";
 import { fmtAr } from "../utils/fechas.js";
+import { sinAcentosSql, normalizarBusqueda } from "../utils/busqueda.js";
 
 const router = Router();
 console.log("[deposito] Router cargado: Modo Seguro (JS JOIN)");
@@ -482,9 +483,15 @@ router.get("/productos", mustWarehouse, (req, res) => {
     const where = ["COALESCE(is_active,1) = 1"];
     const params = [];
     if (cols.includes("empresa_id")) { where.push("empresa_id = ?"); params.push(Number(empresaId)); }
-    const like = `%${q}%`;
-    if (prodCode) { where.push(`(${prodName} LIKE ? OR ${prodCode} LIKE ?)`); params.push(like, like); }
-    else { where.push(`${prodName} LIKE ?`); params.push(like); }
+    // Sin acentos y sin importar mayúsculas, igual que el resto de la app.
+    const like = `%${normalizarBusqueda(q)}%`;
+    if (prodCode) {
+      where.push(`(${sinAcentosSql(prodName)} LIKE ? OR ${sinAcentosSql(prodCode)} LIKE ?)`);
+      params.push(like, like);
+    } else {
+      where.push(`${sinAcentosSql(prodName)} LIKE ?`);
+      params.push(like);
+    }
 
     const rows = db.prepare(`
       SELECT ${prodId} AS id, ${prodName} AS name,

@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
 import useDebounced from "../hooks/useDebounced";
 import { formatMoney, formatNumber } from "../utils/format";
+import { normalizeText } from "../utils/text";
 import "../styles/deposito.css";
 import DevolucionesPendientes from "../components/DevolucionesPendientes";
 import ControlDespachos from "../components/ControlDespachos";
@@ -524,16 +525,22 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
 
   const filtered = useMemo(() => {
     let arr = orders.slice();
-    const t = String(qDeb || "").trim().toLowerCase();
+    // normalizeText saca acentos, así "union" encuentra "Unión".
+    const t = normalizeText(qDeb);
     if (t) {
-      const tId = t.startsWith("#") ? t.slice(1) : t;
+      const soloDigitos = t.replace(/\D/g, "");
       arr = arr.filter(o => {
-        const idStr = String(o.id ?? "").toLowerCase();
-        const empleado = String(o.empleadoNombre || o.empleadoId || "").toLowerCase();
-        const servicio = String(o.servicioNombre || "").toLowerCase();
-        const rol = String(o.rol ?? "").toLowerCase();
-        const remito = String(o.remitoDisplay ?? o.remito ?? "").toLowerCase();
-        return idStr.includes(tId) || remito.includes(t) || empleado.includes(t) || rol.includes(t) || servicio.includes(t);
+        // Número: sirve tanto "68" como "0000068" o "#0000068".
+        const porNumero = soloDigitos
+          ? String(o.id ?? "").includes(soloDigitos.replace(/^0+/, "") || "0")
+            || String(o.displayId || String(o.id ?? "").padStart(7, "0")).includes(soloDigitos)
+          : false;
+        return porNumero
+          || normalizeText(o.remitoDisplay ?? o.remito).includes(t)
+          || normalizeText(o.empleadoNombre || o.empleadoId).includes(t)
+          || normalizeText(o.servicioNombre).includes(t)
+          || normalizeText(o.rol).includes(t)
+          || (o.items || []).some(i => normalizeText(i.nombre).includes(t) || normalizeText(i.codigo).includes(t));
       });
     }
     if (servicioFilter) {

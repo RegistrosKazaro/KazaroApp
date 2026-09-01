@@ -29,6 +29,7 @@ import {
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendMail, pauseMail, resumeMail, getMailPauseState } from "../utils/mailer.js";
 import { toISO, fmtAr, diaAr } from "../utils/fechas.js";
+import { sinAcentosSql, normalizarBusqueda } from "../utils/busqueda.js";
 import empresaRouter from "./admin_empresa_addon.js";
 
 const router = Router();
@@ -122,7 +123,8 @@ router.get("/products", mustBeAdmin, (req, res) => {
     const C_CATNAME= !prodCat && prodCatName ? qid(prodCatName) : null;
 
     const q         = String(req.query.q ?? "").trim();
-    const like      = `%${q}%`;
+    // Sin acentos y sin importar mayúsculas, igual que el resto de la app.
+    const like      = `%${normalizarBusqueda(q)}%`;
     const empresaId = req.user?.empresaId ?? 1;
 
     const prodCols   = db.prepare(`PRAGMA table_info(${products})`).all().map(c => c.name.toLowerCase());
@@ -131,8 +133,8 @@ router.get("/products", mustBeAdmin, (req, res) => {
     const eFilter    = hasEmpresa ? `AND empresa_id = ${Number(empresaId)}` : "";
 
     const where = q
-      ? `WHERE (${C_NAME} LIKE @like
-               ${C_CODE ? `OR IFNULL(${C_CODE},'') LIKE @like` : ""}
+      ? `WHERE (${sinAcentosSql(C_NAME)} LIKE @like
+               ${C_CODE ? `OR ${sinAcentosSql(C_CODE)} LIKE @like` : ""}
                OR CAST(${C_ID} AS TEXT) LIKE @like)
                ${eFilter}`
       : hasEmpresa ? `WHERE empresa_id = ${Number(empresaId)}` : "";
@@ -961,15 +963,37 @@ router.get("/pedidos", mustBeAdmin, (req, res) => {
     if (estado === "cerrado") where.push("(p.closedat IS NOT NULL OR LOWER(COALESCE(p.Status,'')) = 'closed')");
     if (estado === "abierto") where.push("(p.closedat IS NULL AND LOWER(COALESCE(p.Status,'')) <> 'closed')");
 
+    // Búsqueda: antes sólo miraba servicio, nota e insumos, así que buscar por
+    // número de pedido o por el nombre de quien lo pidió no devolvía nada.
+    // Ahora cubre todo y es insensible a mayúsculas y acentos.
     const q = String(req.query.q || "").trim();
-    if (q.length >= 2) {
-      params.q = `%${q.toLowerCase()}%`;
-      where.push(`(
-        LOWER(COALESCE(s.ServicioNombre,'')) LIKE @q
-        OR LOWER(COALESCE(p.Nota,'')) LIKE @q
-        OR EXISTS (SELECT 1 FROM PedidoItems i WHERE i.PedidoID = p.PedidoID
-                   AND (LOWER(COALESCE(i.Nombre,'')) LIKE @q OR LOWER(COALESCE(i.Codigo,'')) LIKE @q))
-      )`);
+    if (q.length >= 1) {
+      params.q = `%${normalizarBusqueda(q)}%`;
+      const campos = [
+        sinAcentosSql("s.ServicioNombre"),
+        sinAcentosSql("p.Nota"),
+        sinAcentosSql("e.Nombre"),
+        sinAcentosSql("e.Apellido"),
+        sinAcentosSql("e.Nombre || ' ' || e.Apellido"),
+        sinAcentosSql("e.Apellido || ' ' || e.Nombre"),
+        sinAcentosSql("e.username"),
+        sinAcentosSql("p.Rol"),
+      ].map((c) => `${c} LIKE @q`);
+
+      // Número de pedido: sirve "808", "0000808" y "#0000808".
+      const soloDigitos = q.replace(/[^\d]/g, "");
+      if (soloDigitos) {
+        params.qNum = `%${soloDigitos.replace(/^0+/, "") || "0"}%`;
+        params.qNumPad = `%${soloDigitos}%`;
+        campos.push(`CAST(p.PedidoID AS TEXT) LIKE @qNum`);
+        campos.push(`printf('%07d', p.PedidoID) LIKE @qNumPad`);
+      }
+
+      // Insumos del pedido (nombre o código)
+      campos.push(`EXISTS (SELECT 1 FROM PedidoItems i WHERE i.PedidoID = p.PedidoID
+        AND (${sinAcentosSql("i.Nombre")} LIKE @q OR ${sinAcentosSql("i.Codigo")} LIKE @q))`);
+
+      where.push(`(${campos.join(" OR ")})`);
     }
 
     // Filtro de control interno: sin controlar / controlados / todos.
@@ -978,7 +1002,10 @@ router.get("/pedidos", mustBeAdmin, (req, res) => {
     if (control === "no")  where.push("p.controlado_at IS NULL");
 
     const whereSql = `WHERE ${where.join(" AND ")}`;
-    const fromSql  = `FROM Pedidos p LEFT JOIN Servicios s ON s.ServiciosID = p.ServicioID`;
+    // Se suma Empleados para poder buscar por el nombre de quien pidió.
+    const fromSql  = `FROM Pedidos p
+      LEFT JOIN Servicios s ON s.ServiciosID = p.ServicioID
+      LEFT JOIN Empleados e ON e.EmpleadosID = p.EmpleadoID`;
 
     // "Último movimiento" del pedido: se retiró > se cerró > se creó. Sirve para
     // ordenar por cuándo se terminó y no por cuándo se pidió (un pedido del 10
