@@ -54,15 +54,20 @@ export default function ControlDespachos() {
 
   useEffect(() => { cargar(); }, [cargar]);
 
+  const [errorDet, setErrorDet] = useState("");
+
   const traerDetalle = useCallback(async (productId, orden) => {
-    setCargandoDet(true);
+    setCargandoDet(true); setErrorDet("");
     try {
       const { data: d } = await api.get("/deposito/despachos", {
         params: { desde, hasta, productId, orden },
       });
       setDetalle(d?.detalle || []);
-    } catch { setDetalle([]); }
-    finally { setCargandoDet(false); }
+    } catch (e) {
+      // Antes un error se veía como una tabla vacía y parecía que no había datos.
+      setDetalle([]);
+      setErrorDet(e?.response?.data?.error || "No se pudo cargar el detalle de este artículo.");
+    } finally { setCargandoDet(false); }
   }, [desde, hasta]);
 
   const abrir = async (art) => {
@@ -214,7 +219,9 @@ export default function ControlDespachos() {
                       {abierto === a.productId && (
                         <tr className="cd-fila-detalle">
                           <td colSpan={6}>
-                            {cargandoDet ? <div className="cd-vacio">Cargando detalle…</div> : (
+                            {cargandoDet ? <div className="cd-vacio">Cargando detalle…</div>
+                             : errorDet ? <div className="state error">{errorDet}</div>
+                             : detalle.length === 0 ? <div className="cd-vacio">Este artículo no tiene despachos en el período.</div> : (
                               <div className="cd-detalle">
                                 <div className="cd-detalle-head">
                                   <strong>Quién pidió este artículo</strong>

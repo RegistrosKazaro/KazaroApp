@@ -1063,6 +1063,17 @@ function ensureDespachoSnapshot() {
       CREATE INDEX IF NOT EXISTS idx_pd_fecha   ON pedido_despacho(fecha_despacho);
     `);
 
+    // CREATE TABLE IF NOT EXISTS no toca una tabla que ya existe: en las bases
+    // donde la tabla se creó antes de sumar cantidad_inicial, la columna faltaba
+    // y la consulta del detalle fallaba (el listado de artículos sí andaba,
+    // porque no la usa). Se agrega acá.
+    const colsItems = db.prepare(`PRAGMA table_info(pedido_despacho_items)`).all().map((c) => c.name.toLowerCase());
+    if (!colsItems.includes("cantidad_inicial")) {
+      db.prepare(`ALTER TABLE pedido_despacho_items ADD COLUMN cantidad_inicial INTEGER`).run();
+      db.prepare(`UPDATE pedido_despacho_items SET cantidad_inicial = cantidad WHERE cantidad_inicial IS NULL`).run();
+      console.log("[db] Columna 'cantidad_inicial' agregada a pedido_despacho_items");
+    }
+
     // Backfill: los pedidos históricos ya despachados no tienen foto. Se arma
     // con su detalle actual y la fecha que haya (listo para retirar, o retiro).
     const pendientes = db.prepare(`
