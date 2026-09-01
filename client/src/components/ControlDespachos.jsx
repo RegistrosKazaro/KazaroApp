@@ -10,14 +10,23 @@ import useDebounced from "../hooks/useDebounced";
 import { normalizeText } from "../utils/text";
 import "../styles/control-despachos.css";
 
-const hoy = () => new Date().toISOString().slice(0, 10);
-const primeroDelMes = () => {
+// Fechas en día ARGENTINO. Con toISOString() se tomaba el día UTC, que después
+// de las 21:00 ya es el día siguiente.
+const diaAr = (d = new Date()) =>
+  d.toLocaleDateString("en-CA", { timeZone: "America/Argentina/Cordoba" });
+
+const hoy = () => diaAr();
+
+// Arranca mostrando los últimos 30 días. Antes empezaba el 1° del mes: el día 1
+// el rango era un solo día y no se veía nada de lo despachado los días previos.
+const hace30Dias = () => {
   const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
+  d.setDate(d.getDate() - 30);
+  return diaAr(d);
 };
 
 export default function ControlDespachos() {
-  const [desde, setDesde] = useState(primeroDelMes());
+  const [desde, setDesde] = useState(hace30Dias());
   const [hasta, setHasta] = useState(hoy());
   const [q, setQ] = useState("");
   const qDeb = useDebounced(q, 250);
@@ -128,6 +137,25 @@ export default function ControlDespachos() {
           <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} /></label>
         <label className="cd-field"><span>Hasta</span>
           <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} /></label>
+        <div className="cd-atajos" role="group" aria-label="Períodos rápidos">
+          {[
+            ["Hoy", () => [hoy(), hoy()]],
+            ["Últimos 7 días", () => [diaAr(new Date(Date.now() - 6 * 864e5)), hoy()]],
+            ["Últimos 30 días", () => [hace30Dias(), hoy()]],
+            ["Mes pasado", () => {
+              const d = new Date();
+              const ini = new Date(d.getFullYear(), d.getMonth() - 1, 1);
+              const fin = new Date(d.getFullYear(), d.getMonth(), 0);
+              return [diaAr(ini), diaAr(fin)];
+            }],
+          ].map(([etiqueta, calc]) => (
+            <button key={etiqueta} type="button" className="cd-btn-ghost"
+              onClick={() => { const [a, b] = calc(); setDesde(a); setHasta(b); }}>
+              {etiqueta}
+            </button>
+          ))}
+        </div>
+
         <input className="cd-search" type="search" value={q} onChange={(e) => setQ(e.target.value)}
           placeholder="Buscar artículo por código o descripción…" />
         <button type="button" className="cd-btn" onClick={exportar} disabled={!articulos.length}>
@@ -148,7 +176,15 @@ export default function ControlDespachos() {
 
           {articulos.length === 0 ? (
             <div className="cd-vacio">
-              {q ? "No hay artículos que coincidan con la búsqueda." : "No hubo despachos en este período."}
+              {q ? "No hay artículos que coincidan con la búsqueda." : (
+                <>
+                  No hubo despachos entre el {desde} y el {hasta}.
+                  <br />
+                  <span style={{ fontSize: "0.85rem" }}>
+                    Probá ampliar el período con los botones de arriba.
+                  </span>
+                </>
+              )}
             </div>
           ) : (
             <div className="cd-tabla-wrap">

@@ -12,6 +12,7 @@
   font-size: 0.88rem; background: #fff; color: #0f172a;
 }
 .cd-search { flex: 1 1 280px; min-width: 200px; }
+.cd-atajos { display: flex; gap: 6px; flex-wrap: wrap; }
 .cd-btn {
   padding: 8px 15px; border-radius: 8px; border: 1px solid var(--brand, #2563eb);
   background: var(--brand, #2563eb); color: #fff; font-weight: 600; font-size: 0.86rem; cursor: pointer;

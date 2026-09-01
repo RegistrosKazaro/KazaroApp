@@ -417,7 +417,9 @@ router.get("/despachos", mustWarehouse, (req, res) => {
     // queda DESPUÉS del espacio, así que un pedido cerrado de noche se salía del
     // rango del día. Se normaliza la columna antes de comparar.
     const FECHA_CMP = `REPLACE(SUBSTR(d.fecha_despacho,1,19),'T',' ')`;
-    const cond = ["d.empresa_id = @empresaId", "p.deleted_at IS NULL"];
+    // La empresa se toma del PEDIDO, no de la foto: si una foto vieja quedó sin
+    // empresa_id, el pedido igual se sigue viendo.
+    const cond = ["COALESCE(p.empresa_id, d.empresa_id) = @empresaId", "p.deleted_at IS NULL"];
     const params = { empresaId };
     if (desde) { cond.push(`${FECHA_CMP} >= @desdeUtc`); params.desdeUtc = `${desde} 03:00:00`; }
     if (hasta) {
