@@ -1100,10 +1100,16 @@ export function snapshotDespacho(pedidoId, fecha = null) {
   // conserva la FECHA original del despacho: el movimiento en Flexxus quedó ese
   // día, aunque la corrección se haga después.
   const previa = db.prepare(`SELECT fecha_despacho FROM pedido_despacho WHERE pedido_id = ?`).get(id);
-  const cuando = fecha
-    || previa?.fecha_despacho
-    || (ped.closedat && String(ped.closedat).trim())
-    || (ped.retiro_at && String(ped.retiro_at).trim())
+  // Siempre en el formato de la base ("YYYY-MM-DD HH:MM:SS"): si se guarda en
+  // ISO, la "T" rompe las comparaciones de rango por texto.
+  const normFecha = (v) => {
+    const s = String(v ?? "").trim();
+    return s ? s.slice(0, 19).replace("T", " ") : null;
+  };
+  const cuando = normFecha(fecha)
+    || normFecha(previa?.fecha_despacho)
+    || normFecha(ped.closedat)
+    || normFecha(ped.retiro_at)
     || new Date().toISOString().slice(0, 19).replace("T", " ");
 
   // Y se conserva la cantidad de la PRIMERA foto, para saber qué se había

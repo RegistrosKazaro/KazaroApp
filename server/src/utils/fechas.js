@@ -43,6 +43,23 @@ export function parseDbDate(valor) {
 }
 
 /** ISO-8601 en UTC. Es el formato que conviene exponer en las APIs. */
+/**
+ * Marca de tiempo UTC en el MISMO formato que usa la base ("YYYY-MM-DD HH:MM:SS").
+ * Antes algunas fechas se guardaban con toISOString() ("...T12:00:00.000Z") y al
+ * comparar como texto la "T" queda después del espacio, así que un pedido de la
+ * noche caía fuera del rango del día. Guardar todo igual evita ese problema.
+ */
+export function ahoraUtcSql() {
+  return new Date().toISOString().slice(0, 19).replace("T", " ");
+}
+
+/** Normaliza una fecha guardada (ISO o no) al formato comparable de la base. */
+export function normalizarFechaSql(valor) {
+  const s = String(valor ?? "").trim();
+  if (!s) return null;
+  return s.slice(0, 19).replace("T", " ");
+}
+
 export function toISO(valor) {
   const d = parseDbDate(valor);
   return d ? d.toISOString() : null;

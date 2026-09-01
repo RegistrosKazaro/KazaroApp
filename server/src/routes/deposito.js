@@ -15,7 +15,7 @@ import {
   snapshotDespacho,
 } from "../db.js";
 import { sendMail } from "../utils/mailer.js";
-import { fmtAr } from "../utils/fechas.js";
+import { fmtAr, ahoraUtcSql } from "../utils/fechas.js";
 import { sinAcentosSql, normalizarBusqueda } from "../utils/busqueda.js";
 
 const router = Router();
@@ -373,9 +373,38 @@ router.get("/orders", mustWarehouse, (req, res) => {
    Las cantidades salen de v_pedido_items_neto, o sea netas de devoluciones
    aprobadas. Por ahora la comparación con Flexxus se hace a mano, con el CSV.
 ================================================================== */
+/**
+ * Red de seguridad: si algún pedido ya despachado quedó sin foto (por ejemplo
+ * porque se cerró con una versión anterior), se le genera al vuelo. Así no puede
+ * pasar que un pedido marcado listo para retirar no aparezca en el control.
+ */
+function repararFotosFaltantes(empresaId) {
+  try {
+    const faltan = db.prepare(`
+      SELECT p.PedidoID AS id,
+             COALESCE(NULLIF(TRIM(p.closedat),''), NULLIF(TRIM(p.retiro_at),''), p.Fecha) AS fecha
+      FROM Pedidos p
+      WHERE p.deleted_at IS NULL AND p.empresa_id = ?
+        AND (
+          (p.closedat IS NOT NULL AND TRIM(p.closedat) <> '')
+          OR (p.retiro_at IS NOT NULL AND TRIM(p.retiro_at) <> '')
+          OR LOWER(COALESCE(p.Status,'')) IN ('closed','retirado')
+        )
+        AND NOT EXISTS (SELECT 1 FROM pedido_despacho d WHERE d.pedido_id = p.PedidoID)
+    `).all(Number(empresaId));
+    for (const f of faltan) {
+      try { snapshotDespacho(f.id, f.fecha); } catch { /* sigue con los demás */ }
+    }
+    if (faltan.length) console.log(`[deposito] Foto de despacho generada al vuelo para ${faltan.length} pedidos`);
+  } catch (e) {
+    console.warn("[deposito] repararFotosFaltantes:", e?.message || e);
+  }
+}
+
 router.get("/despachos", mustWarehouse, (req, res) => {
   try {
     const empresaId = getEmpresaId(req);
+    repararFotosFaltantes(empresaId);
 
     // Se lee de la FOTO del despacho: el detalle tal como estaba cuando el
     // pedido se marcó listo para retirar. Es lo que quedó en Flexxus, así que
@@ -383,12 +412,17 @@ router.get("/despachos", mustWarehouse, (req, res) => {
     const dia = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "").trim()) ? String(v).trim() : null);
     const desde = dia(req.query.desde);
     const hasta = dia(req.query.hasta);
+    // Las fechas viejas se guardaron con formato ISO ("...T12:00:00.000Z") y las
+    // nuevas con el de la base ("... 12:00:00"). Al comparar como texto la "T"
+    // queda DESPUÉS del espacio, así que un pedido cerrado de noche se salía del
+    // rango del día. Se normaliza la columna antes de comparar.
+    const FECHA_CMP = `REPLACE(SUBSTR(d.fecha_despacho,1,19),'T',' ')`;
     const cond = ["d.empresa_id = @empresaId", "p.deleted_at IS NULL"];
     const params = { empresaId };
-    if (desde) { cond.push("d.fecha_despacho >= @desdeUtc"); params.desdeUtc = `${desde} 03:00:00`; }
+    if (desde) { cond.push(`${FECHA_CMP} >= @desdeUtc`); params.desdeUtc = `${desde} 03:00:00`; }
     if (hasta) {
       const dd = new Date(`${hasta}T00:00:00Z`); dd.setUTCDate(dd.getUTCDate() + 1);
-      cond.push("d.fecha_despacho < @hastaUtc"); params.hastaUtc = `${dd.toISOString().slice(0, 10)} 03:00:00`;
+      cond.push(`${FECHA_CMP} < @hastaUtc`); params.hastaUtc = `${dd.toISOString().slice(0, 10)} 03:00:00`;
     }
     const where = `WHERE ${cond.join(" AND ")}`;
     const FROM = `FROM pedido_despacho d
@@ -697,7 +731,7 @@ router.put("/orders/:id/pickup", mustWarehouse, (req, res) => {
       ? db.prepare(`SELECT contabilizado_at FROM Pedidos WHERE ${idCol} = ?`).get(id)?.contabilizado_at
       : "ya"; // sin columna: asumimos contabilizado (comportamiento viejo)
 
-    const retiroAt = new Date().toISOString();
+    const retiroAt = ahoraUtcSql();
 
     if (contabilizado == null) {
       const disc = applyOrderStockDiscount(Number(id));
@@ -749,7 +783,7 @@ router.put("/orders/:id/:action", mustWarehouse, async (req, res) => {
       add(["status"], "preparing"); add(["estado"], "preparacion");
       add(["isclosed", "cerrado"], 0); add(["closedat"], null);
     } else if (action === "close") {
-      closedAt = new Date().toISOString();
+      closedAt = ahoraUtcSql();
       add(["status"], "closed"); add(["estado"], "cerrado");
       add(["isclosed", "cerrado"], 1); add(["closedat"], closedAt);
     } else if (action === "reopen") {
