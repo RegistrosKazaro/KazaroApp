@@ -201,9 +201,10 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
       nombre: it.nombre ?? it.name ?? "",
       codigo: it.codigo ?? it.code ?? "",
       precio: Number(it.precio ?? it.price ?? 0),
+      // `cantidad` es lo que pidió el supervisor; `entrega` lo que sale ahora.
+      // Lo que no sale queda pendiente para una entrega posterior.
       cantidad: Number(it.cantidad ?? it.qty ?? 1),
-      // Cuánto de esta línea NO se despacha ahora y queda esperando stock.
-      pendiente: Number(it.pendiente ?? 0),
+      entrega: Math.max(0, Number(it.cantidad ?? it.qty ?? 1) - Number(it.pendiente ?? 0)),
     }))
   );
   const [busy, setBusy] = useState(false);
@@ -256,22 +257,23 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
     setDirty(true);
   };
 
-  /** Al salir del campo se normaliza: cantidad mínima 1 y pendiente entre 0 y la cantidad. */
+  /** Al salir del campo: la cantidad pedida es mínimo 1; lo entregado va de 0
+   *  (no sale nada, queda todo pendiente) hasta la cantidad pedida. */
   const normalizarFila = (pid) => {
     setItems((prev) => prev.map((it) => {
       if (it.productId !== pid) return it;
       const cantidad = Math.max(1, Math.trunc(Number(it.cantidad) || 1));
-      const pendiente = Math.max(0, Math.min(cantidad, Math.trunc(Number(it.pendiente) || 0)));
-      return { ...it, cantidad, pendiente };
+      const entrega = Math.max(0, Math.min(cantidad, Math.trunc(Number(it.entrega) || 0)));
+      return { ...it, cantidad, entrega };
     }));
   };
 
-  /** Deja toda la línea esperando stock (no se entrega nada ahora), o nada. */
-  const togglePendienteTotal = (pid) => {
+  /** Alterna entre no entregar nada (todo pendiente) y entregar la línea completa. */
+  const toggleEntregaTotal = (pid) => {
     setItems((prev) => prev.map((it) => {
       if (it.productId !== pid) return it;
       const cant = Math.max(1, Math.trunc(Number(it.cantidad) || 1));
-      return { ...it, cantidad: cant, pendiente: Number(it.pendiente) >= cant ? 0 : cant };
+      return { ...it, cantidad: cant, entrega: Number(it.entrega) > 0 ? 0 : cant };
     }));
     setDirty(true);
   };
@@ -279,16 +281,21 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
    *  quedado vacío o con el pendiente por encima de la cantidad. */
   const itemsNormalizados = () => items.map((it) => {
     const cantidad = Math.max(1, Math.trunc(Number(it.cantidad) || 1));
-    const pendiente = Math.max(0, Math.min(cantidad, Math.trunc(Number(it.pendiente) || 0)));
-    return { productId: it.productId, cantidad, pendiente };
+    const entrega = Math.max(0, Math.min(cantidad, Math.trunc(Number(it.entrega) || 0)));
+    // El backend trabaja con lo pendiente: es la cantidad menos lo que sale.
+    return { productId: it.productId, cantidad, pendiente: cantidad - entrega };
   });
 
   const quitar = (pid) => { setItems((prev) => prev.filter((it) => it.productId !== pid)); setDirty(true); };
   const agregar = (p) => {
     const pid = Number(p.id);
     setItems((prev) => prev.some((it) => it.productId === pid)
-      ? prev.map((it) => it.productId === pid ? { ...it, cantidad: (Number(it.cantidad) || 0) + 1 } : it)
-      : [...prev, { productId: pid, nombre: p.name ?? p.nombre ?? "", codigo: p.code ?? p.codigo ?? "", precio: Number(p.price ?? p.precio ?? 0), cantidad: 1, pendiente: 0 }]);
+      // Al sumar una unidad también se suma a lo que se entrega, para no dejar
+      // un pendiente sin querer.
+      ? prev.map((it) => it.productId === pid
+        ? { ...it, cantidad: (Number(it.cantidad) || 0) + 1, entrega: (Number(it.entrega) || 0) + 1 }
+        : it)
+      : [...prev, { productId: pid, nombre: p.name ?? p.nombre ?? "", codigo: p.code ?? p.codigo ?? "", precio: Number(p.price ?? p.precio ?? 0), cantidad: 1, entrega: 1 }]);
     setQ(""); setResultados([]); setDirty(true);
   };
 
@@ -359,11 +366,15 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
           <tr>
             <th scope="col">Código</th>
             <th scope="col">Insumo</th>
-            <th scope="col" className="numeric" style={{ width: 110 }}>Cantidad</th>
-            <th scope="col" className="numeric" style={{ width: 110 }} title="Cuánto de esta línea no se despacha ahora y queda esperando stock">
-              Deja pendiente
+            <th scope="col" className="numeric" style={{ width: 100 }} title="Lo que pidió el supervisor">
+              Pidió
             </th>
-            <th scope="col" className="numeric" style={{ width: 90 }}>Entrega</th>
+            <th scope="col" className="numeric" style={{ width: 150 }} title="Lo que sale ahora. Poné 0 para no entregar nada: queda todo pendiente.">
+              Entrega ahora
+            </th>
+            <th scope="col" className="numeric" style={{ width: 100 }} title="Lo que queda esperando stock, para entregar después en el mismo remito">
+              Queda pendiente
+            </th>
             <th scope="col" className="numeric">Precio</th>
             <th scope="col" className="numeric">Subtotal</th>
             <th scope="col" style={{ width: 40 }}></th>
@@ -381,23 +392,25 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
                   style={{ width: 70, textAlign: "right" }} />
               </td>
               <td className="numeric" style={{ whiteSpace: "nowrap" }}>
-                <input type="number" min="0" value={it.pendiente}
-                  onChange={(e) => escribir(it.productId, "pendiente", e.target.value)}
+                <input type="number" min="0" value={it.entrega}
+                  onChange={(e) => escribir(it.productId, "entrega", e.target.value)}
                   onBlur={() => normalizarFila(it.productId)}
-                  title="Unidades que quedan esperando stock. Se entregan después, en el mismo remito."
-                  style={{ width: 62, textAlign: "right",
-                    borderColor: Number(it.pendiente) > 0 ? "#b45309" : undefined,
-                    color: Number(it.pendiente) > 0 ? "#b45309" : undefined,
-                    fontWeight: Number(it.pendiente) > 0 ? 700 : 400 }} />
+                  title="Lo que sale ahora. Poné 0 para no entregar nada: queda todo pendiente."
+                  style={{ width: 70, textAlign: "right", fontWeight: 700 }} />
                 <button type="button" className="pill pill--ghost"
-                  onClick={() => togglePendienteTotal(it.productId)}
-                  title="Dejar toda la línea pendiente (no se entrega nada ahora), o volver a entregarla completa"
+                  onClick={() => toggleEntregaTotal(it.productId)}
+                  title="Alternar entre no entregar nada y entregar la línea completa"
                   style={{ padding: "1px 6px", marginLeft: 4, fontSize: "0.7rem" }}>
-                  {Number(it.pendiente) >= Number(it.cantidad) ? "nada" : "todo"}
+                  {Number(it.entrega) > 0 ? "nada" : "todo"}
                 </button>
               </td>
-              <td className="numeric" style={{ fontWeight: 700 }}>
-                {fmt(Math.max(0, (Number(it.cantidad) || 0) - (Number(it.pendiente) || 0)))}
+              <td className="numeric">
+                {(() => {
+                  const pend = Math.max(0, (Number(it.cantidad) || 0) - (Number(it.entrega) || 0));
+                  return pend > 0
+                    ? <span style={{ color: "#b45309", fontWeight: 700 }}>{fmt(pend)}</span>
+                    : <span style={{ color: "#9ca3af" }}>—</span>;
+                })()}
               </td>
               <td className="numeric">{money(it.precio)}</td>
               <td className="numeric">{money(it.precio * it.cantidad)}</td>
