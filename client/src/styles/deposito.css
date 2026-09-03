@@ -842,3 +842,13 @@
   display: block; font-size: 0.7rem; color: #b45309; font-weight: 600;
   margin-top: 2px; cursor: help;
 }
+
+/* Tarjeta de lo que quedó pendiente: mismo pedido y mismo remito, pero se
+   despacha aparte. Se distingue del pedido original con un borde ámbar. */
+.deposito-row--pendiente td { background: #fffbeb; }
+.dep-badge-pendiente {
+  display: inline-block; margin-left: 7px; background: #fef3c7; color: #b45309;
+  border: 1px solid #fde68a; border-radius: 999px; padding: 1px 8px;
+  font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .04em; vertical-align: middle; cursor: help;
+}

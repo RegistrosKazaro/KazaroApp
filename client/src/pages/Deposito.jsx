@@ -9,7 +9,6 @@ import { normalizeText } from "../utils/text";
 import "../styles/deposito.css";
 import DevolucionesPendientes from "../components/DevolucionesPendientes";
 import ControlDespachos from "../components/ControlDespachos";
-import EntregasPendientes from "../components/EntregasPendientes";
 
 function isoToday() { return new Date().toISOString().slice(0, 10); }
 function isoFirstOfMonth() {
@@ -634,31 +633,39 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
 
   const remitoNum = (o) => o.remitoDisplay ?? o.remito ?? o.remitoNumber ?? o.remito_numero ?? "-";
 
-  const moveToPreparing = async (id) => {
-    try { await api.put(`/deposito/orders/${id}/prepare`, {}, { withCredentials: true }); }
+  // Las tarjetas de pendiente usan su propio circuito: son el mismo pedido y el
+  // mismo remito, pero avanzan por separado.
+  const rutaAccion = (o, accion) => o?.esPendiente
+    ? `/deposito/orders/${o.id}/pendiente/${accion}`
+    : `/deposito/orders/${o.id}/${accion}`;
+  const quitarDeLista = (o) => setOrders(prev => prev.filter(x => (x.key ?? String(x.id)) !== (o.key ?? String(o.id))));
+
+  const moveToPreparing = async (o) => {
+    try { await api.put(rutaAccion(o, "prepare"), {}, { withCredentials: true }); }
     catch (e) { setErr(e?.response?.data?.error || e.message || "Error"); return; }
-    setOrders(prev => prev.filter(o => o.id !== id));
+    quitarDeLista(o);
   };
 
   // En todas las transiciones se saca el pedido de la lista actual pero NO se
   // cambia de pestaña: el encargado sigue trabajando en la etapa donde está.
-  const closeOrder = async (id) => {
-    try { await api.put(`/deposito/orders/${id}/close`, {}, { withCredentials: true }); }
+  const closeOrder = async (o) => {
+    try { await api.put(rutaAccion(o, "close"), {}, { withCredentials: true }); }
     catch (e) { setErr(e?.response?.data?.error || e.message || "Error"); return; }
-    setOrders(prev => prev.filter(o => o.id !== id));
+    quitarDeLista(o);
   };
 
-  const reopenOrder = async (id) => {
-    try { await api.put(`/deposito/orders/${id}/reopen`, {}, { withCredentials: true }); }
+  const reopenOrder = async (o) => {
+    try { await api.put(rutaAccion(o, "reopen"), {}, { withCredentials: true }); }
     catch (e) { setErr(e?.response?.data?.error || e.message || "Error"); return; }
-    setOrders(prev => prev.filter(o => o.id !== id));
+    quitarDeLista(o);
   };
 
-  const markPickup = async (id) => {
+  const markPickup = async (o) => {
+    const id = o.id;
     try {
-      await api.put(`/deposito/orders/${id}/pickup`, {}, { withCredentials: true });
+      await api.put(rutaAccion(o, "pickup"), {}, { withCredentials: true });
       setPickupFaltantes(prev => { const n = { ...prev }; delete n[id]; return n; });
-      setOrders(prev => prev.filter(o => o.id !== id));
+      quitarDeLista(o);
     } catch (e) {
       const data = e?.response?.data;
       if (data?.faltantes) {
@@ -821,10 +828,18 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
               const isExpanded = expandedOrders.has(o.id);
               const hasItems = Array.isArray(o.items) && o.items.length > 0;
               return (
-                <React.Fragment key={o.id}>
-                  <tr className={`deposito-row${isExpanded ? " deposito-row--expanded" : ""}`}>
+                <React.Fragment key={o.key ?? o.id}>
+                  <tr className={`deposito-row${isExpanded ? " deposito-row--expanded" : ""}${o.esPendiente ? " deposito-row--pendiente" : ""}`}>
                     <td style={{ fontVariantNumeric: "tabular-nums" }}>
                       #{o.displayId || String(o.id ?? "").padStart(7, "0")}
+                      {/* Es lo que quedó pendiente del mismo pedido: mismo número
+                          y mismo remito, pero se despacha aparte. */}
+                      {o.esPendiente && (
+                        <span className="dep-badge-pendiente"
+                          title="Es lo que quedó pendiente de este pedido. Se entrega con el mismo remito.">
+                          pendiente
+                        </span>
+                      )}
                     </td>
                     <td>{remitoNum(o)}</td>
                     <td>
@@ -859,7 +874,7 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                             poder corregir errores detectados después. El backend
                             ajusta la diferencia de stock si ya se había descontado.
                             La conciliación no cambia: usa la foto del despacho. */}
-                        {tab !== "revision_deposito" && tab !== "devoluciones" && (
+                        {tab !== "revision_deposito" && tab !== "devoluciones" && !o.esPendiente && (
                           <button type="button" className="pill pill--ghost" onClick={() => toggleEdit(o.id)}
                             style={{ borderColor: "#2563eb", color: "#1d4ed8" }}>
                             {editingOrders.has(o.id) ? "Cerrar edición" : "Editar"}
@@ -872,25 +887,25 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                           </button>
                         )}
                         {tab === "open" && (
-                          <button type="button" className="pill" onClick={() => moveToPreparing(o.id)}>
+                          <button type="button" className="pill" onClick={() => moveToPreparing(o)}>
                             Preparar
                           </button>
                         )}
                         {tab === "preparing" && (
-                          <button type="button" className="pill" onClick={() => closeOrder(o.id)}>
+                          <button type="button" className="pill" onClick={() => closeOrder(o)}>
                             Cerrar pedido
                           </button>
                         )}
                         {tab === "closed" && (
                           <button type="button" className="pill"
                             style={{ background: "#16a34a", borderColor: "#15803d" }}
-                            onClick={() => markPickup(o.id)}
+                            onClick={() => markPickup(o)}
                           >
                             Marcar como retirado
                           </button>
                         )}
                         {tab === "closed" && (
-                          <button type="button" className="pill pill--ghost" onClick={() => reopenOrder(o.id)}>
+                          <button type="button" className="pill pill--ghost" onClick={() => reopenOrder(o)}>
                             Reabrir
                           </button>
                         )}
@@ -903,15 +918,15 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
 
                   {/* Fila expandida: editor si está en revisión, detalle si no */}
                   {isExpanded && tab === "revision_deposito" && (
-                    <tr key={`${o.id}-edit`} className="deposito-row--items-container">
+                    <tr key={`${o.key ?? o.id}-edit`} className="deposito-row--items-container">
                       <td colSpan={6} style={{ padding: 0 }}>
                         <RevisionOrderEditor order={o} onDone={list} />
                       </td>
                     </tr>
                   )}
                   {/* Editor en todas las pestañas de trabajo, incluida Retirados */}
-                  {tab !== "revision_deposito" && editingOrders.has(o.id) && (
-                    <tr key={`${o.id}-edit`} className="deposito-row--items-container">
+                  {tab !== "revision_deposito" && !o.esPendiente && editingOrders.has(o.id) && (
+                    <tr key={`${o.key ?? o.id}-edit`} className="deposito-row--items-container">
                       <td colSpan={6} style={{ padding: 0 }}>
                         <RevisionOrderEditor order={o} onDone={list} canConfirm={false}
                           seedFaltantes={pickupFaltantes[o.id] || null} />
@@ -1232,7 +1247,7 @@ export default function Deposito() {
       <div className="dep-topbar">
         <h1 className="deposito-title">Panel de Depósito</h1>
         <div className="dep-vistas" role="tablist" aria-label="Vista del panel">
-          {[["pedidos", "Pedidos"], ["pendientes", "Entregas pendientes"], ["despachos", "Control de despachos"]].map(([k, l]) => (
+          {[["pedidos", "Pedidos"], ["despachos", "Control de despachos"]].map(([k, l]) => (
             <button key={k} type="button" role="tab" aria-selected={activeView === k}
               className={`pill${activeView === k ? "" : " pill--ghost"}`}
               onClick={() => setActiveView(k)}>{l}</button>
@@ -1540,13 +1555,6 @@ export default function Deposito() {
       {activeView === "pedidos" && (
         <div style={{ marginTop: 16 }}>
           <DepositoOrdersPanel pedidosPorDia={[]} />
-        </div>
-      )}
-
-      {/* ===== ENTREGAS PENDIENTES ===== */}
-      {activeView === "pendientes" && (
-        <div style={{ marginTop: 16 }}>
-          <EntregasPendientes />
         </div>
       )}
 

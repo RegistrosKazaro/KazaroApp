@@ -1041,6 +1041,20 @@ function ensurePendientesColumn() {
       db.prepare(`ALTER TABLE PedidoItems ADD COLUMN cantidad_pendiente INTEGER NOT NULL DEFAULT 0`).run();
       console.log("[db] Columna 'cantidad_pendiente' agregada a PedidoItems");
     }
+    // La parte pendiente recorre las solapas del depósito por su cuenta
+    // (Pendientes -> En preparación -> Listo para retirar -> Retirado), pero
+    // sigue siendo el MISMO pedido: conserva el número de remito original.
+    const pc = db.prepare(`PRAGMA table_info(Pedidos)`).all().map((c) => c.name.toLowerCase());
+    for (const [col, tipo] of [
+      ["pendiente_status", "TEXT"],
+      ["pendiente_closedat", "TEXT"],
+      ["pendiente_retiro_at", "TEXT"],
+    ]) {
+      if (!pc.includes(col)) {
+        db.prepare(`ALTER TABLE Pedidos ADD COLUMN ${col} ${tipo} DEFAULT NULL`).run();
+        console.log(`[db] Columna '${col}' agregada a Pedidos`);
+      }
+    }
   } catch (e) {
     console.warn("[db] ensurePendientesColumn:", e?.message || e);
   }
@@ -1225,7 +1239,11 @@ export function snapshotDespacho(pedidoId, fecha = null) {
  * @param {number} pedidoId
  * @param {Array<{productId:number, cantidad:number}>} entregados
  */
-export function registrarEntregaPendientes(pedidoId, entregados) {
+export function registrarEntregaPendientes(pedidoId, entregados, opciones = {}) {
+  // `bajarPendiente: false` deja el pendiente marcado: se usa al pasar a "listo
+  // para retirar", donde ya hay movimiento en Flexxus pero el material todavía
+  // no se llevó. Se limpia recién al retirarse.
+  const { bajarPendiente = true, fecha = null } = opciones;
   const id = Number(pedidoId);
   const ped = db.prepare(
     `SELECT PedidoID, ServicioID, EmpleadoID, Rol, empresa_id, Total FROM Pedidos WHERE PedidoID = ?`
@@ -1237,7 +1255,7 @@ export function registrarEntregaPendientes(pedidoId, entregados) {
     .filter((e) => Number.isFinite(e.pid) && e.pid > 0 && e.cant > 0);
   if (!lista.length) return { ok: false, error: "No hay cantidades para entregar" };
 
-  const cuando = new Date().toISOString().slice(0, 19).replace("T", " ");
+  const cuando = fecha || new Date().toISOString().slice(0, 19).replace("T", " ");
   const proximo = db.prepare(
     `SELECT COALESCE(MAX(numero),0) + 1 AS n FROM pedido_despacho_items WHERE pedido_id = ?`
   ).get(id).n;
@@ -1269,7 +1287,7 @@ export function registrarEntregaPendientes(pedidoId, entregados) {
       const precio = Number(info.precio || 0);
       ins.run(id, proximo, it.pid, info.codigo || "", info.nombre || "", precio,
         it.cant, it.cant, it.cant * precio, cuando);
-      bajaPendiente.run(it.cant, id, it.pid);
+      if (bajarPendiente) bajaPendiente.run(it.cant, id, it.pid);
     }
   });
   tx();

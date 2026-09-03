@@ -356,8 +356,47 @@ router.get("/orders", mustWarehouse, (req, res) => {
       };
     });
 
+    // ── Tarjetas de PENDIENTES ──────────────────────────────────────────────
+    // Cuando un pedido se despacha incompleto, lo que quedó recorre las solapas
+    // por su cuenta, como una tarjeta más. No es un pedido nuevo: conserva el
+    // número y el remito del original, y al entregarse se suma a ese mismo
+    // pedido. Es interno del depósito: el supervisor no lo ve aparte.
+    const pendientesRows = [];
+    for (const row of rawOrders) {
+      const estadoPend = String(row.pendiente_status || "").toLowerCase();
+      if (!estadoPend) continue;
+      const id = getVal(row, ["pedidoid", "id", "idpedido", "pedido_id"]) ?? row.__rowid;
+      const items = (itemsMap[String(id)] || []).filter((i) => i.pendiente > 0);
+      if (!items.length) continue;
+
+      const base = cleanRows.find((c) => String(c.id) === String(id));
+      pendientesRows.push({
+        ...base,
+        // Clave propia: la tarjeta convive con el pedido original en la lista.
+        key: `${id}-pendiente`,
+        esPendiente: true,
+        pedidoOrigenId: id,
+        // Se muestran las unidades que faltan entregar, no las originales.
+        items: items.map((i) => ({ ...i, cantidad: i.pendiente, subtotal: i.precio * i.pendiente })),
+        total: items.reduce((s, i) => s + i.precio * i.pendiente, 0),
+        status: estadoPend === "closed" ? "closed" : (estadoPend === "preparing" ? "preparing" : "open"),
+        closedAt: row.pendiente_closedat || null,
+        retiroAt: row.pendiente_retiro_at || null,
+        isClosed: estadoPend === "closed",
+      });
+    }
+
     const statusParam = String(req.query.status || "open").toLowerCase();
-    const filtered = cleanRows.filter(o => {
+    const todas = [...cleanRows.map((o) => ({ ...o, key: String(o.id) })), ...pendientesRows];
+    const filtered = todas.filter(o => {
+      // El pedido original, una vez despachado, no vuelve a aparecer por sus
+      // pendientes: para eso está la tarjeta aparte.
+      if (o.esPendiente) {
+        if (statusParam === "revision_deposito") return false;
+        if (statusParam === "retirado") return o.status === "closed" && !!o.retiroAt;
+        if (statusParam === "closed") return o.status === "closed" && !o.retiroAt;
+        return o.status === statusParam;
+      }
       if (statusParam === "revision_deposito") return o.status === "revision_deposito";
       if (statusParam === "preparing") return o.status === "preparing";
       if (statusParam === "closed")    return o.status === "closed" && !o.retiroAt;
@@ -408,131 +447,80 @@ function repararFotosFaltantes(empresaId) {
   }
 }
 
-/* ================== Entregas parciales ==================
-   Pedidos que se despacharon incompletos y tienen material esperando.
-   No generan un remito nuevo: al entregarlos se suman al mismo pedido como
-   una entrega adicional, con su propia fecha (que es la que cruza con Flexxus).
-========================================================== */
-router.get("/pendientes", mustWarehouse, (req, res) => {
-  try {
-    const empresaId = getEmpresaId(req);
-    const filas = db.prepare(`
-      SELECT p.PedidoID AS id, p.ServicioID AS servicioId, p.EmpleadoID AS empleadoId,
-             p.Rol AS rol, p.Status AS status, p.closedat, p.retiro_at, p.Fecha AS fecha,
-             i.ProductoID AS productId, MAX(i.Nombre) AS nombre, MAX(i.Codigo) AS codigo,
-             COALESCE(SUM(i.Cantidad),0) AS cantidad,
-             COALESCE(SUM(i.cantidad_pendiente),0) AS pendiente,
-             MAX(i.Precio) AS precio
-      FROM Pedidos p JOIN PedidoItems i ON i.PedidoID = p.PedidoID
-      WHERE p.empresa_id = @empresaId AND p.deleted_at IS NULL
-        AND COALESCE(i.cantidad_pendiente,0) > 0
-      GROUP BY p.PedidoID, i.ProductoID
-      ORDER BY p.PedidoID DESC
-    `).all({ empresaId });
-
-    const porPedido = new Map();
-    for (const f of filas) {
-      if (!porPedido.has(f.id)) {
-        porPedido.set(f.id, {
-          id: f.id,
-          numero: pad7(f.id),
-          servicio: f.servicioId ? (getServiceNameById(f.servicioId) || `Servicio ${f.servicioId}`) : null,
-          solicitante: f.empleadoId ? (getEmployeeDisplayName(f.empleadoId) || null) : null,
-          rol: f.rol || null,
-          status: f.status || null,
-          retirado: !!(f.retiro_at && String(f.retiro_at).trim()),
-          cerradoAr: f.closedat ? fmtAr(f.closedat) : null,
-          fechaAr: f.fecha ? fmtAr(f.fecha) : null,
-          items: [],
-        });
-      }
-      porPedido.get(f.id).items.push({
-        productId: Number(f.productId),
-        nombre: f.nombre || "—",
-        codigo: f.codigo || "",
-        cantidad: Number(f.cantidad || 0),
-        pendiente: Number(f.pendiente || 0),
-        entregado: Math.max(0, Number(f.cantidad || 0) - Number(f.pendiente || 0)),
-        precio: Number(f.precio || 0),
-      });
-    }
-
-    const pedidos = [...porPedido.values()];
-    res.json({
-      ok: true,
-      pedidos,
-      totales: {
-        pedidos: pedidos.length,
-        unidades: pedidos.reduce((s, p) => s + p.items.reduce((a, i) => a + i.pendiente, 0), 0),
-      },
-    });
-  } catch (e) {
-    console.error("[deposito/pendientes]", e.message);
-    res.status(500).json({ error: "No se pudieron obtener los pendientes" });
-  }
-});
-
-/** Entrega (total o parcial) de los pendientes de un pedido. */
-router.post("/orders/:id/entregar-pendientes", mustWarehouse, (req, res) => {
+/* ============ Recorrido de la parte pendiente ============
+   Lo que quedó pendiente avanza por las mismas etapas que un pedido, pero sin
+   ser un pedido nuevo: es el mismo, con el mismo remito. Al marcarlo listo para
+   retirar queda el movimiento para la conciliación; al retirarlo se descuenta
+   el stock y recién ahí suma en los informes.
+=========================================================== */
+router.put("/orders/:id/pendiente/:action", mustWarehouse, (req, res) => {
   try {
     const id = Number(req.params.id);
+    const action = String(req.params.action || "").toLowerCase();
     const empresaId = getEmpresaId(req);
-    const owner = db.prepare(`SELECT empresa_id FROM Pedidos WHERE PedidoID = ?`).get(id);
-    if (!owner) return res.status(404).json({ error: "Pedido no encontrado" });
-    if (owner.empresa_id != null && Number(owner.empresa_id) !== Number(empresaId)) {
+
+    const ped = db.prepare(
+      `SELECT PedidoID, empresa_id, pendiente_status FROM Pedidos WHERE PedidoID = ?`
+    ).get(id);
+    if (!ped) return res.status(404).json({ error: "Pedido no encontrado" });
+    if (ped.empresa_id != null && Number(ped.empresa_id) !== Number(empresaId)) {
       return res.status(404).json({ error: "Pedido no encontrado" });
     }
 
-    // Qué se entrega. Si no se especifica, se entregan todos los pendientes.
-    const pedidos = Array.isArray(req.body?.items) ? req.body.items : null;
     const pendientes = db.prepare(
       `SELECT ProductoID AS pid, MAX(Nombre) AS nombre, COALESCE(SUM(cantidad_pendiente),0) AS pend
        FROM PedidoItems WHERE PedidoID = ? GROUP BY ProductoID HAVING pend > 0`
     ).all(id);
     if (!pendientes.length) return res.status(400).json({ error: "Este pedido no tiene pendientes" });
 
-    const mapaPend = new Map(pendientes.map((p) => [Number(p.pid), { pend: Number(p.pend), nombre: p.nombre }]));
-    let entregados;
-    if (pedidos) {
-      entregados = [];
-      for (const it of pedidos) {
-        const pid = Number(it.productId);
-        const cant = Math.trunc(Number(it.cantidad) || 0);
-        if (!mapaPend.has(pid)) return res.status(400).json({ error: `Ese insumo no está pendiente en el pedido` });
-        if (cant <= 0) continue;
-        if (cant > mapaPend.get(pid).pend) {
-          return res.status(400).json({ error: `No se puede entregar más de lo pendiente de ${mapaPend.get(pid).nombre}` });
-        }
-        entregados.push({ productId: pid, cantidad: cant });
+    const ahora = ahoraUtcSql();
+
+    if (action === "prepare") {
+      db.prepare(`UPDATE Pedidos SET pendiente_status='preparing', pendiente_closedat=NULL WHERE PedidoID=?`).run(id);
+      return res.json({ ok: true, estado: "preparing" });
+    }
+
+    if (action === "reopen") {
+      db.prepare(
+        `UPDATE Pedidos SET pendiente_status='open', pendiente_closedat=NULL, pendiente_retiro_at=NULL WHERE PedidoID=?`
+      ).run(id);
+      return res.json({ ok: true, estado: "open" });
+    }
+
+    if (action === "close") {
+      // Queda el movimiento de esta entrega para el control de despachos.
+      const entregados = pendientes.map((p) => ({ productId: Number(p.pid), cantidad: Number(p.pend) }));
+      const r = registrarEntregaPendientes(id, entregados, { bajarPendiente: false, fecha: ahora });
+      if (!r.ok) return res.status(400).json({ error: r.error || "No se pudo registrar la entrega" });
+      db.prepare(`UPDATE Pedidos SET pendiente_status='closed', pendiente_closedat=? WHERE PedidoID=?`).run(ahora, id);
+      return res.json({ ok: true, estado: "closed", entrega: r.entrega });
+    }
+
+    if (action === "pickup") {
+      if (String(ped.pendiente_status || "").toLowerCase() !== "closed") {
+        return res.status(400).json({ error: "Primero marcalo como listo para retirar" });
       }
-      if (!entregados.length) return res.status(400).json({ error: "No indicaste cantidades para entregar" });
-    } else {
-      entregados = pendientes.map((p) => ({ productId: Number(p.pid), cantidad: Number(p.pend) }));
+      // Recién al retirarse se descuenta el stock y se limpia el pendiente,
+      // que es cuando el material efectivamente salió.
+      const deltas = pendientes.map((p) => ({
+        productId: Number(p.pid), delta: Number(p.pend), nombre: p.nombre,
+      }));
+      const st = applyOrderStockDelta(id, deltas, { permitirNegativo: false });
+      if (!st.ok) {
+        return res.status(400).json({
+          error: "No hay stock suficiente para entregar esos pendientes",
+          faltantes: st.faltantes || null,
+        });
+      }
+      db.prepare(`UPDATE PedidoItems SET cantidad_pendiente = 0 WHERE PedidoID = ?`).run(id);
+      db.prepare(`UPDATE Pedidos SET pendiente_status='closed', pendiente_retiro_at=? WHERE PedidoID=?`).run(ahora, id);
+      return res.json({ ok: true, estado: "retirado" });
     }
 
-    // Descontar el stock de lo que ahora sí sale.
-    const deltas = entregados.map((e) => ({
-      productId: e.productId, delta: e.cantidad, nombre: mapaPend.get(e.productId)?.nombre,
-    }));
-    const st = applyOrderStockDelta(id, deltas, { permitirNegativo: false });
-    if (!st.ok) {
-      return res.status(400).json({
-        error: "No hay stock suficiente para entregar esos pendientes",
-        faltantes: st.faltantes || null,
-      });
-    }
-
-    const r = registrarEntregaPendientes(id, entregados);
-    if (!r.ok) return res.status(400).json({ error: r.error || "No se pudo registrar la entrega" });
-
-    const quedan = db.prepare(
-      `SELECT COALESCE(SUM(cantidad_pendiente),0) AS n FROM PedidoItems WHERE PedidoID = ?`
-    ).get(id).n;
-
-    res.json({ ok: true, entrega: r.entrega, items: r.items, pendientesRestantes: Number(quedan || 0) });
+    return res.status(400).json({ error: "Acción inválida" });
   } catch (e) {
-    console.error("[deposito/entregar-pendientes]", e.message);
-    res.status(500).json({ error: "No se pudo entregar los pendientes" });
+    console.error("[deposito/pendiente]", e.message);
+    res.status(500).json({ error: "No se pudo actualizar el pendiente" });
   }
 });
 
@@ -959,6 +947,20 @@ router.put("/orders/:id/:action", mustWarehouse, async (req, res) => {
       // quedó como movimiento en Flexxus. La conciliación lee de acá.
       try { snapshotDespacho(id); }
       catch (e) { console.warn("[deposito] snapshotDespacho:", e?.message || e); }
+
+      // Si el pedido se despachó incompleto, lo que quedó arranca su propio
+      // recorrido en la solapa Pendientes, con el mismo remito.
+      try {
+        const pend = db.prepare(
+          `SELECT COALESCE(SUM(cantidad_pendiente),0) AS n FROM PedidoItems WHERE PedidoID = ?`
+        ).get(id).n;
+        if (Number(pend) > 0) {
+          db.prepare(
+            `UPDATE Pedidos SET pendiente_status = 'open'
+             WHERE PedidoID = ? AND COALESCE(NULLIF(TRIM(pendiente_status),''), '') = ''`
+          ).run(id);
+        }
+      } catch (e) { console.warn("[deposito] inicio pendiente:", e?.message || e); }
 
       try {
         const ped = db.prepare(`SELECT EmpleadoID, empresa_id FROM Pedidos WHERE ${idCol} = ?`).get(id);
