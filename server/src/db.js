@@ -1029,6 +1029,24 @@ function ensureItemControlTable() {
 }
 ensureItemControlTable();
 
+/* ============ Entregas parciales ============
+   El depósito puede despachar un pedido en varias tandas: entrega lo que tiene
+   y deja el resto pendiente, sin generar un remito nuevo. `cantidad_pendiente`
+   guarda cuántas unidades de esa línea todavía no salieron.
+============================================== */
+function ensurePendientesColumn() {
+  try {
+    const cols = db.prepare(`PRAGMA table_info(PedidoItems)`).all().map((c) => c.name.toLowerCase());
+    if (!cols.includes("cantidad_pendiente")) {
+      db.prepare(`ALTER TABLE PedidoItems ADD COLUMN cantidad_pendiente INTEGER NOT NULL DEFAULT 0`).run();
+      console.log("[db] Columna 'cantidad_pendiente' agregada a PedidoItems");
+    }
+  } catch (e) {
+    console.warn("[db] ensurePendientesColumn:", e?.message || e);
+  }
+}
+ensurePendientesColumn();
+
 /* ============ Foto del despacho (para la conciliación) ============
    Cuando un pedido se marca LISTO PARA RETIRAR se guarda el detalle exacto de
    ese momento. Es lo que quedó registrado como movimiento en Flexxus, así que
@@ -1072,6 +1090,39 @@ function ensureDespachoSnapshot() {
       db.prepare(`ALTER TABLE pedido_despacho_items ADD COLUMN cantidad_inicial INTEGER`).run();
       db.prepare(`UPDATE pedido_despacho_items SET cantidad_inicial = cantidad WHERE cantidad_inicial IS NULL`).run();
       console.log("[db] Columna 'cantidad_inicial' agregada a pedido_despacho_items");
+    }
+
+    // Entregas parciales: un pedido puede despacharse en varias tandas. Cada
+    // ítem guarda en qué entrega salió y con qué fecha, porque en Flexxus cada
+    // tanda es un movimiento distinto. La clave pasa a incluir el número de
+    // entrega para que un mismo producto pueda salir en dos.
+    if (!colsItems.includes("numero")) {
+      db.exec(`
+        CREATE TABLE pedido_despacho_items_new (
+          pedido_id        INTEGER NOT NULL,
+          numero           INTEGER NOT NULL DEFAULT 1,
+          producto_id      INTEGER NOT NULL,
+          codigo           TEXT,
+          nombre           TEXT,
+          precio           REAL,
+          cantidad         INTEGER NOT NULL,
+          cantidad_inicial INTEGER,
+          subtotal         REAL,
+          fecha_despacho   TEXT,
+          PRIMARY KEY (pedido_id, numero, producto_id)
+        );
+        INSERT INTO pedido_despacho_items_new
+          (pedido_id, numero, producto_id, codigo, nombre, precio, cantidad, cantidad_inicial, subtotal, fecha_despacho)
+          SELECT i.pedido_id, 1, i.producto_id, i.codigo, i.nombre, i.precio, i.cantidad,
+                 i.cantidad_inicial, i.subtotal, d.fecha_despacho
+          FROM pedido_despacho_items i
+          LEFT JOIN pedido_despacho d ON d.pedido_id = i.pedido_id;
+        DROP TABLE pedido_despacho_items;
+        ALTER TABLE pedido_despacho_items_new RENAME TO pedido_despacho_items;
+        CREATE INDEX IF NOT EXISTS idx_pdi_pedido ON pedido_despacho_items(pedido_id);
+        CREATE INDEX IF NOT EXISTS idx_pdi_fecha  ON pedido_despacho_items(fecha_despacho);
+      `);
+      console.log("[db] pedido_despacho_items migrada para soportar entregas parciales");
     }
 
     // Backfill: los pedidos históricos ya despachados no tienen foto. Se arma
@@ -1126,19 +1177,21 @@ export function snapshotDespacho(pedidoId, fecha = null) {
   // Y se conserva la cantidad de la PRIMERA foto, para saber qué se había
   // registrado al despachar y qué quedó después de corregir.
   const iniciales = new Map(
-    db.prepare(`SELECT producto_id, COALESCE(cantidad_inicial, cantidad) AS ini FROM pedido_despacho_items WHERE pedido_id = ?`)
+    db.prepare(`SELECT producto_id, COALESCE(cantidad_inicial, cantidad) AS ini FROM pedido_despacho_items WHERE pedido_id = ? AND numero = 1`)
       .all(id).map((r) => [Number(r.producto_id), Number(r.ini)])
   );
 
+  // Sólo se fotografía lo que REALMENTE sale: lo pendiente no se despachó.
   const items = db.prepare(
     `SELECT ProductoID AS pid, MAX(Codigo) AS codigo, MAX(Nombre) AS nombre,
-            MAX(Precio) AS precio, COALESCE(SUM(Cantidad),0) AS cantidad,
-            COALESCE(SUM(Subtotal),0) AS subtotal
+            MAX(Precio) AS precio,
+            COALESCE(SUM(Cantidad),0) - COALESCE(SUM(cantidad_pendiente),0) AS cantidad,
+            (COALESCE(SUM(Cantidad),0) - COALESCE(SUM(cantidad_pendiente),0)) * COALESCE(MAX(Precio),0) AS subtotal
      FROM PedidoItems WHERE PedidoID = ? GROUP BY ProductoID`
   ).all(id);
 
   const tx = db.transaction(() => {
-    db.prepare(`DELETE FROM pedido_despacho_items WHERE pedido_id = ?`).run(id);
+    db.prepare(`DELETE FROM pedido_despacho_items WHERE pedido_id = ? AND numero = 1`).run(id);
     db.prepare(
       `INSERT INTO pedido_despacho (pedido_id, fecha_despacho, servicio_id, empleado_id, rol, empresa_id, total)
        VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -1149,18 +1202,78 @@ export function snapshotDespacho(pedidoId, fecha = null) {
     ).run(id, cuando, ped.ServicioID ?? null, ped.EmpleadoID ?? null, ped.Rol ?? null, ped.empresa_id ?? null, Number(ped.Total || 0));
 
     const ins = db.prepare(
-      `INSERT INTO pedido_despacho_items (pedido_id, producto_id, codigo, nombre, precio, cantidad, cantidad_inicial, subtotal)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO pedido_despacho_items (pedido_id, numero, producto_id, codigo, nombre, precio, cantidad, cantidad_inicial, subtotal, fecha_despacho)
+       VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     for (const it of items) {
       if (Number(it.cantidad) <= 0) continue;
       const ini = iniciales.has(Number(it.pid)) ? iniciales.get(Number(it.pid)) : Number(it.cantidad || 0);
       ins.run(id, it.pid, it.codigo || "", it.nombre || "", Number(it.precio || 0),
-        Number(it.cantidad || 0), ini, Number(it.subtotal || 0));
+        Number(it.cantidad || 0), ini, Number(it.subtotal || 0), cuando);
     }
   });
   tx();
   return { ok: true, items: items.length, fecha: cuando };
+}
+
+/**
+ * Registra una entrega ADICIONAL de un pedido: los pendientes que ahora sí
+ * salen. Se guarda como una entrega nueva (numero 2, 3, ...) con su propia
+ * fecha, porque en Flexxus es un movimiento aparte. El remito no cambia: sigue
+ * siendo el mismo pedido.
+ *
+ * @param {number} pedidoId
+ * @param {Array<{productId:number, cantidad:number}>} entregados
+ */
+export function registrarEntregaPendientes(pedidoId, entregados) {
+  const id = Number(pedidoId);
+  const ped = db.prepare(
+    `SELECT PedidoID, ServicioID, EmpleadoID, Rol, empresa_id, Total FROM Pedidos WHERE PedidoID = ?`
+  ).get(id);
+  if (!ped) return { ok: false, error: "Pedido no encontrado" };
+
+  const lista = (entregados || [])
+    .map((e) => ({ pid: Number(e.productId), cant: Math.trunc(Number(e.cantidad) || 0) }))
+    .filter((e) => Number.isFinite(e.pid) && e.pid > 0 && e.cant > 0);
+  if (!lista.length) return { ok: false, error: "No hay cantidades para entregar" };
+
+  const cuando = new Date().toISOString().slice(0, 19).replace("T", " ");
+  const proximo = db.prepare(
+    `SELECT COALESCE(MAX(numero),0) + 1 AS n FROM pedido_despacho_items WHERE pedido_id = ?`
+  ).get(id).n;
+
+  const tx = db.transaction(() => {
+    // La cabecera de la foto tiene que existir (pedidos viejos podrían no tenerla)
+    db.prepare(
+      `INSERT INTO pedido_despacho (pedido_id, fecha_despacho, servicio_id, empleado_id, rol, empresa_id, total)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(pedido_id) DO NOTHING`
+    ).run(id, cuando, ped.ServicioID ?? null, ped.EmpleadoID ?? null, ped.Rol ?? null,
+      ped.empresa_id ?? null, Number(ped.Total || 0));
+
+    const ins = db.prepare(
+      `INSERT INTO pedido_despacho_items
+         (pedido_id, numero, producto_id, codigo, nombre, precio, cantidad, cantidad_inicial, subtotal, fecha_despacho)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    const bajaPendiente = db.prepare(
+      `UPDATE PedidoItems SET cantidad_pendiente = MAX(0, cantidad_pendiente - ?)
+       WHERE PedidoID = ? AND ProductoID = ?`
+    );
+
+    for (const it of lista) {
+      const info = db.prepare(
+        `SELECT MAX(Codigo) AS codigo, MAX(Nombre) AS nombre, MAX(Precio) AS precio
+         FROM PedidoItems WHERE PedidoID = ? AND ProductoID = ?`
+      ).get(id, it.pid) || {};
+      const precio = Number(info.precio || 0);
+      ins.run(id, proximo, it.pid, info.codigo || "", info.nombre || "", precio,
+        it.cant, it.cant, it.cant * precio, cuando);
+      bajaPendiente.run(it.cant, id, it.pid);
+    }
+  });
+  tx();
+  return { ok: true, entrega: proximo, fecha: cuando, items: lista.length };
 }
 
 ensureDespachoSnapshot();
@@ -1216,8 +1329,11 @@ function ensureDevolucionesViews() {
           COALESCE(MAX(i.Precio),0) AS Precio,
           COALESCE(SUM(i.Cantidad),0) AS CantidadOriginal,
           COALESCE(MAX(d.devuelto),0) AS Devuelto,
-          MAX(0, COALESCE(SUM(i.Cantidad),0) - COALESCE(MAX(d.devuelto),0)) AS Cantidad,
-          MAX(0, COALESCE(SUM(i.Subtotal),0) - COALESCE(MAX(d.devuelto),0) * COALESCE(MAX(i.Precio),0)) AS Subtotal
+          -- Lo que quedó pendiente de entregar todavía no salió del depósito,
+          -- así que no cuenta como consumido: se descuenta igual que una devolución.
+          COALESCE(SUM(i.cantidad_pendiente),0) AS Pendiente,
+          MAX(0, COALESCE(SUM(i.Cantidad),0) - COALESCE(SUM(i.cantidad_pendiente),0) - COALESCE(MAX(d.devuelto),0)) AS Cantidad,
+          MAX(0, (COALESCE(SUM(i.Cantidad),0) - COALESCE(SUM(i.cantidad_pendiente),0) - COALESCE(MAX(d.devuelto),0)) * COALESCE(MAX(i.Precio),0)) AS Subtotal
         FROM PedidoItems i
         LEFT JOIN v_devoluciones_aprobadas d
           ON d.pedido_id = i.PedidoID AND d.producto_id = i.ProductoID
@@ -1579,9 +1695,13 @@ export function applyOrderStockDiscount(pedidoId) {
   const { prodId, prodName, prodStock } = sch.cols;
   const hasStock = !!prodStock;
 
+  // Sólo se descuenta lo que realmente sale: lo que quedó pendiente sigue en
+  // el depósito y se descontará cuando se entregue.
   const items = db.prepare(
-    `SELECT ProductoID AS pid, Nombre AS name, Cantidad AS cantidad FROM PedidoItems WHERE PedidoID = ?`
-  ).all(pedidoId);
+    `SELECT ProductoID AS pid, Nombre AS name,
+            Cantidad - COALESCE(cantidad_pendiente,0) AS cantidad
+     FROM PedidoItems WHERE PedidoID = ?`
+  ).all(pedidoId).filter((i) => Number(i.cantidad) > 0);
   if (!items.length) return { ok: false, error: "El pedido no tiene ítems" };
 
   // Stock disponible de cada insumo, según la rama que corresponda.
@@ -1734,15 +1854,32 @@ export function getFullOrder(pedidoId) {
     FROM Pedidos p WHERE p.PedidoID = ?
   `).get(pedidoId);
   if (!ped) return null;
+  // `qty` es lo que se entrega en esta tanda; `pendiente` lo que queda para la
+  // próxima. El remito muestra las dos cosas y conserva el mismo número.
   const items = db.prepare(`
     SELECT PedidoItemID AS id, ProductoID AS productId, Nombre AS name,
-           Precio AS price, Cantidad AS qty, Subtotal AS subtotal, Codigo AS code
+           Precio AS price,
+           Cantidad - COALESCE(cantidad_pendiente,0) AS qty,
+           Cantidad AS qtyPedida,
+           COALESCE(cantidad_pendiente,0) AS pendiente,
+           (Cantidad - COALESCE(cantidad_pendiente,0)) * Precio AS subtotal,
+           Codigo AS code
     FROM PedidoItems WHERE PedidoID = ? ORDER BY PedidoItemID
   `).all(pedidoId);
 
   const user = getUserById(ped.EmpleadoID);
   const servicio = ped.ServicioID ? getServiceById(ped.ServicioID) : null;
-  return { ...ped, items, user, servicio };
+
+  // Cuántas entregas lleva el pedido (para el "entrega N de ..." del remito).
+  let entregas = 1;
+  try {
+    entregas = db.prepare(
+      `SELECT COALESCE(MAX(numero),1) AS n FROM pedido_despacho_items WHERE pedido_id = ?`
+    ).get(pedidoId)?.n || 1;
+  } catch { /* la tabla puede no existir todavía */ }
+
+  const pendienteTotal = items.reduce((s, i) => s + Number(i.pendiente || 0), 0);
+  return { ...ped, items, user, servicio, entregas, pendienteTotal };
 }
 
 export function getServiceEmails(serviceId) {

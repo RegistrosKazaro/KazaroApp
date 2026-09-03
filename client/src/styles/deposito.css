@@ -836,3 +836,9 @@
     padding-left: 0.75rem;
   }
 }
+
+/* Material que quedó esperando stock: se entrega después, mismo remito. */
+.dep-pendiente {
+  display: block; font-size: 0.7rem; color: #b45309; font-weight: 600;
+  margin-top: 2px; cursor: help;
+}

@@ -333,16 +333,27 @@ function normalizePedido(pedido) {
 
   const fecha = fmtDateTime(cab?.Fecha);
 
-  const items = itemsRaw.map((it) => ({
-    code: it.codigo ?? it.code ?? "",
-    name: it.nombre ?? it.name ?? "",
-    qty: Number(it.cantidad ?? it.qty ?? 0),
-    price: Number(it.precio ?? it.price ?? 0),
-    subtotal: Number(
-      it.subtotal ??
-        Number(it.precio ?? it.price ?? 0) * Number(it.cantidad ?? it.qty ?? 0)
-    ),
-  }));
+  // En un pedido despachado por tandas, `qty` es lo que sale AHORA. Lo que
+  // queda pendiente se aclara al lado del nombre para que quien firma lo vea.
+  const items = itemsRaw
+    .map((it) => {
+      const pendiente = Number(it.pendiente ?? 0);
+      const qty = Number(it.cantidad ?? it.qty ?? 0);
+      const nombre = it.nombre ?? it.name ?? "";
+      return {
+        code: it.codigo ?? it.code ?? "",
+        name: pendiente > 0 ? `${nombre}  (quedan ${pendiente} pendientes)` : nombre,
+        qty,
+        price: Number(it.precio ?? it.price ?? 0),
+        subtotal: Number(
+          it.subtotal ??
+            Number(it.precio ?? it.price ?? 0) * qty
+        ),
+        pendiente,
+      };
+    })
+    // Una línea que se entrega entera en otra tanda no va en este remito.
+    .filter((it) => it.qty > 0);
 
   const total = Number(cab?.Total ?? items.reduce((s, r) => s + (r.subtotal || 0), 0));
 
@@ -356,7 +367,18 @@ function normalizePedido(pedido) {
   }
   const marca = marcaDe(empresaId);
 
-  return { nro, pedidoId, empleado, rol, fecha, servicioNombre, items, total, nota: cab?.Nota, marca };
+  // Si el pedido se despacha por tandas, se aclara en el remito. El número no
+  // cambia: es el mismo remito, entregado en partes.
+  const entregas = Number(cab?.entregas ?? 1);
+  const pendienteTotal = Number(cab?.pendienteTotal ?? 0);
+  const avisos = [];
+  if (entregas > 1) avisos.push(`ENTREGA ${entregas} de este remito.`);
+  if (pendienteTotal > 0) {
+    avisos.push(`Quedan ${pendienteTotal} unidades pendientes de entrega, que se entregarán con este mismo remito.`);
+  }
+  const nota = [avisos.join(" "), cab?.Nota].filter(Boolean).join("\n") || null;
+
+  return { nro, pedidoId, empleado, rol, fecha, servicioNombre, items, total, nota, marca };
 }
 
 /* ================= Generador principal ================= */

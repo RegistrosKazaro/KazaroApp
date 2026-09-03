@@ -13,6 +13,7 @@ import {
   applyOrderStockDiscount,
   applyOrderStockDelta,
   snapshotDespacho,
+  registrarEntregaPendientes,
 } from "../db.js";
 import { sendMail } from "../utils/mailer.js";
 import { fmtAr, ahoraUtcSql } from "../utils/fechas.js";
@@ -272,6 +273,7 @@ router.get("/orders", mustWarehouse, (req, res) => {
                    Nombre    AS nombre,
                    ${hasCodigo ? "Codigo AS codigo," : "NULL AS codigo,"}
                    Cantidad  AS cantidad,
+                   COALESCE(cantidad_pendiente,0) AS pendiente,
                    Precio    AS precio,
                    Subtotal  AS subtotal
             FROM PedidoItems
@@ -282,11 +284,16 @@ router.get("/orders", mustWarehouse, (req, res) => {
           for (const item of allItems) {
             const pid = String(item.PedidoID);
             if (!itemsMap[pid]) itemsMap[pid] = [];
+            const cantidad = Number(item.cantidad || 0);
+            const pendiente = Number(item.pendiente || 0);
             itemsMap[pid].push({
               productId: Number(item.productoId) || null,
               nombre: item.nombre || "—",
               codigo: item.codigo || "",
-              cantidad: Number(item.cantidad || 0),
+              cantidad,
+              // Cuánto de esta línea todavía no salió, y cuánto sí se entrega.
+              pendiente,
+              entregado: Math.max(0, cantidad - pendiente),
               precio: Number(item.precio || 0),
               subtotal: Number(item.subtotal || 0),
             });
@@ -401,6 +408,134 @@ function repararFotosFaltantes(empresaId) {
   }
 }
 
+/* ================== Entregas parciales ==================
+   Pedidos que se despacharon incompletos y tienen material esperando.
+   No generan un remito nuevo: al entregarlos se suman al mismo pedido como
+   una entrega adicional, con su propia fecha (que es la que cruza con Flexxus).
+========================================================== */
+router.get("/pendientes", mustWarehouse, (req, res) => {
+  try {
+    const empresaId = getEmpresaId(req);
+    const filas = db.prepare(`
+      SELECT p.PedidoID AS id, p.ServicioID AS servicioId, p.EmpleadoID AS empleadoId,
+             p.Rol AS rol, p.Status AS status, p.closedat, p.retiro_at, p.Fecha AS fecha,
+             i.ProductoID AS productId, MAX(i.Nombre) AS nombre, MAX(i.Codigo) AS codigo,
+             COALESCE(SUM(i.Cantidad),0) AS cantidad,
+             COALESCE(SUM(i.cantidad_pendiente),0) AS pendiente,
+             MAX(i.Precio) AS precio
+      FROM Pedidos p JOIN PedidoItems i ON i.PedidoID = p.PedidoID
+      WHERE p.empresa_id = @empresaId AND p.deleted_at IS NULL
+        AND COALESCE(i.cantidad_pendiente,0) > 0
+      GROUP BY p.PedidoID, i.ProductoID
+      ORDER BY p.PedidoID DESC
+    `).all({ empresaId });
+
+    const porPedido = new Map();
+    for (const f of filas) {
+      if (!porPedido.has(f.id)) {
+        porPedido.set(f.id, {
+          id: f.id,
+          numero: pad7(f.id),
+          servicio: f.servicioId ? (getServiceNameById(f.servicioId) || `Servicio ${f.servicioId}`) : null,
+          solicitante: f.empleadoId ? (getEmployeeDisplayName(f.empleadoId) || null) : null,
+          rol: f.rol || null,
+          status: f.status || null,
+          retirado: !!(f.retiro_at && String(f.retiro_at).trim()),
+          cerradoAr: f.closedat ? fmtAr(f.closedat) : null,
+          fechaAr: f.fecha ? fmtAr(f.fecha) : null,
+          items: [],
+        });
+      }
+      porPedido.get(f.id).items.push({
+        productId: Number(f.productId),
+        nombre: f.nombre || "—",
+        codigo: f.codigo || "",
+        cantidad: Number(f.cantidad || 0),
+        pendiente: Number(f.pendiente || 0),
+        entregado: Math.max(0, Number(f.cantidad || 0) - Number(f.pendiente || 0)),
+        precio: Number(f.precio || 0),
+      });
+    }
+
+    const pedidos = [...porPedido.values()];
+    res.json({
+      ok: true,
+      pedidos,
+      totales: {
+        pedidos: pedidos.length,
+        unidades: pedidos.reduce((s, p) => s + p.items.reduce((a, i) => a + i.pendiente, 0), 0),
+      },
+    });
+  } catch (e) {
+    console.error("[deposito/pendientes]", e.message);
+    res.status(500).json({ error: "No se pudieron obtener los pendientes" });
+  }
+});
+
+/** Entrega (total o parcial) de los pendientes de un pedido. */
+router.post("/orders/:id/entregar-pendientes", mustWarehouse, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const empresaId = getEmpresaId(req);
+    const owner = db.prepare(`SELECT empresa_id FROM Pedidos WHERE PedidoID = ?`).get(id);
+    if (!owner) return res.status(404).json({ error: "Pedido no encontrado" });
+    if (owner.empresa_id != null && Number(owner.empresa_id) !== Number(empresaId)) {
+      return res.status(404).json({ error: "Pedido no encontrado" });
+    }
+
+    // Qué se entrega. Si no se especifica, se entregan todos los pendientes.
+    const pedidos = Array.isArray(req.body?.items) ? req.body.items : null;
+    const pendientes = db.prepare(
+      `SELECT ProductoID AS pid, MAX(Nombre) AS nombre, COALESCE(SUM(cantidad_pendiente),0) AS pend
+       FROM PedidoItems WHERE PedidoID = ? GROUP BY ProductoID HAVING pend > 0`
+    ).all(id);
+    if (!pendientes.length) return res.status(400).json({ error: "Este pedido no tiene pendientes" });
+
+    const mapaPend = new Map(pendientes.map((p) => [Number(p.pid), { pend: Number(p.pend), nombre: p.nombre }]));
+    let entregados;
+    if (pedidos) {
+      entregados = [];
+      for (const it of pedidos) {
+        const pid = Number(it.productId);
+        const cant = Math.trunc(Number(it.cantidad) || 0);
+        if (!mapaPend.has(pid)) return res.status(400).json({ error: `Ese insumo no está pendiente en el pedido` });
+        if (cant <= 0) continue;
+        if (cant > mapaPend.get(pid).pend) {
+          return res.status(400).json({ error: `No se puede entregar más de lo pendiente de ${mapaPend.get(pid).nombre}` });
+        }
+        entregados.push({ productId: pid, cantidad: cant });
+      }
+      if (!entregados.length) return res.status(400).json({ error: "No indicaste cantidades para entregar" });
+    } else {
+      entregados = pendientes.map((p) => ({ productId: Number(p.pid), cantidad: Number(p.pend) }));
+    }
+
+    // Descontar el stock de lo que ahora sí sale.
+    const deltas = entregados.map((e) => ({
+      productId: e.productId, delta: e.cantidad, nombre: mapaPend.get(e.productId)?.nombre,
+    }));
+    const st = applyOrderStockDelta(id, deltas, { permitirNegativo: false });
+    if (!st.ok) {
+      return res.status(400).json({
+        error: "No hay stock suficiente para entregar esos pendientes",
+        faltantes: st.faltantes || null,
+      });
+    }
+
+    const r = registrarEntregaPendientes(id, entregados);
+    if (!r.ok) return res.status(400).json({ error: r.error || "No se pudo registrar la entrega" });
+
+    const quedan = db.prepare(
+      `SELECT COALESCE(SUM(cantidad_pendiente),0) AS n FROM PedidoItems WHERE PedidoID = ?`
+    ).get(id).n;
+
+    res.json({ ok: true, entrega: r.entrega, items: r.items, pendientesRestantes: Number(quedan || 0) });
+  } catch (e) {
+    console.error("[deposito/entregar-pendientes]", e.message);
+    res.status(500).json({ error: "No se pudo entregar los pendientes" });
+  }
+});
+
 router.get("/despachos", mustWarehouse, (req, res) => {
   try {
     const empresaId = getEmpresaId(req);
@@ -416,7 +551,10 @@ router.get("/despachos", mustWarehouse, (req, res) => {
     // nuevas con el de la base ("... 12:00:00"). Al comparar como texto la "T"
     // queda DESPUÉS del espacio, así que un pedido cerrado de noche se salía del
     // rango del día. Se normaliza la columna antes de comparar.
-    const FECHA_CMP = `REPLACE(SUBSTR(d.fecha_despacho,1,19),'T',' ')`;
+    // Se usa la fecha de CADA ÍTEM: un pedido despachado en dos tandas tiene
+    // dos fechas distintas, y en Flexxus son dos movimientos separados.
+    // Los ítems viejos sin fecha propia caen a la del pedido.
+    const FECHA_CMP = `REPLACE(SUBSTR(COALESCE(i.fecha_despacho, d.fecha_despacho),1,19),'T',' ')`;
     // La empresa se toma del PEDIDO, no de la foto: si una foto vieja quedó sin
     // empresa_id, el pedido igual se sigue viendo.
     const cond = ["COALESCE(p.empresa_id, d.empresa_id) = @empresaId", "p.deleted_at IS NULL"];
@@ -455,14 +593,16 @@ router.get("/despachos", mustWarehouse, (req, res) => {
     const productId = Number(req.query.productId);
     if (Number.isFinite(productId) && productId > 0) {
       const orden = String(req.query.orden || "").toLowerCase() === "fecha_asc"
-        ? `d.fecha_despacho ASC, d.pedido_id ASC`
-        : `d.fecha_despacho DESC, d.pedido_id DESC`;
+        ? `${FECHA_CMP} ASC, d.pedido_id ASC`
+        : `${FECHA_CMP} DESC, d.pedido_id DESC`;
 
       detalle = db.prepare(`
         SELECT d.pedido_id AS pedidoId, d.servicio_id AS servicioId, d.rol AS rol,
                d.empleado_id AS empleadoId, i.cantidad AS cantidad,
                COALESCE(i.cantidad_inicial, i.cantidad) AS cantidadInicial,
-               i.subtotal AS subtotal, d.fecha_despacho AS fechaDespacho
+               i.subtotal AS subtotal,
+               COALESCE(i.fecha_despacho, d.fecha_despacho) AS fechaDespacho,
+               i.numero AS entrega
         ${FROM} ${where} AND i.producto_id = @productId
         ORDER BY ${orden}
       `).all({ ...params, productId }).map((r) => {
@@ -471,6 +611,9 @@ router.get("/despachos", mustWarehouse, (req, res) => {
         return {
           pedidoId: r.pedidoId,
           numero: pad7(r.pedidoId),
+          // Número de entrega: 1 es el despacho original, 2+ son pendientes
+          // entregados después sobre el mismo remito.
+          entrega: Number(r.entrega || 1),
           servicio: r.servicioId ? (getServiceNameById(r.servicioId) || `Servicio ${r.servicioId}`) : null,
           rol: r.rol || null,
           solicitante: r.empleadoId ? (getEmployeeDisplayName(r.empleadoId) || null) : null,
@@ -598,10 +741,12 @@ router.put("/orders/:id/items", mustWarehouse, (req, res) => {
       if (!Number.isFinite(cantidad) || cantidad <= 0) return res.status(400).json({ error: "Cantidad inválida" });
       const row = lookup.get(pid);
       if (!row) return res.status(400).json({ error: `Producto inexistente (id ${pid})` });
+      // Cuánto de esa línea NO se despacha ahora y queda esperando stock.
+      const pendiente = Math.min(cantidad, Math.max(0, Math.trunc(Number(it.pendiente ?? 0))));
       const precio = Number(row.price || 0);
       const subtotal = precio * cantidad;
       total += subtotal;
-      filas.push({ pid, name: row.name, precio, cantidad, subtotal, code: row.code || "" });
+      filas.push({ pid, name: row.name, precio, cantidad, pendiente, subtotal, code: row.code || "" });
     }
 
     // Si el pedido YA descontó stock (administrativos, que descuentan al crearse,
@@ -617,13 +762,17 @@ router.put("/orders/:id/items", mustWarehouse, (req, res) => {
     let descubierto = null;
 
     if (yaDescontado) {
+      // El stock sólo refleja lo ENTREGADO: se compara cantidad menos pendiente
+      // de los dos lados, así marcar algo como pendiente devuelve ese stock.
       const previos = db.prepare(
-        `SELECT ProductoID AS pid, COALESCE(SUM(Cantidad),0) AS cant, MAX(Nombre) AS nombre
+        `SELECT ProductoID AS pid,
+                COALESCE(SUM(Cantidad),0) - COALESCE(SUM(cantidad_pendiente),0) AS cant,
+                MAX(Nombre) AS nombre
          FROM PedidoItems WHERE PedidoID = ? GROUP BY ProductoID`
       ).all(id);
       const antes = new Map(previos.map((r) => [Number(r.pid), { cant: Number(r.cant || 0), nombre: r.nombre }]));
       const ahora = new Map();
-      for (const f of filas) ahora.set(f.pid, (ahora.get(f.pid) || 0) + f.cantidad);
+      for (const f of filas) ahora.set(f.pid, (ahora.get(f.pid) || 0) + (f.cantidad - f.pendiente));
 
       const deltas = [];
       for (const [pid, info] of antes) {
@@ -649,8 +798,8 @@ router.put("/orders/:id/items", mustWarehouse, (req, res) => {
 
     const tx = db.transaction(() => {
       db.prepare(`DELETE FROM PedidoItems WHERE PedidoID = ?`).run(id);
-      const ins = db.prepare(`INSERT INTO PedidoItems (PedidoID, ProductoID, Nombre, Precio, Cantidad, Subtotal, Codigo) VALUES (?, ?, ?, ?, ?, ?, ?)`);
-      for (const f of filas) ins.run(id, f.pid, f.name, f.precio, f.cantidad, f.subtotal, f.code);
+      const ins = db.prepare(`INSERT INTO PedidoItems (PedidoID, ProductoID, Nombre, Precio, Cantidad, Subtotal, Codigo, cantidad_pendiente) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+      for (const f of filas) ins.run(id, f.pid, f.name, f.precio, f.cantidad, f.subtotal, f.code, f.pendiente);
       db.prepare(`UPDATE Pedidos SET Total = ? WHERE PedidoID = ?`).run(total, id);
     });
     tx();

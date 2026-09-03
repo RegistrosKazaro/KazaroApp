@@ -1,0 +1,85 @@
+/* entregas-pendientes.css — Material que quedó esperando stock. */
+
+.ep { display: flex; flex-direction: column; gap: 14px; }
+
+.ep-title { margin: 0; font-size: 1.15rem; color: #0f172a; }
+.ep-sub { margin: 5px 0 0; font-size: 0.85rem; color: #4b5563; max-width: 80ch; line-height: 1.5; }
+
+.ep-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.ep-kpi {
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 1px;
+}
+.ep-kpi-n { font-size: 1.5rem; font-weight: 700; color: #b45309; font-variant-numeric: tabular-nums; }
+.ep-kpi span:last-child { font-size: 0.78rem; color: #4b5563; }
+
+.ep-search {
+  padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
+  font-size: 0.88rem; background: #fff; color: #0f172a; width: 100%; max-width: 520px;
+}
+
+.ep-vacio { padding: 22px; text-align: center; color: #4b5563; background: #f8fafc; border-radius: 12px; }
+
+.ep-lista { display: flex; flex-direction: column; gap: 10px; }
+
+.ep-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden; }
+.ep-card.is-abierto { border-color: #b45309; }
+
+.ep-card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 11px 14px; flex-wrap: wrap;
+}
+.ep-num {
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.82rem;
+  color: #4b5563; margin-right: 10px;
+}
+.ep-servicio { font-weight: 600; color: #0f172a; font-size: 0.92rem; }
+.ep-meta { display: block; font-size: 0.78rem; color: #4b5563; margin-top: 3px; }
+.ep-tag {
+  margin-left: 8px; background: #eff6ff; color: #1d4ed8;
+  border-radius: 999px; padding: 1px 8px; font-size: 0.7rem; font-weight: 600;
+}
+.ep-fecha { margin-left: 8px; color: #6b7280; }
+
+.ep-card-acciones { display: flex; align-items: center; gap: 10px; }
+.ep-pend {
+  background: #fffbeb; color: #b45309; border: 1px solid #fde68a;
+  border-radius: 999px; padding: 3px 11px; font-size: 0.78rem; font-weight: 700;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
+.ep-btn {
+  padding: 7px 14px; border-radius: 8px; border: 1px solid #d1d5db; background: #fff;
+  color: #374151; font-weight: 600; font-size: 0.83rem; cursor: pointer; white-space: nowrap;
+}
+.ep-btn--ok { background: #15803d; border-color: #15803d; color: #fff; }
+.ep-btn:disabled { opacity: .55; cursor: not-allowed; }
+
+.ep-detalle { border-top: 1px solid #e5e7eb; background: #f8fafc; padding: 12px 14px; }
+.ep-tabla { width: 100%; border-collapse: collapse; font-size: 0.86rem; background: #fff;
+  border: 1px solid #e5e7eb; border-radius: 8px; }
+.ep-tabla th, .ep-tabla td { padding: 7px 10px; text-align: left; border-bottom: 1px solid #f1f5f9; }
+.ep-tabla th {
+  font-size: 0.71rem; text-transform: uppercase; letter-spacing: .05em;
+  color: #4b5563; background: #f8fafc; font-weight: 700;
+}
+.ep-tabla td.num, .ep-tabla th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.ep-tabla td.mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.76rem; color: #4b5563; }
+.ep-fuerte { font-weight: 700; color: #b45309; }
+.ep-tabla input {
+  width: 78px; text-align: right; padding: 4px 7px;
+  border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.85rem;
+}
+
+.ep-pie {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-top: 10px; flex-wrap: wrap;
+}
+.ep-pie span { font-size: 0.79rem; color: #4b5563; max-width: 62ch; }
+
+@media (max-width: 720px) {
+  .ep-card-head { flex-direction: column; align-items: flex-start; }
+  .ep-tabla { font-size: 0.78rem; }
+  .ep-pie { flex-direction: column; align-items: stretch; }
+  .ep-pie .ep-btn { width: 100%; }
+}

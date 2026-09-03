@@ -62,6 +62,11 @@
 .cd-tabla--interna { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; }
 .cd-admin { color: #4b5563; font-style: italic; }
 .cd-dev { font-size: 0.72rem; color: #b45309; font-weight: 600; }
+/* Segunda (o tercera) tanda del mismo remito. */
+.cd-entrega {
+  display: block; font-size: 0.66rem; color: #1d4ed8; font-weight: 700;
+  margin-top: 2px; cursor: help; font-family: system-ui, sans-serif;
+}
 /* El pedido se editó después de haberse despachado: la foto no cambia. */
 .cd-editado {
   display: block; font-size: 0.68rem; color: #b45309; font-weight: 600;

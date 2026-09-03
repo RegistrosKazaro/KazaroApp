@@ -9,6 +9,7 @@ import { normalizeText } from "../utils/text";
 import "../styles/deposito.css";
 import DevolucionesPendientes from "../components/DevolucionesPendientes";
 import ControlDespachos from "../components/ControlDespachos";
+import EntregasPendientes from "../components/EntregasPendientes";
 
 function isoToday() { return new Date().toISOString().slice(0, 10); }
 function isoFirstOfMonth() {
@@ -201,6 +202,8 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
       codigo: it.codigo ?? it.code ?? "",
       precio: Number(it.precio ?? it.price ?? 0),
       cantidad: Number(it.cantidad ?? it.qty ?? 1),
+      // Cuánto de esta línea NO se despacha ahora y queda esperando stock.
+      pendiente: Number(it.pendiente ?? 0),
     }))
   );
   const [busy, setBusy] = useState(false);
@@ -246,9 +249,22 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
 
   const total = items.reduce((s, it) => s + it.precio * it.cantidad, 0);
 
+  // Deja parte de la línea esperando stock: se entrega después, sin remito nuevo.
+  const setPendiente = (pid, val) => {
+    setItems((prev) => prev.map((it) => {
+      if (it.productId !== pid) return it;
+      const n = Math.max(0, Math.min(it.cantidad, Math.trunc(Number(val) || 0)));
+      return { ...it, pendiente: n };
+    }));
+    setDirty(true);
+  };
+
   const setCantidad = (pid, val) => {
     const n = Math.max(1, Math.trunc(Number(val) || 1));
-    setItems((prev) => prev.map((it) => (it.productId === pid ? { ...it, cantidad: n } : it)));
+    // Si baja la cantidad, el pendiente no puede quedar por encima.
+    setItems((prev) => prev.map((it) => (
+      it.productId === pid ? { ...it, cantidad: n, pendiente: Math.min(it.pendiente, n) } : it
+    )));
     setDirty(true);
   };
   const quitar = (pid) => { setItems((prev) => prev.filter((it) => it.productId !== pid)); setDirty(true); };
@@ -264,7 +280,7 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
     setBusy(true); setMsg(""); setFaltantes([]);
     try {
       const { data } = await api.put(`/deposito/orders/${order.id}/items`, {
-        items: items.map((it) => ({ productId: it.productId, cantidad: it.cantidad })),
+        items: items.map((it) => ({ productId: it.productId, cantidad: it.cantidad, pendiente: it.pendiente })),
       });
       setDirty(false);
       // Al corregir un pedido ya despachado se avisa que impacta en el control
@@ -293,7 +309,7 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
     try {
       if (dirty) {
         await api.put(`/deposito/orders/${order.id}/items`, {
-          items: items.map((it) => ({ productId: it.productId, cantidad: it.cantidad })),
+          items: items.map((it) => ({ productId: it.productId, cantidad: it.cantidad, pendiente: it.pendiente })),
         });
         setDirty(false);
       }
@@ -328,6 +344,10 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
             <th scope="col">Código</th>
             <th scope="col">Insumo</th>
             <th scope="col" className="numeric" style={{ width: 110 }}>Cantidad</th>
+            <th scope="col" className="numeric" style={{ width: 110 }} title="Cuánto de esta línea no se despacha ahora y queda esperando stock">
+              Deja pendiente
+            </th>
+            <th scope="col" className="numeric" style={{ width: 90 }}>Entrega</th>
             <th scope="col" className="numeric">Precio</th>
             <th scope="col" className="numeric">Subtotal</th>
             <th scope="col" style={{ width: 40 }}></th>
@@ -343,6 +363,17 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
                   onChange={(e) => setCantidad(it.productId, e.target.value)}
                   style={{ width: 70, textAlign: "right" }} />
               </td>
+              <td className="numeric">
+                <input type="number" min="0" max={it.cantidad} value={it.pendiente}
+                  onChange={(e) => setPendiente(it.productId, e.target.value)}
+                  title="Unidades que quedan esperando stock. Se entregan después, en el mismo remito."
+                  style={{ width: 70, textAlign: "right",
+                    borderColor: it.pendiente > 0 ? "#b45309" : undefined,
+                    color: it.pendiente > 0 ? "#b45309" : undefined, fontWeight: it.pendiente > 0 ? 700 : 400 }} />
+              </td>
+              <td className="numeric" style={{ fontWeight: 700 }}>
+                {fmt(Math.max(0, it.cantidad - it.pendiente))}
+              </td>
               <td className="numeric">{money(it.precio)}</td>
               <td className="numeric">{money(it.precio * it.cantidad)}</td>
               <td style={{ textAlign: "center" }}>
@@ -352,7 +383,7 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
             </tr>
           ))}
           {items.length === 0 && (
-            <tr><td colSpan={6} style={{ color: "#b91c1c" }}>El pedido quedó sin insumos. Agregá al menos uno.</td></tr>
+            <tr><td colSpan={8} style={{ color: "#b91c1c" }}>El pedido quedó sin insumos. Agregá al menos uno.</td></tr>
           )}
         </tbody>
       </table>
@@ -899,7 +930,15 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                                       : <span style={{ color: "#4b5563" }}>—</span>
                                     }
                                   </td>
-                                  <td>{item.nombre}</td>
+                                  <td>
+                                    {item.nombre}
+                                    {item.pendiente > 0 && (
+                                      <span className="dep-pendiente"
+                                        title="Todavía no se entregó. Cuando haya stock se entrega en el mismo remito, desde Entregas pendientes.">
+                                        quedan {fmt(item.pendiente)} sin entregar
+                                      </span>
+                                    )}
+                                  </td>
                                   <td className="numeric">{fmt(item.cantidad)}</td>
                                   <td className="numeric">{money(item.precio)}</td>
                                   <td className="numeric">{money(item.subtotal)}</td>
@@ -1155,7 +1194,7 @@ export default function Deposito() {
       <div className="dep-topbar">
         <h1 className="deposito-title">Panel de Depósito</h1>
         <div className="dep-vistas" role="tablist" aria-label="Vista del panel">
-          {[["pedidos", "Pedidos"], ["despachos", "Control de despachos"]].map(([k, l]) => (
+          {[["pedidos", "Pedidos"], ["pendientes", "Entregas pendientes"], ["despachos", "Control de despachos"]].map(([k, l]) => (
             <button key={k} type="button" role="tab" aria-selected={activeView === k}
               className={`pill${activeView === k ? "" : " pill--ghost"}`}
               onClick={() => setActiveView(k)}>{l}</button>
@@ -1463,6 +1502,13 @@ export default function Deposito() {
       {activeView === "pedidos" && (
         <div style={{ marginTop: 16 }}>
           <DepositoOrdersPanel pedidosPorDia={[]} />
+        </div>
+      )}
+
+      {/* ===== ENTREGAS PENDIENTES ===== */}
+      {activeView === "pendientes" && (
+        <div style={{ marginTop: 16 }}>
+          <EntregasPendientes />
         </div>
       )}
 

@@ -247,8 +247,17 @@ export default function ControlDespachos() {
                                   </thead>
                                   <tbody>
                                     {detalle.map((d) => (
-                                      <tr key={d.pedidoId}>
-                                        <td className="mono">#{d.numero}</td>
+                                      // Un pedido puede aparecer dos veces si se
+                                      // despachó en tandas: la clave lleva la entrega.
+                                      <tr key={`${d.pedidoId}-${d.entrega || 1}`}>
+                                        <td className="mono">
+                                          #{d.numero}
+                                          {d.entrega > 1 && (
+                                            <span className="cd-entrega" title="Entrega posterior de lo que había quedado pendiente, sobre el mismo remito">
+                                              entrega {d.entrega}
+                                            </span>
+                                          )}
+                                        </td>
                                         <td>{d.servicio || <em className="cd-admin">Sin servicio (administrativo)</em>}</td>
                                         <td>{d.solicitante || "—"}</td>
                                         <td className="col-cant cd-fuerte">
