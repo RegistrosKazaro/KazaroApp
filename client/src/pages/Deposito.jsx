@@ -247,32 +247,48 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
   };
   const yaEnPedido = (pid) => items.some((it) => it.productId === Number(pid));
 
-  const total = items.reduce((s, it) => s + it.precio * it.cantidad, 0);
+  const total = items.reduce((s, it) => s + it.precio * (Number(it.cantidad) || 0), 0);
 
-  // Deja parte de la línea esperando stock: se entrega después, sin remito nuevo.
-  const setPendiente = (pid, val) => {
+  // Mientras se escribe se acepta cualquier cosa (incluso vacío): recortar en
+  // cada tecla hacía que el campo pareciera bloqueado. El ajuste va al salir.
+  const escribir = (pid, campo, val) => {
+    setItems((prev) => prev.map((it) => (it.productId === pid ? { ...it, [campo]: val } : it)));
+    setDirty(true);
+  };
+
+  /** Al salir del campo se normaliza: cantidad mínima 1 y pendiente entre 0 y la cantidad. */
+  const normalizarFila = (pid) => {
     setItems((prev) => prev.map((it) => {
       if (it.productId !== pid) return it;
-      const n = Math.max(0, Math.min(it.cantidad, Math.trunc(Number(val) || 0)));
-      return { ...it, pendiente: n };
+      const cantidad = Math.max(1, Math.trunc(Number(it.cantidad) || 1));
+      const pendiente = Math.max(0, Math.min(cantidad, Math.trunc(Number(it.pendiente) || 0)));
+      return { ...it, cantidad, pendiente };
+    }));
+  };
+
+  /** Deja toda la línea esperando stock (no se entrega nada ahora), o nada. */
+  const togglePendienteTotal = (pid) => {
+    setItems((prev) => prev.map((it) => {
+      if (it.productId !== pid) return it;
+      const cant = Math.max(1, Math.trunc(Number(it.cantidad) || 1));
+      return { ...it, cantidad: cant, pendiente: Number(it.pendiente) >= cant ? 0 : cant };
     }));
     setDirty(true);
   };
+  /** Lo que se manda al backend, ya con números válidos aunque el campo haya
+   *  quedado vacío o con el pendiente por encima de la cantidad. */
+  const itemsNormalizados = () => items.map((it) => {
+    const cantidad = Math.max(1, Math.trunc(Number(it.cantidad) || 1));
+    const pendiente = Math.max(0, Math.min(cantidad, Math.trunc(Number(it.pendiente) || 0)));
+    return { productId: it.productId, cantidad, pendiente };
+  });
 
-  const setCantidad = (pid, val) => {
-    const n = Math.max(1, Math.trunc(Number(val) || 1));
-    // Si baja la cantidad, el pendiente no puede quedar por encima.
-    setItems((prev) => prev.map((it) => (
-      it.productId === pid ? { ...it, cantidad: n, pendiente: Math.min(it.pendiente, n) } : it
-    )));
-    setDirty(true);
-  };
   const quitar = (pid) => { setItems((prev) => prev.filter((it) => it.productId !== pid)); setDirty(true); };
   const agregar = (p) => {
     const pid = Number(p.id);
     setItems((prev) => prev.some((it) => it.productId === pid)
-      ? prev.map((it) => it.productId === pid ? { ...it, cantidad: it.cantidad + 1 } : it)
-      : [...prev, { productId: pid, nombre: p.name ?? p.nombre ?? "", codigo: p.code ?? p.codigo ?? "", precio: Number(p.price ?? p.precio ?? 0), cantidad: 1 }]);
+      ? prev.map((it) => it.productId === pid ? { ...it, cantidad: (Number(it.cantidad) || 0) + 1 } : it)
+      : [...prev, { productId: pid, nombre: p.name ?? p.nombre ?? "", codigo: p.code ?? p.codigo ?? "", precio: Number(p.price ?? p.precio ?? 0), cantidad: 1, pendiente: 0 }]);
     setQ(""); setResultados([]); setDirty(true);
   };
 
@@ -280,7 +296,7 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
     setBusy(true); setMsg(""); setFaltantes([]);
     try {
       const { data } = await api.put(`/deposito/orders/${order.id}/items`, {
-        items: items.map((it) => ({ productId: it.productId, cantidad: it.cantidad, pendiente: it.pendiente })),
+        items: itemsNormalizados(),
       });
       setDirty(false);
       // Al corregir un pedido ya despachado se avisa que impacta en el control
@@ -309,7 +325,7 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
     try {
       if (dirty) {
         await api.put(`/deposito/orders/${order.id}/items`, {
-          items: items.map((it) => ({ productId: it.productId, cantidad: it.cantidad, pendiente: it.pendiente })),
+          items: itemsNormalizados(),
         });
         setDirty(false);
       }
@@ -360,19 +376,28 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
               <td>{it.nombre}</td>
               <td className="numeric">
                 <input type="number" min="1" value={it.cantidad}
-                  onChange={(e) => setCantidad(it.productId, e.target.value)}
+                  onChange={(e) => escribir(it.productId, "cantidad", e.target.value)}
+                  onBlur={() => normalizarFila(it.productId)}
                   style={{ width: 70, textAlign: "right" }} />
               </td>
-              <td className="numeric">
-                <input type="number" min="0" max={it.cantidad} value={it.pendiente}
-                  onChange={(e) => setPendiente(it.productId, e.target.value)}
+              <td className="numeric" style={{ whiteSpace: "nowrap" }}>
+                <input type="number" min="0" value={it.pendiente}
+                  onChange={(e) => escribir(it.productId, "pendiente", e.target.value)}
+                  onBlur={() => normalizarFila(it.productId)}
                   title="Unidades que quedan esperando stock. Se entregan después, en el mismo remito."
-                  style={{ width: 70, textAlign: "right",
-                    borderColor: it.pendiente > 0 ? "#b45309" : undefined,
-                    color: it.pendiente > 0 ? "#b45309" : undefined, fontWeight: it.pendiente > 0 ? 700 : 400 }} />
+                  style={{ width: 62, textAlign: "right",
+                    borderColor: Number(it.pendiente) > 0 ? "#b45309" : undefined,
+                    color: Number(it.pendiente) > 0 ? "#b45309" : undefined,
+                    fontWeight: Number(it.pendiente) > 0 ? 700 : 400 }} />
+                <button type="button" className="pill pill--ghost"
+                  onClick={() => togglePendienteTotal(it.productId)}
+                  title="Dejar toda la línea pendiente (no se entrega nada ahora), o volver a entregarla completa"
+                  style={{ padding: "1px 6px", marginLeft: 4, fontSize: "0.7rem" }}>
+                  {Number(it.pendiente) >= Number(it.cantidad) ? "nada" : "todo"}
+                </button>
               </td>
               <td className="numeric" style={{ fontWeight: 700 }}>
-                {fmt(Math.max(0, it.cantidad - it.pendiente))}
+                {fmt(Math.max(0, (Number(it.cantidad) || 0) - (Number(it.pendiente) || 0)))}
               </td>
               <td className="numeric">{money(it.precio)}</td>
               <td className="numeric">{money(it.precio * it.cantidad)}</td>
