@@ -195,7 +195,7 @@ const API_BASE_URL = (import.meta?.env && import.meta.env.VITE_API_URL) || "http
    ===================================================== */
 function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes = null }) {
   const [items, setItems] = useState(() =>
-    (order.items || []).map((it) => ({
+    (order.itemsTodos || order.items || []).map((it) => ({
       productId: Number(it.productId ?? it.ProductoID ?? it.product_id),
       nombre: it.nombre ?? it.name ?? "",
       codigo: it.codigo ?? it.code ?? "",

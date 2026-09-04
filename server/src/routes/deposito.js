@@ -336,6 +336,17 @@ router.get("/orders", mustWarehouse, (req, res) => {
         if (v != null && String(v).trim() !== "") { remitoNumero = v; break; }
       }
 
+      // Si el pedido se despachó incompleto, esta tarjeta muestra SOLO lo que
+      // sale: lo pendiente vive en su propia tarjeta y no se repite acá. Un
+      // insumo del que no sale nada directamente no aparece.
+      const todosLosItems = itemsMap[String(id)] || [];
+      const pendienteActivo = !!String(row.pendiente_status || "").trim();
+      const itemsEntrega = pendienteActivo
+        ? todosLosItems
+          .filter((i) => i.entregado > 0)
+          .map((i) => ({ ...i, cantidad: i.entregado, subtotal: i.precio * i.entregado }))
+        : todosLosItems;
+
       return {
         id,
         displayId: pad7(id ?? ""),
@@ -347,12 +358,20 @@ router.get("/orders", mustWarehouse, (req, res) => {
         fecha: getVal(row, ["fecha", "created_at"]),
         closedAt: getVal(row, ["closedat", "closed_at"]),
         retiroAt: getVal(row, ["retiro_at"]),
-        total: getVal(row, ["total", "amount"]),
+        // Con pendientes, el total de la tarjeta es el de lo que se entrega:
+        // así las dos tarjetas suman el pedido y no se duplica nada.
+        total: pendienteActivo
+          ? itemsEntrega.reduce((s, i) => s + i.subtotal, 0)
+          : getVal(row, ["total", "amount"]),
+        totalPedido: getVal(row, ["total", "amount"]),
         status: finalStatus,
         isClosed,
         remito: remitoNumero,
         remitoDisplay: remitoNumero ? String(remitoNumero) : "-",
-        items: itemsMap[String(id)] || [],
+        items: itemsEntrega,
+        // El editor necesita el pedido completo, aunque en pantalla se muestre
+        // sólo la parte que se entrega.
+        itemsTodos: todosLosItems,
       };
     });
 
@@ -378,6 +397,7 @@ router.get("/orders", mustWarehouse, (req, res) => {
         pedidoOrigenId: id,
         // Se muestran las unidades que faltan entregar, no las originales.
         items: items.map((i) => ({ ...i, cantidad: i.pendiente, subtotal: i.precio * i.pendiente })),
+        itemsTodos: items.map((i) => ({ ...i, cantidad: i.pendiente, subtotal: i.precio * i.pendiente })),
         total: items.reduce((s, i) => s + i.precio * i.pendiente, 0),
         status: estadoPend === "closed" ? "closed" : (estadoPend === "preparing" ? "preparing" : "open"),
         closedAt: row.pendiente_closedat || null,
