@@ -495,10 +495,6 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
    Panel de Pedidos
    ===================================================== */
 function DepositoOrdersPanel({ pedidosPorDia }) {
-  // Borrar pedidos es para arreglar duplicados o cargas erróneas, no algo del
-  // día a día: sólo lo ve un administrador.
-  const { user: usuarioActual } = useAuth();
-  const puedeBorrar = (usuarioActual?.roles || []).map(r => String(r).toLowerCase()).includes("admin");
   const [tab, setTab] = useState("open");
   const [orders, setOrders] = useState([]);
   const [err, setErr] = useState("");
@@ -907,7 +903,7 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                         {/* Sólo admin: es para arreglar duplicados o cargas
                             erróneas. En la tarjeta de pendiente no va: se borra
                             el pedido entero desde su tarjeta. */}
-                        {puedeBorrar && !o.esPendiente && tab !== "devoluciones" && (
+                        {!o.esPendiente && tab !== "devoluciones" && (
                           <button type="button" className="pill pill--ghost" onClick={() => borrarPedido(o)}
                             title="Borrar este pedido (recuperable). Si ya descontó stock, se devuelve."
                             style={{ borderColor: "#b91c1c", color: "#b91c1c" }}>
@@ -1089,8 +1085,6 @@ export default function Deposito() {
   const { user } = useAuth();
   const roles = (user?.roles || []).map(r => String(r).toLowerCase());
   const puedeVer = roles.includes("deposito");
-  // La papelera y el borrado definitivo son de administración, no del día a día.
-  const esAdminVista = roles.includes("admin");
 
   const [start, setStart] = useState(isoFirstOfMonth());
   const [end, setEnd] = useState(isoToday());
@@ -1292,7 +1286,7 @@ export default function Deposito() {
           {[
             ["pedidos", "Pedidos"],
             ["despachos", "Control de despachos"],
-            ...(esAdminVista ? [["papelera", "Papelera"]] : []),
+            ["papelera", "Papelera"],
           ].map(([k, l]) => (
             <button key={k} type="button" role="tab" aria-selected={activeView === k}
               className={`pill${activeView === k ? "" : " pill--ghost"}`}
@@ -1605,7 +1599,7 @@ export default function Deposito() {
       )}
 
       {/* ===== PAPELERA (solo admin) ===== */}
-      {activeView === "papelera" && esAdminVista && (
+      {activeView === "papelera" && (
         <div style={{ marginTop: 16 }}>
           <PapeleraPedidos />
         </div>

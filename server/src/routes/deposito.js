@@ -344,7 +344,12 @@ router.get("/orders", mustWarehouse, (req, res) => {
       // sale: lo pendiente vive en su propia tarjeta y no se repite acá. Un
       // insumo del que no sale nada directamente no aparece.
       const todosLosItems = itemsMap[String(id)] || [];
-      const pendienteActivo = !!String(row.pendiente_status || "").trim();
+      // Sólo se recorta el detalle si el pedido efectivamente se despachó. Si
+      // volvió atrás (abierto o en preparación), se muestra entero: lo pendiente
+      // vuelve a ser parte del pedido y se edita ahí.
+      const seDespacho = finalStatus === "closed"
+        || !!(getVal(row, ["retiro_at"]) && String(getVal(row, ["retiro_at"])).trim());
+      const pendienteActivo = !!String(row.pendiente_status || "").trim() && seDespacho;
       const itemsEntrega = pendienteActivo
         ? todosLosItems
           .filter((i) => i.entregado > 0)
@@ -388,6 +393,14 @@ router.get("/orders", mustWarehouse, (req, res) => {
     for (const row of rawOrders) {
       const estadoPend = String(row.pendiente_status || "").toLowerCase();
       if (!estadoPend) continue;
+
+      // La tarjeta de pendiente sólo tiene sentido si el pedido YA se despachó.
+      // Si el pedido volvió atrás (está abierto o en preparación), lo pendiente
+      // es parte de él y se edita ahí: mostrar las dos daría un duplicado.
+      const estadoPedido = String(getVal(row, ["status"]) || "").toLowerCase();
+      const yaSeDespacho = estadoPedido === "closed"
+        || !!(row.retiro_at && String(row.retiro_at).trim());
+      if (!yaSeDespacho) continue;
       const id = getVal(row, ["pedidoid", "id", "idpedido", "pedido_id"]) ?? row.__rowid;
       const items = (itemsMap[String(id)] || []).filter((i) => i.pendiente > 0);
       if (!items.length) continue;
@@ -477,13 +490,14 @@ function repararFotosFaltantes(empresaId) {
    informes, pedidos y control de despachos. Si ya había descontado stock, se
    devuelve. Sólo admin: no es una operación del día a día del depósito.
 ============================================================= */
-const esAdmin = (req) =>
-  (req.user?.roles || getUserRoles(req.user?.id) || []).map((r) => String(r).toLowerCase()).includes("admin");
+// El panel de depósito ya exige rol deposito o admin (mustWarehouse). Borrar,
+// restaurar y vaciar la papelera son parte del trabajo del encargado: es él
+// quien detecta los duplicados. El borrado suave es recuperable, y el
+// definitivo pide doble confirmación.
 
 /** Papelera: pedidos borrados, todavía recuperables. */
 router.get("/papelera", mustWarehouse, (req, res) => {
   try {
-    if (!esAdmin(req)) return res.status(403).json({ error: "Sólo un administrador puede ver la papelera" });
     const r = listDeletedOrders(getEmpresaId(req));
     if (!r.ok) return res.status(500).json({ error: r.error });
     const pedidos = r.pedidos.map((p) => ({
@@ -506,7 +520,6 @@ router.get("/papelera", mustWarehouse, (req, res) => {
 /** Saca un pedido de la papelera. */
 router.post("/orders/:id/restaurar", mustWarehouse, (req, res) => {
   try {
-    if (!esAdmin(req)) return res.status(403).json({ error: "Sólo un administrador puede restaurar pedidos" });
     const r = restoreOrder(Number(req.params.id), getEmpresaId(req));
     if (!r.ok) return res.status(r.error === "Pedido no encontrado" ? 404 : 400).json({ error: r.error });
     console.log(`[deposito] Pedido #${pad7(req.params.id)} restaurado por ${req.user?.username || req.user?.id}`);
@@ -520,7 +533,6 @@ router.post("/orders/:id/restaurar", mustWarehouse, (req, res) => {
 /** Borrado DEFINITIVO, para liberar espacio. No se recupera. */
 router.delete("/orders/:id/definitivo", mustWarehouse, (req, res) => {
   try {
-    if (!esAdmin(req)) return res.status(403).json({ error: "Sólo un administrador puede borrar definitivamente" });
     const r = hardDeleteOrder(Number(req.params.id), getEmpresaId(req));
     if (!r.ok) return res.status(r.error === "Pedido no encontrado" ? 404 : 400).json({ error: r.error });
     console.log(`[deposito] Pedido #${pad7(req.params.id)} BORRADO DEFINITIVAMENTE por ${req.user?.username || req.user?.id}`,
@@ -534,9 +546,6 @@ router.delete("/orders/:id/definitivo", mustWarehouse, (req, res) => {
 
 router.delete("/orders/:id", mustWarehouse, (req, res) => {
   try {
-    if (!esAdmin(req)) {
-      return res.status(403).json({ error: "Sólo un administrador puede borrar pedidos" });
-    }
     const r = softDeleteOrder(Number(req.params.id), getEmpresaId(req),
       req.user?.username || req.user?.email || req.user?.id);
     if (!r.ok) return res.status(r.error === "Pedido no encontrado" ? 404 : 400).json({ error: r.error });
