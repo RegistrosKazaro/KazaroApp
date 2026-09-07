@@ -15,6 +15,9 @@ import {
   snapshotDespacho,
   registrarEntregaPendientes,
   softDeleteOrder,
+  listDeletedOrders,
+  restoreOrder,
+  hardDeleteOrder,
 } from "../db.js";
 import { sendMail } from "../utils/mailer.js";
 import { fmtAr, ahoraUtcSql } from "../utils/fechas.js";
@@ -474,13 +477,68 @@ function repararFotosFaltantes(empresaId) {
    informes, pedidos y control de despachos. Si ya había descontado stock, se
    devuelve. Sólo admin: no es una operación del día a día del depósito.
 ============================================================= */
+const esAdmin = (req) =>
+  (req.user?.roles || getUserRoles(req.user?.id) || []).map((r) => String(r).toLowerCase()).includes("admin");
+
+/** Papelera: pedidos borrados, todavía recuperables. */
+router.get("/papelera", mustWarehouse, (req, res) => {
+  try {
+    if (!esAdmin(req)) return res.status(403).json({ error: "Sólo un administrador puede ver la papelera" });
+    const r = listDeletedOrders(getEmpresaId(req));
+    if (!r.ok) return res.status(500).json({ error: r.error });
+    const pedidos = r.pedidos.map((p) => ({
+      ...p,
+      numero: pad7(p.id),
+      servicio: p.servicioId ? (getServiceNameById(p.servicioId) || `Servicio ${p.servicioId}`) : null,
+      solicitante: p.empleadoId ? (getEmployeeDisplayName(p.empleadoId) || null) : null,
+      fechaAr: p.fecha ? fmtAr(p.fecha) : null,
+      borradoAr: p.borradoAt ? fmtAr(p.borradoAt) : null,
+      // Avisa que al restaurarlo se le va a volver a descontar el stock.
+      habiaDescontado: !!(p.contabilizadoAt && String(p.contabilizadoAt).trim()),
+    }));
+    res.json({ ok: true, pedidos, total: pedidos.length });
+  } catch (e) {
+    console.error("[deposito/papelera]", e.message);
+    res.status(500).json({ error: "No se pudo leer la papelera" });
+  }
+});
+
+/** Saca un pedido de la papelera. */
+router.post("/orders/:id/restaurar", mustWarehouse, (req, res) => {
+  try {
+    if (!esAdmin(req)) return res.status(403).json({ error: "Sólo un administrador puede restaurar pedidos" });
+    const r = restoreOrder(Number(req.params.id), getEmpresaId(req));
+    if (!r.ok) return res.status(r.error === "Pedido no encontrado" ? 404 : 400).json({ error: r.error });
+    console.log(`[deposito] Pedido #${pad7(req.params.id)} restaurado por ${req.user?.username || req.user?.id}`);
+    res.json({ ok: true, stockDescontado: r.stockDescontado, descubierto: r.descubierto });
+  } catch (e) {
+    console.error("[deposito/restaurar]", e.message);
+    res.status(500).json({ error: "No se pudo restaurar el pedido" });
+  }
+});
+
+/** Borrado DEFINITIVO, para liberar espacio. No se recupera. */
+router.delete("/orders/:id/definitivo", mustWarehouse, (req, res) => {
+  try {
+    if (!esAdmin(req)) return res.status(403).json({ error: "Sólo un administrador puede borrar definitivamente" });
+    const r = hardDeleteOrder(Number(req.params.id), getEmpresaId(req));
+    if (!r.ok) return res.status(r.error === "Pedido no encontrado" ? 404 : 400).json({ error: r.error });
+    console.log(`[deposito] Pedido #${pad7(req.params.id)} BORRADO DEFINITIVAMENTE por ${req.user?.username || req.user?.id}`,
+      r.borradas);
+    res.json({ ok: true, borradas: r.borradas });
+  } catch (e) {
+    console.error("[deposito/definitivo]", e.message);
+    res.status(500).json({ error: "No se pudo borrar definitivamente" });
+  }
+});
+
 router.delete("/orders/:id", mustWarehouse, (req, res) => {
   try {
-    const roles = (req.user?.roles || getUserRoles(req.user?.id) || []).map((r) => String(r).toLowerCase());
-    if (!roles.includes("admin")) {
+    if (!esAdmin(req)) {
       return res.status(403).json({ error: "Sólo un administrador puede borrar pedidos" });
     }
-    const r = softDeleteOrder(Number(req.params.id), getEmpresaId(req));
+    const r = softDeleteOrder(Number(req.params.id), getEmpresaId(req),
+      req.user?.username || req.user?.email || req.user?.id);
     if (!r.ok) return res.status(r.error === "Pedido no encontrado" ? 404 : 400).json({ error: r.error });
     console.log(`[deposito] Pedido #${pad7(req.params.id)} borrado por ${req.user?.username || req.user?.id}` +
       (r.stockDevuelto ? ` — se devolvieron ${r.stockDevuelto} unidades al stock` : ""));

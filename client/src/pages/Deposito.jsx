@@ -9,6 +9,7 @@ import { normalizeText } from "../utils/text";
 import "../styles/deposito.css";
 import DevolucionesPendientes from "../components/DevolucionesPendientes";
 import ControlDespachos from "../components/ControlDespachos";
+import PapeleraPedidos from "../components/PapeleraPedidos";
 
 function isoToday() { return new Date().toISOString().slice(0, 10); }
 function isoFirstOfMonth() {
@@ -1088,6 +1089,8 @@ export default function Deposito() {
   const { user } = useAuth();
   const roles = (user?.roles || []).map(r => String(r).toLowerCase());
   const puedeVer = roles.includes("deposito");
+  // La papelera y el borrado definitivo son de administración, no del día a día.
+  const esAdminVista = roles.includes("admin");
 
   const [start, setStart] = useState(isoFirstOfMonth());
   const [end, setEnd] = useState(isoToday());
@@ -1286,7 +1289,11 @@ export default function Deposito() {
       <div className="dep-topbar">
         <h1 className="deposito-title">Panel de Depósito</h1>
         <div className="dep-vistas" role="tablist" aria-label="Vista del panel">
-          {[["pedidos", "Pedidos"], ["despachos", "Control de despachos"]].map(([k, l]) => (
+          {[
+            ["pedidos", "Pedidos"],
+            ["despachos", "Control de despachos"],
+            ...(esAdminVista ? [["papelera", "Papelera"]] : []),
+          ].map(([k, l]) => (
             <button key={k} type="button" role="tab" aria-selected={activeView === k}
               className={`pill${activeView === k ? "" : " pill--ghost"}`}
               onClick={() => setActiveView(k)}>{l}</button>
@@ -1594,6 +1601,13 @@ export default function Deposito() {
       {activeView === "pedidos" && (
         <div style={{ marginTop: 16 }}>
           <DepositoOrdersPanel pedidosPorDia={[]} />
+        </div>
+      )}
+
+      {/* ===== PAPELERA (solo admin) ===== */}
+      {activeView === "papelera" && esAdminVista && (
+        <div style={{ marginTop: 16 }}>
+          <PapeleraPedidos />
         </div>
       )}
 

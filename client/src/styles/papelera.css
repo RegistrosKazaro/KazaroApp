@@ -1,0 +1,51 @@
+/* papelera.css — Pedidos borrados, recuperables. */
+
+.pap { display: flex; flex-direction: column; gap: 14px; }
+
+.pap-title { margin: 0; font-size: 1.15rem; color: #0f172a; }
+.pap-sub { margin: 5px 0 0; font-size: 0.85rem; color: #4b5563; max-width: 82ch; line-height: 1.5; }
+
+.pap-kpi {
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px 14px;
+  display: inline-flex; flex-direction: column; gap: 1px; align-self: flex-start; min-width: 190px;
+}
+.pap-kpi-n { font-size: 1.5rem; font-weight: 700; color: #b91c1c; font-variant-numeric: tabular-nums; }
+.pap-kpi span:last-child { font-size: 0.78rem; color: #4b5563; }
+
+.pap-search {
+  padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
+  font-size: 0.88rem; background: #fff; color: #0f172a; width: 100%; max-width: 520px;
+}
+
+.pap-vacio { padding: 22px; text-align: center; color: #4b5563; background: #f8fafc; border-radius: 12px; }
+
+.pap-tabla-wrap { overflow-x: auto; background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; }
+.pap-tabla { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+.pap-tabla th, .pap-tabla td { padding: 8px 11px; text-align: left; border-bottom: 1px solid #f1f5f9; }
+.pap-tabla th {
+  font-size: 0.71rem; text-transform: uppercase; letter-spacing: .05em;
+  color: #4b5563; background: #f8fafc; font-weight: 700; white-space: nowrap;
+}
+.pap-tabla td.num, .pap-tabla th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.pap-tabla td.mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.78rem; color: #4b5563; }
+.pap-admin { color: #6b7280; }
+
+.pap-tag {
+  display: block; margin-top: 2px; color: #b45309; font-weight: 700;
+  font-size: 0.65rem; text-transform: uppercase; letter-spacing: .04em;
+  cursor: help; font-family: system-ui, sans-serif;
+}
+.pap-quien { display: block; font-size: 0.72rem; color: #6b7280; }
+
+.pap-acciones { display: flex; gap: 6px; justify-content: flex-end; white-space: nowrap; }
+.pap-btn {
+  padding: 5px 11px; border: 1px solid #d1d5db; border-radius: 8px; background: #fff;
+  color: #374151; font-size: 0.79rem; font-weight: 600; cursor: pointer;
+}
+.pap-btn--peligro { border-color: #b91c1c; color: #b91c1c; }
+.pap-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+@media (max-width: 820px) {
+  .pap-tabla { font-size: 0.78rem; }
+  .pap-acciones { flex-direction: column; }
+}

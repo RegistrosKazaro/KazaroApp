@@ -1049,6 +1049,8 @@ function ensurePendientesColumn() {
       ["pendiente_status", "TEXT"],
       ["pendiente_closedat", "TEXT"],
       ["pendiente_retiro_at", "TEXT"],
+      // Quién mandó el pedido a la papelera, para poder rastrearlo.
+      ["deleted_por", "TEXT"],
     ]) {
       if (!pc.includes(col)) {
         db.prepare(`ALTER TABLE Pedidos ADD COLUMN ${col} ${tipo} DEFAULT NULL`).run();
@@ -1245,7 +1247,113 @@ export function snapshotDespacho(pedidoId, fecha = null) {
  * borrando como si nunca hubiera existido, así que el material vuelve.
  * Deja de contar en informes, pedidos y control de despachos.
  */
-export function softDeleteOrder(pedidoId, empresaId) {
+/** Tablas que cuelgan de un pedido. Se limpian al borrarlo definitivamente. */
+const TABLAS_DEL_PEDIDO = [
+  ["PedidoItems", "PedidoID"],
+  ["pedido_despacho", "pedido_id"],
+  ["pedido_despacho_items", "pedido_id"],
+  ["pedido_item_control", "pedido_id"],
+  ["warehouse_movements", "pedido_id"],
+  ["PedidoRecordatorios", "pedido_id"],
+  ["devoluciones", "pedido_id"],
+];
+
+/** Pedidos en la papelera: borrados, todavía recuperables. */
+export function listDeletedOrders(empresaId, limite = 200) {
+  try {
+    const filas = db.prepare(`
+      SELECT p.PedidoID AS id, p.EmpleadoID AS empleadoId, p.ServicioID AS servicioId,
+             p.Rol AS rol, p.Total AS total, p.Fecha AS fecha, p.Status AS status,
+             p.retiro_at AS retiroAt, p.contabilizado_at AS contabilizadoAt,
+             p.deleted_at AS borradoAt, p.deleted_por AS borradoPor,
+             (SELECT COUNT(*) FROM PedidoItems i WHERE i.PedidoID = p.PedidoID) AS items,
+             (SELECT COALESCE(SUM(i.Cantidad),0) FROM PedidoItems i WHERE i.PedidoID = p.PedidoID) AS unidades
+      FROM Pedidos p
+      WHERE p.deleted_at IS NOT NULL AND p.empresa_id = ?
+      ORDER BY p.deleted_at DESC
+      LIMIT ?
+    `).all(Number(empresaId), Number(limite));
+    return { ok: true, pedidos: filas };
+  } catch (e) {
+    return { ok: false, error: e?.message || "No se pudo leer la papelera" };
+  }
+}
+
+/**
+ * Saca un pedido de la papelera. Si había descontado stock, se lo vuelve a
+ * descontar (el borrado se lo había devuelto) y se rehace su registro en el
+ * control de despachos.
+ */
+export function restoreOrder(pedidoId, empresaId) {
+  const id = Number(pedidoId);
+  const ped = db.prepare(
+    `SELECT PedidoID, empresa_id, contabilizado_at, deleted_at FROM Pedidos WHERE PedidoID = ?`
+  ).get(id);
+  if (!ped) return { ok: false, error: "Pedido no encontrado" };
+  if (!ped.deleted_at) return { ok: false, error: "Ese pedido no está borrado" };
+  if (empresaId != null && ped.empresa_id != null && Number(ped.empresa_id) !== Number(empresaId)) {
+    return { ok: false, error: "Pedido no encontrado" };
+  }
+
+  let descontado = 0, descubierto = null;
+  const yaDescontado = !!(ped.contabilizado_at && String(ped.contabilizado_at).trim());
+
+  db.prepare(`UPDATE Pedidos SET deleted_at = NULL, deleted_por = NULL WHERE PedidoID = ?`).run(id);
+
+  if (yaDescontado) {
+    const entregado = db.prepare(
+      `SELECT ProductoID AS pid, MAX(Nombre) AS nombre,
+              COALESCE(SUM(Cantidad),0) - COALESCE(SUM(cantidad_pendiente),0) AS cant
+       FROM PedidoItems WHERE PedidoID = ? GROUP BY ProductoID`
+    ).all(id).filter((r) => Number(r.cant) > 0);
+
+    if (entregado.length) {
+      // El material ya había salido: se descuenta aunque el stock no alcance,
+      // y se informa qué quedó en descubierto para regularizarlo.
+      const r = applyOrderStockDelta(
+        id,
+        entregado.map((e) => ({ productId: Number(e.pid), delta: Number(e.cant), nombre: e.nombre })),
+        { permitirNegativo: true },
+      );
+      descontado = entregado.reduce((s, e) => s + Number(e.cant), 0);
+      descubierto = r.descubierto || null;
+    }
+    try { snapshotDespacho(id); } catch { /* se regenera sola al consultar */ }
+  }
+
+  return { ok: true, stockDescontado: descontado, descubierto };
+}
+
+/** Borrado DEFINITIVO: saca el pedido y todo lo que cuelga de él. No se recupera. */
+export function hardDeleteOrder(pedidoId, empresaId) {
+  const id = Number(pedidoId);
+  const ped = db.prepare(`SELECT PedidoID, empresa_id, deleted_at FROM Pedidos WHERE PedidoID = ?`).get(id);
+  if (!ped) return { ok: false, error: "Pedido no encontrado" };
+  if (empresaId != null && ped.empresa_id != null && Number(ped.empresa_id) !== Number(empresaId)) {
+    return { ok: false, error: "Pedido no encontrado" };
+  }
+  // Sólo se borra definitivamente lo que ya está en la papelera: obliga a pasar
+  // por el borrado recuperable primero.
+  if (!ped.deleted_at) return { ok: false, error: "Primero hay que borrarlo (queda en la papelera)" };
+
+  const borradas = {};
+  const tx = db.transaction(() => {
+    for (const [tabla, col] of TABLAS_DEL_PEDIDO) {
+      try {
+        const r = db.prepare(`DELETE FROM "${tabla}" WHERE ${col} = ?`).run(id);
+        if (r.changes) borradas[tabla] = r.changes;
+      } catch { /* la tabla puede no existir en esta base */ }
+    }
+    db.prepare(`DELETE FROM Pedidos WHERE PedidoID = ?`).run(id);
+  });
+
+  try { tx(); }
+  catch (e) { return { ok: false, error: e?.message || "No se pudo borrar definitivamente" }; }
+
+  return { ok: true, borradas };
+}
+
+export function softDeleteOrder(pedidoId, empresaId, usuario = null) {
   const id = Number(pedidoId);
   const ped = db.prepare(
     `SELECT PedidoID, empresa_id, contabilizado_at, retiro_at, deleted_at, Total
@@ -1284,7 +1392,8 @@ export function softDeleteOrder(pedidoId, empresaId) {
     try { db.prepare(`DELETE FROM pedido_despacho_items WHERE pedido_id = ?`).run(id); } catch {}
     try { db.prepare(`DELETE FROM pedido_despacho WHERE pedido_id = ?`).run(id); } catch {}
 
-    db.prepare(`UPDATE Pedidos SET deleted_at = datetime('now') WHERE PedidoID = ?`).run(id);
+    db.prepare(`UPDATE Pedidos SET deleted_at = datetime('now'), deleted_por = ? WHERE PedidoID = ?`)
+      .run(usuario ? String(usuario) : null, id);
   });
 
   try { tx(); }
