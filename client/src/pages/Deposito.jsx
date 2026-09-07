@@ -494,9 +494,14 @@ function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes =
    Panel de Pedidos
    ===================================================== */
 function DepositoOrdersPanel({ pedidosPorDia }) {
+  // Borrar pedidos es para arreglar duplicados o cargas erróneas, no algo del
+  // día a día: sólo lo ve un administrador.
+  const { user: usuarioActual } = useAuth();
+  const puedeBorrar = (usuarioActual?.roles || []).map(r => String(r).toLowerCase()).includes("admin");
   const [tab, setTab] = useState("open");
   const [orders, setOrders] = useState([]);
   const [err, setErr] = useState("");
+  const [okMsg, setOkMsg] = useState("");
   const [q, setQ] = useState("");
   const qDeb = useDebounced(q, 250);
   const [sort, setSort] = useState("fecha_desc");
@@ -635,6 +640,29 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
 
   // Las tarjetas de pendiente usan su propio circuito: son el mismo pedido y el
   // mismo remito, pero avanzan por separado.
+  /** Borra un pedido cargado por duplicado o por error. Es recuperable: queda
+   *  marcado como borrado, no se pierde. Si ya descontó stock, se devuelve. */
+  const borrarPedido = async (o) => {
+    const detalle = `#${o.displayId}${o.servicioNombre ? ` — ${o.servicioNombre}` : ""}`;
+    if (!window.confirm(
+      `¿Borrar el pedido ${detalle}?\n\n` +
+      `Deja de contar en informes, pedidos y control de despachos. ` +
+      `Si ya había descontado stock, se devuelve.`
+    )) return;
+    try {
+      const { data } = await api.delete(`/deposito/orders/${o.id}`, { withCredentials: true });
+      setErr("");
+      if (data?.stockDevuelto > 0) {
+        setOkMsg(`Pedido #${o.displayId} borrado. Se devolvieron ${data.stockDevuelto} unidades al stock.`);
+      } else {
+        setOkMsg(`Pedido #${o.displayId} borrado.`);
+      }
+      quitarDeLista(o);
+    } catch (e) {
+      setErr(e?.response?.data?.error || "No se pudo borrar el pedido");
+    }
+  };
+
   const rutaAccion = (o, accion) => o?.esPendiente
     ? `/deposito/orders/${o.id}/pendiente/${accion}`
     : `/deposito/orders/${o.id}/${accion}`;
@@ -806,6 +834,7 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
       )}
 
       {err && <div className="state error deposito-state">{err}</div>}
+      {okMsg && <div className="state deposito-state">{okMsg}</div>}
 
       {tab === "devoluciones" ? <DevolucionesPendientes /> : (
       <div className="deposito-table-wrapper">
@@ -874,6 +903,16 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                             poder corregir errores detectados después. El backend
                             ajusta la diferencia de stock si ya se había descontado.
                             La conciliación no cambia: usa la foto del despacho. */}
+                        {/* Sólo admin: es para arreglar duplicados o cargas
+                            erróneas. En la tarjeta de pendiente no va: se borra
+                            el pedido entero desde su tarjeta. */}
+                        {puedeBorrar && !o.esPendiente && tab !== "devoluciones" && (
+                          <button type="button" className="pill pill--ghost" onClick={() => borrarPedido(o)}
+                            title="Borrar este pedido (recuperable). Si ya descontó stock, se devuelve."
+                            style={{ borderColor: "#b91c1c", color: "#b91c1c" }}>
+                            Borrar
+                          </button>
+                        )}
                         {tab !== "revision_deposito" && tab !== "devoluciones" && !o.esPendiente && (
                           <button type="button" className="pill pill--ghost" onClick={() => toggleEdit(o.id)}
                             style={{ borderColor: "#2563eb", color: "#1d4ed8" }}>

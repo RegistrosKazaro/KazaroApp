@@ -1239,6 +1239,60 @@ export function snapshotDespacho(pedidoId, fecha = null) {
  * @param {number} pedidoId
  * @param {Array<{productId:number, cantidad:number}>} entregados
  */
+/**
+ * Borra un pedido (borrado suave: queda en la base con deleted_at, se puede
+ * recuperar). Si el pedido ya había descontado stock, se lo devuelve: se está
+ * borrando como si nunca hubiera existido, así que el material vuelve.
+ * Deja de contar en informes, pedidos y control de despachos.
+ */
+export function softDeleteOrder(pedidoId, empresaId) {
+  const id = Number(pedidoId);
+  const ped = db.prepare(
+    `SELECT PedidoID, empresa_id, contabilizado_at, retiro_at, deleted_at, Total
+     FROM Pedidos WHERE PedidoID = ?`
+  ).get(id);
+  if (!ped) return { ok: false, error: "Pedido no encontrado" };
+  if (ped.deleted_at) return { ok: false, error: "El pedido ya estaba borrado" };
+  if (empresaId != null && ped.empresa_id != null && Number(ped.empresa_id) !== Number(empresaId)) {
+    return { ok: false, error: "Pedido no encontrado" };
+  }
+
+  const yaDescontado = !!(ped.contabilizado_at && String(ped.contabilizado_at).trim());
+  let stockDevuelto = 0;
+
+  const tx = db.transaction(() => {
+    if (yaDescontado) {
+      // Delta negativo = devolver al stock. Sólo lo que había salido: lo que
+      // quedó pendiente nunca se descontó.
+      const entregado = db.prepare(
+        `SELECT ProductoID AS pid, MAX(Nombre) AS nombre,
+                COALESCE(SUM(Cantidad),0) - COALESCE(SUM(cantidad_pendiente),0) AS cant
+         FROM PedidoItems WHERE PedidoID = ? GROUP BY ProductoID`
+      ).all(id).filter((r) => Number(r.cant) > 0);
+
+      if (entregado.length) {
+        const r = applyOrderStockDelta(
+          id,
+          entregado.map((e) => ({ productId: Number(e.pid), delta: -Number(e.cant), nombre: e.nombre })),
+        );
+        if (!r.ok) throw new Error(r.error || "No se pudo devolver el stock");
+        stockDevuelto = entregado.reduce((s, e) => s + Number(e.cant), 0);
+      }
+    }
+
+    // El pedido sale del control de despachos junto con sus entregas.
+    try { db.prepare(`DELETE FROM pedido_despacho_items WHERE pedido_id = ?`).run(id); } catch {}
+    try { db.prepare(`DELETE FROM pedido_despacho WHERE pedido_id = ?`).run(id); } catch {}
+
+    db.prepare(`UPDATE Pedidos SET deleted_at = datetime('now') WHERE PedidoID = ?`).run(id);
+  });
+
+  try { tx(); }
+  catch (e) { return { ok: false, error: e?.message || "No se pudo borrar el pedido" }; }
+
+  return { ok: true, stockDevuelto, habiaDescontado: yaDescontado };
+}
+
 export function registrarEntregaPendientes(pedidoId, entregados, opciones = {}) {
   // `bajarPendiente: false` deja el pendiente marcado: se usa al pasar a "listo
   // para retirar", donde ya hay movimiento en Flexxus pero el material todavía

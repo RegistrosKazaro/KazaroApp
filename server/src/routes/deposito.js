@@ -14,6 +14,7 @@ import {
   applyOrderStockDelta,
   snapshotDespacho,
   registrarEntregaPendientes,
+  softDeleteOrder,
 } from "../db.js";
 import { sendMail } from "../utils/mailer.js";
 import { fmtAr, ahoraUtcSql } from "../utils/fechas.js";
@@ -466,6 +467,29 @@ function repararFotosFaltantes(empresaId) {
     console.warn("[deposito] repararFotosFaltantes:", e?.message || e);
   }
 }
+
+/* ===================== Borrar un pedido =====================
+   Para cuando se cargó algo por duplicado o por error. Es borrado suave: el
+   pedido queda en la base y se puede recuperar, pero deja de contar en
+   informes, pedidos y control de despachos. Si ya había descontado stock, se
+   devuelve. Sólo admin: no es una operación del día a día del depósito.
+============================================================= */
+router.delete("/orders/:id", mustWarehouse, (req, res) => {
+  try {
+    const roles = (req.user?.roles || getUserRoles(req.user?.id) || []).map((r) => String(r).toLowerCase());
+    if (!roles.includes("admin")) {
+      return res.status(403).json({ error: "Sólo un administrador puede borrar pedidos" });
+    }
+    const r = softDeleteOrder(Number(req.params.id), getEmpresaId(req));
+    if (!r.ok) return res.status(r.error === "Pedido no encontrado" ? 404 : 400).json({ error: r.error });
+    console.log(`[deposito] Pedido #${pad7(req.params.id)} borrado por ${req.user?.username || req.user?.id}` +
+      (r.stockDevuelto ? ` — se devolvieron ${r.stockDevuelto} unidades al stock` : ""));
+    res.json({ ok: true, stockDevuelto: r.stockDevuelto, habiaDescontado: r.habiaDescontado });
+  } catch (e) {
+    console.error("[deposito/delete]", e.message);
+    res.status(500).json({ error: "No se pudo borrar el pedido" });
+  }
+});
 
 /* ============ Recorrido de la parte pendiente ============
    Lo que quedó pendiente avanza por las mismas etapas que un pedido, pero sin

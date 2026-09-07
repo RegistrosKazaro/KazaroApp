@@ -25,6 +25,7 @@ import {
   audit,
   recomputeFlexxusMatch,
   listFlexxusMatch,
+  softDeleteOrder,
 } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendMail, pauseMail, resumeMail, getMailPauseState } from "../utils/mailer.js";
@@ -1207,10 +1208,12 @@ router.get("/pedidos/servicios", mustBeAdmin, (req, res) => {
 router.delete("/orders/:id", mustBeAdmin, (req, res) => {
   try {
     const empresaId = req.user?.empresaId ?? 1;
-    const r = db.prepare(`UPDATE Pedidos SET deleted_at = datetime('now') WHERE PedidoID = ? AND empresa_id = ? AND deleted_at IS NULL`).run(Number(req.params.id), empresaId);
-    if (!r.changes) return res.status(404).json({ error: "Pedido no encontrado" });
+    // Devuelve el stock si el pedido ya lo había descontado: antes se borraba
+    // sin reponerlo y esas unidades quedaban faltando en el inventario.
+    const r = softDeleteOrder(Number(req.params.id), empresaId);
+    if (!r.ok) return res.status(r.error === "Pedido no encontrado" ? 404 : 400).json({ error: r.error });
     audit({ empresaId: req.user?.empresaId ?? null, usuario: req.user?.username || req.user?.email || null, accion: "delete", entidad: "Pedido", entidadId: req.params.id });
-    res.json({ ok: true });
+    res.json({ ok: true, stockDevuelto: r.stockDevuelto });
   } catch {
     res.status(500).json({ error: "Error al eliminar pedido" });
   }
