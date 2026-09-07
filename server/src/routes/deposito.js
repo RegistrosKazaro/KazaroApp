@@ -951,6 +951,7 @@ router.put("/orders/:id/:action", mustWarehouse, async (req, res) => {
       add(["retiro_at"], null);
     }
 
+
     if (!sets.length) return res.status(500).json({ error: "Sin columnas de estado" });
 
     if (cols.includes("empresa_id")) {
@@ -962,6 +963,31 @@ router.put("/orders/:id/:action", mustWarehouse, async (req, res) => {
     params.push(id);
     const r = db.prepare(`UPDATE Pedidos SET ${sets.join(", ")} WHERE ${idCol} = ?`).run(...params);
     if (r.changes === 0) return res.status(404).json({ error: "Pedido no encontrado" });
+
+    // Al volver atrás, el pedido vuelve a ser uno solo: la tarjeta de pendiente
+    // se reabsorbe. Si no, el pedido y su pendiente aparecían los dos en la
+    // misma solapa y parecía duplicado. Las cantidades pendientes se conservan
+    // (siguen marcadas en el editor); lo que se cancela es el circuito aparte.
+    const vuelveAtras = action === "reopen" || action === "prepare" || action.includes("prepar");
+    if (vuelveAtras) {
+      try {
+        const prev = db.prepare(
+          `SELECT pendiente_status, pendiente_closedat FROM Pedidos WHERE PedidoID = ?`
+        ).get(id);
+        if (prev && String(prev.pendiente_status || "").trim()) {
+          // Si el pendiente ya se había marcado listo para retirar, ese
+          // movimiento se deshace: se borra del control de despachos.
+          if (String(prev.pendiente_status).toLowerCase() === "closed") {
+            db.prepare(`DELETE FROM pedido_despacho_items WHERE pedido_id = ? AND numero > 1`).run(id);
+          }
+          db.prepare(
+            `UPDATE Pedidos SET pendiente_status = NULL, pendiente_closedat = NULL, pendiente_retiro_at = NULL
+             WHERE PedidoID = ?`
+          ).run(id);
+        }
+      } catch (e) { console.warn("[deposito] reabsorber pendiente:", e?.message || e); }
+    }
+
     if (action === "close") {
       // Foto del despacho: el detalle exacto de este momento, que es el que
       // quedó como movimiento en Flexxus. La conciliación lee de acá.
