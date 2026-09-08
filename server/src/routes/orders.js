@@ -197,7 +197,8 @@ router.post("/", requireAuth, async (req, res) => {
       const UNIFORMES_TO = getMailConfigValue(empresaId, "MAIL_UNIFORMES_TO", `eugenia.alvarez@kazaro.com.ar,${NICOLAS}`);
 
       const mailOpts = {
-        cc: ccArr.length ? ccArr.join(",") : undefined,
+        // Los uniformes no llevan el CC del depósito: van sólo a UNIFORMES_TO.
+        cc: !tieneUniformes && ccArr.length ? ccArr.join(",") : undefined,
         subject: tieneUniformes
           ? `NUEVO PEDIDO DE UNIFORMES #${nro}${serviceName ? ` — ${serviceName}` : ""}`
           : `NUEVO PEDIDO DE INSUMOS #${nro}${serviceName ? ` — ${serviceName}` : ""}`,
@@ -211,9 +212,12 @@ router.post("/", requireAuth, async (req, res) => {
       };
 
       if (tieneUniformes) {
-        // Canal exclusivo uniformes: solo eugenia + nicolas.barcena (no van los 4 normales).
+        // Canal exclusivo uniformes: SOLO los de UNIFORMES_TO.
+        // Va con exclusive (no overrideTo): overrideTo únicamente ignora
+        // MAIL_TO, y el mail se seguía colando por el MAIL_CC global, que en
+        // Kazaro tiene a german.gonzalez, nicolas.bustos y alejandro.diaz.
         mailOpts.to = UNIFORMES_TO;
-        mailOpts.overrideTo = true;
+        mailOpts.exclusive = true;
       } else if (empresaId === 1) {
         // Kazaro sin uniformes: los 4 del .env + nicolas.barcena.
         const baseTo = toArr.length ? [...toArr, NICOLAS] : [NICOLAS];
