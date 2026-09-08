@@ -96,7 +96,15 @@ export default function Trazabilidad() {
     }],
   ];
 
-  const t = data?.totales;
+  // Los números de arriba se calculan sobre lo que se está VIENDO. Si salieran
+  // del total del período, al buscar algo mostrarían 24 pedidos con 5 filas
+  // abajo, y no habría forma de saber a qué corresponden.
+  const t = useMemo(() => ({
+    pedidos: pedidos.length,
+    conPendiente: pedidos.filter((p) => p.tienePendiente).length,
+    conDevolucion: pedidos.filter((p) => p.tieneDevolucion).length,
+    conAjuste: pedidos.filter((p) => p.tieneAjuste).length,
+  }), [pedidos]);
 
   return (
     <div className="tz">
