@@ -1,5 +1,6 @@
 // client/src/pages/MisPedidos.jsx
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { normalizeText } from "../utils/text";
 import { useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
@@ -83,6 +84,10 @@ export default function MisPedidos() {
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pdfErr, setPdfErr] = useState("");
   const [tabFilter, setTabFilter] = useState("activos");
+  // Buscador y antigüedad: con el tiempo se acumulan cientos de pedidos y
+  // encontrar el que se quiere devolver se vuelve imposible a fuerza de scroll.
+  const [q, setQ] = useState("");
+  const [meses, setMeses] = useState(3);
   const [returnOrder, setReturnOrder] = useState(null);
 
   const load = useCallback(async () => {
@@ -101,10 +106,30 @@ export default function MisPedidos() {
   useEffect(() => { load(); }, [load]);
 
   const filtered = useMemo(() => {
-    if (tabFilter === "activos")
-      return orders.filter(o => o.status !== "retirado");
-    return orders.filter(o => o.status === "retirado");
-  }, [orders, tabFilter]);
+    let base = tabFilter === "activos"
+      ? orders.filter(o => o.status !== "retirado")
+      : orders.filter(o => o.status === "retirado");
+
+    // Los pedidos viejos se ocultan salvo que se pidan expresamente: lo que se
+    // devuelve es siempre reciente.
+    if (meses > 0) {
+      const corte = new Date();
+      corte.setMonth(corte.getMonth() - meses);
+      base = base.filter(o => {
+        const f = new Date(String(o.fecha || "").replace(" ", "T"));
+        return Number.isNaN(f.getTime()) ? true : f >= corte;
+      });
+    }
+
+    const t = normalizeText(q);
+    if (!t) return base;
+    const digitos = t.replace(/\D/g, "");
+    return base.filter(o =>
+      (digitos && (String(o.id).includes(digitos) || pad7(o.id).includes(digitos)))
+      || normalizeText(o.servicioNombre).includes(t)
+      || (o.items || []).some(i => normalizeText(i.nombre ?? i.name).includes(t)
+        || normalizeText(i.codigo ?? i.code).includes(t)));
+  }, [orders, tabFilter, q, meses]);
 
   const alertCount = useMemo(() =>
     orders.filter(o => o.status !== "retirado" && o.status !== "closed" && diasDesde(o.fecha) >= 2).length,
@@ -210,12 +235,39 @@ export default function MisPedidos() {
         ))}
       </div>
 
+      {/* Buscador y antigüedad */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", margin: "0 0 12px" }}>
+        <input
+          type="search" value={q} onChange={(e) => setQ(e.target.value)}
+          placeholder="Buscar por número de pedido, servicio o insumo…"
+          style={{
+            flex: "1 1 280px", minWidth: 200, padding: "9px 13px",
+            border: "1px solid #d1d5db", borderRadius: 8, fontSize: "0.9rem", boxSizing: "border-box",
+          }}
+        />
+        <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: "0.84rem", color: "#4b5563" }}>
+          Mostrar
+          <select value={meses} onChange={(e) => setMeses(Number(e.target.value))}
+            style={{ padding: "8px 11px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: "0.88rem", background: "#fff" }}>
+            <option value={1}>último mes</option>
+            <option value={3}>últimos 3 meses</option>
+            <option value={6}>últimos 6 meses</option>
+            <option value={0}>todos</option>
+          </select>
+        </label>
+      </div>
+
       {loading && <div style={{ color: "#6b7280", padding: 16 }}>Cargando pedidos…</div>}
       {err && <div style={{ color: "#dc2626", padding: 12, background: "#fef2f2", borderRadius: 8 }}>{err}</div>}
 
       {!loading && !err && filtered.length === 0 && (
         <div style={{ color: "#6b7280", padding: 16, textAlign: "center" }}>
-          No tenés pedidos {tabFilter === "activos" ? "activos" : "retirados"}.
+          {q
+            ? <>Ningún pedido coincide con <strong>“{q}”</strong>.</>
+            : meses > 0
+              ? <>No tenés pedidos {tabFilter === "activos" ? "activos" : "retirados"} en los últimos {meses === 1 ? "30 días" : `${meses} meses`}.<br />
+                  <span style={{ fontSize: "0.85rem" }}>Cambiá el período a “todos” para ver los más viejos.</span></>
+              : <>No tenés pedidos {tabFilter === "activos" ? "activos" : "retirados"}.</>}
         </div>
       )}
 

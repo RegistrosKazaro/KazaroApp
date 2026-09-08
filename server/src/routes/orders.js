@@ -393,12 +393,21 @@ router.get("/:id/returnable", requireAuth, (req, res) => {
 });
 
 // Crear solicitud de devolución (supervisor) — NO toca stock
+/**
+ * Registra una devolución. Acepta un insumo suelto (pedidoId, productoId,
+ * cantidad, motivo) o VARIOS de una vez en `items`, para que el supervisor no
+ * tenga que repetir la operación insumo por insumo.
+ * Es todo o nada: si una línea falla, no se guarda ninguna.
+ */
 router.post("/returns", requireAuth, (req, res) => {
   try {
-    const { pedidoId, productoId, cantidad, motivo } = req.body || {};
-    const pid = Number(pedidoId), prod = Number(productoId), cant = Math.trunc(Number(cantidad));
-    if (!pid || !prod || !Number.isFinite(cant) || cant <= 0) return res.status(400).json({ error: "Datos inválidos" });
-    if (!String(motivo || "").trim()) return res.status(400).json({ error: "El motivo es obligatorio" });
+    const { pedidoId, productoId, cantidad, motivo, items } = req.body || {};
+    const pid = Number(pedidoId);
+    if (!pid) return res.status(400).json({ error: "Datos inválidos" });
+
+    const lineas = Array.isArray(items) && items.length
+      ? items
+      : [{ productoId, cantidad, motivo }];
 
     const empresaId = req.user?.empresaId ?? 1;
     const pedOwner = db.prepare(`SELECT empresa_id, Status, retiro_at FROM Pedidos WHERE PedidoID = ?`).get(pid);
@@ -413,13 +422,31 @@ router.post("/returns", requireAuth, (req, res) => {
       return res.status(400).json({ error: "El pedido debe estar retirado antes de poder devolver insumos." });
     }
 
-    const pedItem = db.prepare(`SELECT SUM(Cantidad) AS pedido FROM PedidoItems WHERE PedidoID = ? AND ProductoID = ?`).get(pid, prod);
-    const yaDev = db.prepare(`SELECT SUM(cantidad) AS d FROM devoluciones WHERE pedido_id = ? AND producto_id = ? AND estado IN ('pendiente','aprobada')`).get(pid, prod);
-    const disponible = Number(pedItem?.pedido || 0) - Number(yaDev?.d || 0);
-    if (cant > disponible) return res.status(400).json({ error: `Solo se pueden devolver ${disponible} unidades` });
-    db.prepare(`INSERT INTO devoluciones (pedido_id, producto_id, cantidad, motivo, empresa_id, solicitante_id, estado) VALUES (?, ?, ?, ?, ?, ?, 'pendiente')`)
-      .run(pid, prod, cant, String(motivo).trim(), empresaId, req.user.id);
-    res.json({ ok: true });
+    // Se valida TODO antes de guardar nada.
+    const validadas = [];
+    for (const l of lineas) {
+      const prod = Number(l?.productoId ?? l?.productId);
+      const cant = Math.trunc(Number(l?.cantidad));
+      const mot = String(l?.motivo || "").trim();
+      if (!prod || !Number.isFinite(cant) || cant <= 0) return res.status(400).json({ error: "Datos inválidos" });
+      if (!mot) return res.status(400).json({ error: "El motivo es obligatorio" });
+
+      const pedItem = db.prepare(`SELECT SUM(Cantidad) AS pedido, MAX(Nombre) AS nombre FROM PedidoItems WHERE PedidoID = ? AND ProductoID = ?`).get(pid, prod);
+      const yaDev = db.prepare(`SELECT SUM(cantidad) AS d FROM devoluciones WHERE pedido_id = ? AND producto_id = ? AND estado IN ('pendiente','aprobada')`).get(pid, prod);
+      const disponible = Number(pedItem?.pedido || 0) - Number(yaDev?.d || 0);
+      if (cant > disponible) {
+        const nombre = pedItem?.nombre ? ` de ${pedItem.nombre}` : "";
+        return res.status(400).json({ error: `Solo se pueden devolver ${disponible} unidades${nombre}` });
+      }
+      validadas.push({ prod, cant, mot });
+    }
+
+    const ins = db.prepare(`INSERT INTO devoluciones (pedido_id, producto_id, cantidad, motivo, empresa_id, solicitante_id, estado) VALUES (?, ?, ?, ?, ?, ?, 'pendiente')`);
+    db.transaction(() => {
+      for (const v of validadas) ins.run(pid, v.prod, v.cant, v.mot, empresaId, req.user.id);
+    })();
+
+    res.json({ ok: true, enviadas: validadas.length });
   } catch (e) {
     console.error("[returns POST]", e?.message || e);
     res.status(500).json({ error: "No se pudo registrar la devolución" });
