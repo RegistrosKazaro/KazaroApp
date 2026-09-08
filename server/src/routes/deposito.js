@@ -18,6 +18,7 @@ import {
   listDeletedOrders,
   restoreOrder,
   hardDeleteOrder,
+  getProductIdsCategoriasSeparadas,
 } from "../db.js";
 import { sendMail } from "../utils/mailer.js";
 import { fmtAr, ahoraUtcSql } from "../utils/fechas.js";
@@ -484,6 +485,150 @@ function repararFotosFaltantes(empresaId) {
   }
 }
 
+/* ======================= Trazabilidad =======================
+   La vida completa de cada pedido: qué pidió el supervisor, qué ajustó el
+   depósito, qué salió, qué quedó pendiente y qué se devolvió. La unidad es el
+   PEDIDO — rastrear un pedido es mucho más directo que perseguir un insumo
+   entre cientos.
+============================================================== */
+router.get("/trazabilidad", mustWarehouse, (req, res) => {
+  try {
+    const empresaId = getEmpresaId(req);
+    const dia = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "").trim()) ? String(v).trim() : null);
+    const desde = dia(req.query.desde);
+    const hasta = dia(req.query.hasta);
+    // Uniformes tienen otra lógica, igual que en los informes: van aparte.
+    const modo = String(req.query.modo || "insumos").toLowerCase() === "uniformes" ? "uniformes" : "insumos";
+    const soloDif = String(req.query.soloDiferencias ?? "1") !== "0";
+
+    // El período se mide por la fecha del pedido (que es lo que se rastrea).
+    const cond = ["p.empresa_id = @empresaId", "p.deleted_at IS NULL"];
+    const params = { empresaId };
+    if (desde) { cond.push("p.Fecha >= @desdeUtc"); params.desdeUtc = `${desde} 03:00:00`; }
+    if (hasta) {
+      const d = new Date(`${hasta}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1);
+      cond.push("p.Fecha < @hastaUtc"); params.hastaUtc = `${d.toISOString().slice(0, 10)} 03:00:00`;
+    }
+
+    const pedidos = db.prepare(`
+      SELECT p.PedidoID AS id, p.EmpleadoID AS empleadoId, p.ServicioID AS servicioId,
+             p.Rol AS rol, p.Fecha AS fecha, p.Status AS status, p.Nota AS nota,
+             p.closedat AS closedAt, p.retiro_at AS retiroAt,
+             p.pendiente_status AS pendienteStatus, p.pendiente_retiro_at AS pendienteRetiroAt
+      FROM Pedidos p
+      WHERE ${cond.join(" AND ")}
+      ORDER BY p.Fecha DESC
+      LIMIT 500
+    `).all(params);
+    if (!pedidos.length) return res.json({ ok: true, pedidos: [], totales: vacio() });
+
+    const ids = pedidos.map((p) => p.id);
+    const ph = ids.map(() => "?").join(",");
+
+    // Categorías separadas (Uniformes), para dejarlas de un lado o del otro.
+    const idsSeparados = getProductIdsCategoriasSeparadas();
+
+    const items = db.prepare(`
+      SELECT i.PedidoID AS pedidoId, i.ProductoID AS productId,
+             MAX(i.Nombre) AS nombre, MAX(i.Codigo) AS codigo, MAX(i.Precio) AS precio,
+             COALESCE(SUM(i.cantidad_original), SUM(i.Cantidad)) AS pidio,
+             COALESCE(SUM(i.Cantidad),0) AS cantidad,
+             COALESCE(SUM(i.cantidad_pendiente),0) AS pendiente,
+             COALESCE(MAX(d.devuelto),0) AS devuelto
+      FROM PedidoItems i
+      LEFT JOIN v_devoluciones_aprobadas d
+        ON d.pedido_id = i.PedidoID AND d.producto_id = i.ProductoID
+      WHERE i.PedidoID IN (${ph})
+      GROUP BY i.PedidoID, i.ProductoID
+    `).all(...ids);
+
+    const porPedido = new Map();
+    for (const it of items) {
+      const esSeparado = idsSeparados.has(Number(it.productId));
+      if (modo === "uniformes" ? !esSeparado : esSeparado) continue;
+
+      const pidio = Number(it.pidio || 0);
+      const cantidad = Number(it.cantidad || 0);
+      const pendiente = Number(it.pendiente || 0);
+      const devuelto = Number(it.devuelto || 0);
+      const entregado = Math.max(0, cantidad - pendiente);
+      const neto = Math.max(0, entregado - devuelto);
+
+      if (!porPedido.has(it.pedidoId)) porPedido.set(it.pedidoId, []);
+      porPedido.get(it.pedidoId).push({
+        productId: Number(it.productId),
+        codigo: it.codigo || "", nombre: it.nombre || "—",
+        precio: Number(it.precio || 0),
+        pidio, entregado, pendiente, devuelto, neto,
+        // El depósito cambió la cantidad respecto de lo pedido.
+        ajustado: cantidad !== pidio,
+        agregado: pidio === 0,
+      });
+    }
+
+    const fmt = (v) => (v ? fmtAr(v) : null);
+    const salida = [];
+    for (const p of pedidos) {
+      const its = porPedido.get(p.id) || [];
+      if (!its.length) continue;
+
+      const tienePendiente = its.some((i) => i.pendiente > 0);
+      const tieneDevolucion = its.some((i) => i.devuelto > 0);
+      const tieneAjuste = its.some((i) => i.ajustado);
+      const hayDiferencia = tienePendiente || tieneDevolucion || tieneAjuste;
+      if (soloDif && !hayDiferencia) continue;
+
+      const retirado = !!(p.retiroAt && String(p.retiroAt).trim());
+      salida.push({
+        id: p.id, numero: pad7(p.id),
+        servicio: p.servicioId ? (getServiceNameById(p.servicioId) || `Servicio ${p.servicioId}`) : null,
+        solicitante: p.empleadoId ? (getEmployeeDisplayName(p.empleadoId) || null) : null,
+        rol: p.rol || null,
+        nota: p.nota || null,
+        // La línea de tiempo del pedido.
+        pedidoAr: fmt(p.fecha),
+        listoAr: fmt(p.closedAt),
+        retiradoAr: fmt(p.retiroAt),
+        pendienteEntregadoAr: fmt(p.pendienteRetiroAt),
+        estado: retirado ? "retirado"
+          : (String(p.status || "").toLowerCase() === "closed" ? "listo" : String(p.status || "abierto").toLowerCase()),
+        tienePendiente, tieneDevolucion, tieneAjuste,
+        items: its,
+        totales: {
+          pidio: its.reduce((s, i) => s + i.pidio, 0),
+          entregado: its.reduce((s, i) => s + i.entregado, 0),
+          pendiente: its.reduce((s, i) => s + i.pendiente, 0),
+          devuelto: its.reduce((s, i) => s + i.devuelto, 0),
+          neto: its.reduce((s, i) => s + i.neto, 0),
+          monto: its.reduce((s, i) => s + i.neto * i.precio, 0),
+        },
+      });
+    }
+
+    res.json({
+      ok: true,
+      pedidos: salida,
+      totales: {
+        pedidos: salida.length,
+        conPendiente: salida.filter((p) => p.tienePendiente).length,
+        conDevolucion: salida.filter((p) => p.tieneDevolucion).length,
+        conAjuste: salida.filter((p) => p.tieneAjuste).length,
+        pidio: salida.reduce((s, p) => s + p.totales.pidio, 0),
+        entregado: salida.reduce((s, p) => s + p.totales.entregado, 0),
+        pendiente: salida.reduce((s, p) => s + p.totales.pendiente, 0),
+        devuelto: salida.reduce((s, p) => s + p.totales.devuelto, 0),
+      },
+    });
+  } catch (e) {
+    console.error("[deposito/trazabilidad]", e.message);
+    res.status(500).json({ error: "No se pudo armar la trazabilidad" });
+  }
+
+  function vacio() {
+    return { pedidos: 0, conPendiente: 0, conDevolucion: 0, conAjuste: 0, pidio: 0, entregado: 0, pendiente: 0, devuelto: 0 };
+  }
+});
+
 /* ===================== Borrar un pedido =====================
    Para cuando se cargó algo por duplicado o por error. Es borrado suave: el
    pedido queda en la base y se puede recuperar, pero deja de contar en
@@ -896,9 +1041,21 @@ router.put("/orders/:id/items", mustWarehouse, (req, res) => {
     }
 
     const tx = db.transaction(() => {
+      // Lo que pidió el supervisor no se pierde al editar: se conserva por
+      // producto. Un insumo que agrega el depósito no fue pedido, así que su
+      // original es 0 y queda registrado como agregado.
+      const originales = new Map(
+        db.prepare(`SELECT ProductoID AS pid, COALESCE(SUM(COALESCE(cantidad_original, Cantidad)),0) AS orig
+                    FROM PedidoItems WHERE PedidoID = ? GROUP BY ProductoID`)
+          .all(id).map((r) => [Number(r.pid), Number(r.orig)])
+      );
+
       db.prepare(`DELETE FROM PedidoItems WHERE PedidoID = ?`).run(id);
-      const ins = db.prepare(`INSERT INTO PedidoItems (PedidoID, ProductoID, Nombre, Precio, Cantidad, Subtotal, Codigo, cantidad_pendiente) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
-      for (const f of filas) ins.run(id, f.pid, f.name, f.precio, f.cantidad, f.subtotal, f.code, f.pendiente);
+      const ins = db.prepare(`INSERT INTO PedidoItems (PedidoID, ProductoID, Nombre, Precio, Cantidad, Subtotal, Codigo, cantidad_pendiente, cantidad_original) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      for (const f of filas) {
+        ins.run(id, f.pid, f.name, f.precio, f.cantidad, f.subtotal, f.code, f.pendiente,
+          originales.has(f.pid) ? originales.get(f.pid) : 0);
+      }
       db.prepare(`UPDATE Pedidos SET Total = ? WHERE PedidoID = ?`).run(total, id);
     });
     tx();

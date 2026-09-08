@@ -1041,6 +1041,16 @@ function ensurePendientesColumn() {
       db.prepare(`ALTER TABLE PedidoItems ADD COLUMN cantidad_pendiente INTEGER NOT NULL DEFAULT 0`).run();
       console.log("[db] Columna 'cantidad_pendiente' agregada a PedidoItems");
     }
+    // Lo que pidió el supervisor, antes de que el depósito lo ajuste. Al editar
+    // un pedido se borran y reinsertan los ítems, así que sin guardar esto no
+    // hay forma de saber después si la cantidad entregada fue la pedida.
+    if (!cols.includes("cantidad_original")) {
+      db.prepare(`ALTER TABLE PedidoItems ADD COLUMN cantidad_original INTEGER`).run();
+      // En los pedidos que ya existen no se puede saber si hubo ajuste: se
+      // asume que no, que es lo más prudente.
+      db.prepare(`UPDATE PedidoItems SET cantidad_original = Cantidad WHERE cantidad_original IS NULL`).run();
+      console.log("[db] Columna 'cantidad_original' agregada a PedidoItems");
+    }
     // La parte pendiente recorre las solapas del depósito por su cuenta
     // (Pendientes -> En preparación -> Listo para retirar -> Retirado), pero
     // sigue siendo el MISMO pedido: conserva el número de remito original.
@@ -1698,8 +1708,8 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
     }
 
     const insItem = db.prepare(`
-      INSERT INTO PedidoItems (PedidoID, ProductoID, Nombre, Precio, Cantidad, Subtotal, Codigo)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO PedidoItems (PedidoID, ProductoID, Nombre, Precio, Cantidad, Subtotal, Codigo, cantidad_original)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     for (const it of items) {
@@ -1825,7 +1835,9 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
       // Los uniformes suman al total del pedido pero no al que se compara
       // contra el presupuesto del servicio.
       if (!idsSinPresupuesto.has(Number(pid))) totalPresupuestable += subtotal;
-      insItem.run(pedidoId, pid, row.name, precio, cantidad, subtotal, row.code || "");
+      // La octava columna es lo que pidió el supervisor: queda fija aunque
+      // después el depósito ajuste la cantidad.
+      insItem.run(pedidoId, pid, row.name, precio, cantidad, subtotal, row.code || "", cantidad);
     }
 
     if (Number.isFinite(maxTotalAllowed) && totalPresupuestable > maxTotalAllowed) {

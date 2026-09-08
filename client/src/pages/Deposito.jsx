@@ -10,6 +10,7 @@ import "../styles/deposito.css";
 import DevolucionesPendientes from "../components/DevolucionesPendientes";
 import ControlDespachos from "../components/ControlDespachos";
 import PapeleraPedidos from "../components/PapeleraPedidos";
+import Trazabilidad from "../components/Trazabilidad";
 
 function isoToday() { return new Date().toISOString().slice(0, 10); }
 function isoFirstOfMonth() {
@@ -1286,6 +1287,7 @@ export default function Deposito() {
           {[
             ["pedidos", "Pedidos"],
             ["despachos", "Control de despachos"],
+            ["trazabilidad", "Trazabilidad"],
             ["papelera", "Papelera"],
           ].map(([k, l]) => (
             <button key={k} type="button" role="tab" aria-selected={activeView === k}
@@ -1595,6 +1597,13 @@ export default function Deposito() {
       {activeView === "pedidos" && (
         <div style={{ marginTop: 16 }}>
           <DepositoOrdersPanel pedidosPorDia={[]} />
+        </div>
+      )}
+
+      {/* ===== TRAZABILIDAD ===== */}
+      {activeView === "trazabilidad" && (
+        <div style={{ marginTop: 16 }}>
+          <Trazabilidad />
         </div>
       )}
 
