@@ -15,7 +15,7 @@
 
 import { Router } from "express";
 import crypto from "crypto";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { db, getEmployeeDisplayName } from "../db.js";
 import { toISO, fmtAr, diaAr } from "../utils/fechas.js";
 
@@ -95,7 +95,9 @@ const limitador = rateLimit({
   keyGenerator: (req) => {
     const token = tokenDelRequest(req);
     if (token) return "tok:" + crypto.createHash("sha256").update(token).digest("hex");
-    return "ip:" + (req.ip || "desconocida");
+    // ipKeyGenerator agrupa las IPv6 por subred: si no, cada dirección de
+    // una misma red contaría aparte y se podría esquivar el límite.
+    return "ip:" + ipKeyGenerator(req.ip || "0.0.0.0");
   },
   message: {
     error: "demasiadas_consultas",

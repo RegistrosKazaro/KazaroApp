@@ -18,6 +18,7 @@ import serviceProductsRoutes from "./routes/serviceProducts.js";
 import reportsRoutes from "./routes/reports.js";
 import depositoRoutes from "./routes/deposito.js";
 import apiPublicaRoutes from "./routes/apiPublica.js";
+import integracion360Routes from "./routes/integracion360.js";
 
 import { verifyTransport as verifyMailerTransport } from "./utils/mailer.js";
 import { createCorsMiddleware } from "./utils/corsConfig.js";
@@ -77,6 +78,11 @@ app.get("/_health", (_req, res) => res.json({ ok: true }));
 // autentica con un token fijo (Authorization: Bearer), no con cookies, así que
 // un consumidor externo no tiene ni puede tener un token CSRF. No usa sesión,
 // sólo acepta GET y el token determina de qué empresa son los datos.
+// Integración con 360 (alta de servicios). Va ANTES de apiPublicaRoutes: ese
+// router está montado en /v1 y rechaza con 405 todo lo que no sea GET, así que
+// si quedara después se comería los POST de 360. Mismo motivo que arriba para
+// ir antes del CSRF: servidor-a-servidor con token propio.
+app.use("/v1/360", integracion360Routes);
 app.use("/v1", apiPublicaRoutes);
 
 // =========================
