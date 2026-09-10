@@ -1,12 +1,26 @@
-# Integración 360 → Insumos: alta de servicios
+# Integración 360 → Insumos: servicios
 
-Cuando en **360** se crea un servicio nuevo, 360 avisa a la aplicación de
-Insumos y el servicio se da de alta automáticamente en la empresa elegida
-(**Kazaro** o **Pazar**). El servicio se carga una sola vez, en 360.
+Cuando en **360** se crea un servicio, o se le cambia el nombre, 360 avisa a la
+aplicación de Insumos y el cambio se refleja automáticamente. El servicio se
+carga **una sola vez**, en 360, y se elige en qué empresa va: **Kazaro** o
+**Pazar**.
 
 - **Base:** `https://insumos.kazaro.com.ar/api/v1/360`
 - **Formato:** JSON, codificado en UTF-8
 - **Uso:** servidor a servidor (no desde un navegador)
+
+## Qué se puede hacer desde 360
+
+| Acción | Cómo |
+|---|---|
+| Crear un servicio | `POST /servicios` |
+| Cambiarle el nombre | `PUT /servicios/{externoId}` |
+| Consultar cómo quedó | `GET /servicios/{externoId}` |
+| Probar la conexión | `GET /ping` |
+
+**Nada más.** El supervisor, el presupuesto y los mails de cada servicio se
+asignan **únicamente desde el panel de Insumos**. Si 360 manda esos datos, no se
+usan (ver [Campos que no se usan](#campos-que-no-se-usan)).
 
 ---
 
@@ -34,23 +48,23 @@ curl -H "Authorization: Bearer <token>" \
 
 ---
 
-## `POST /servicios` — dar de alta un servicio
+## `POST /servicios` — crear un servicio
 
 360 lo llama **cada vez que se crea un servicio**.
 
-### Cuerpo
+### Datos que se envían
 
 | Campo | Tipo | Obligatorio | Descripción |
 |---|---|---|---|
-| `externoId` | texto | **Sí** | Identificador del servicio **en 360**. Único y estable: siempre el mismo para el mismo servicio. Hasta 100 caracteres. |
+| `externoId` | texto | **Sí** | Identificador del servicio **en 360**. Tiene que ser único y no cambiar nunca: es lo que relaciona el servicio de 360 con el de Insumos. Hasta 100 caracteres. |
 | `empresa` | texto o número | **Sí** | En qué empresa se crea: `"kazaro"` o `"pazar"` (también sirven `1` y `2`). |
 | `nombre` | texto | **Sí** | Nombre del servicio. Hasta 200 caracteres. |
 | `direccion` | texto | No | Dirección. |
 | `ciudad` | texto | No | Ciudad. |
 
 > **La empresa es obligatoria y no tiene valor por defecto.** Si no viene, o no
-> es Kazaro ni Pazar, el alta se rechaza. Así un servicio nunca termina creado
-> en la empresa equivocada ni en las dos.
+> es Kazaro ni Pazar, se rechaza. Así un servicio nunca termina en la empresa
+> equivocada ni en las dos.
 
 ### Ejemplo
 
@@ -67,9 +81,7 @@ curl -X POST https://insumos.kazaro.com.ar/api/v1/360/servicios \
       }'
 ```
 
-### Respuestas
-
-**`201` — se creó el servicio**
+### Respuesta: `201` — se creó
 
 ```json
 {
@@ -87,71 +99,123 @@ curl -X POST https://insumos.kazaro.com.ar/api/v1/360/servicios \
 }
 ```
 
-**`200` con `"resultado": "ya_existia"`**: ese `externoId` ya se había dado de
-alta antes. No se crea nada nuevo y se devuelve el servicio existente.
-**Reintentar es seguro**: si una llamada falla por un corte de red, se puede
-repetir sin riesgo de duplicar.
+### Otros resultados posibles
 
-**`200` con `"resultado": "vinculado"`**: en esa empresa ya existía un servicio
-con el mismo nombre, cargado antes de la integración. En vez de duplicarlo, se
-vincula el `externoId` a ese servicio.
+| HTTP | `resultado` / `error` | Qué pasó |
+|---|---|---|
+| `200` | `ya_existia` | Ese `externoId` ya estaba dado de alta. No se crea nada nuevo. **Reintentar es seguro**: si una llamada falla por un corte de red, se puede repetir sin duplicar. |
+| `200` | `vinculado` | En esa empresa ya había un servicio con ese nombre, cargado antes de la integración. Se vincula a ése en vez de duplicarlo. |
+| `200` | `actualizado` | Ese `externoId` ya existía, pero llegó con **otro nombre**: se tomó como un cambio de nombre (ver abajo). |
+| `409` | `ya_creado_en_otra_empresa` | Ese `externoId` ya está dado de alta en la **otra** empresa. Un servicio no se crea en las dos. |
 
-**`409` — `ya_creado_en_otra_empresa`**: ese `externoId` ya se dio de alta en
-la **otra** empresa. No se crea en las dos. Si la empresa estaba mal elegida,
-hay que corregirlo a mano.
+---
+
+## `PUT /servicios/{externoId}` — cambiar el nombre
+
+360 lo llama **cada vez que se le cambia el nombre a un servicio**.
+
+### Datos que se envían
+
+| Campo | Tipo | Obligatorio | Descripción |
+|---|---|---|---|
+| `nombre` | texto | **Sí** | Nombre nuevo. Hasta 200 caracteres. |
+| `empresa` | texto o número | No | Si se envía, se controla que sea la misma empresa en la que está el servicio. |
+
+### Ejemplo
+
+```bash
+curl -X PUT https://insumos.kazaro.com.ar/api/v1/360/servicios/SRV-00123 \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "nombre": "SUPER MAMI 7 - ALTA GRACIA CENTRO" }'
+```
+
+### Respuesta: `200` — se cambió
 
 ```json
 {
-  "error": "ya_creado_en_otra_empresa",
-  "mensaje": "Ese servicio de 360 ya se creó en Kazaro. No se crea en las dos: si la empresa estaba mal, hay que corregirlo a mano.",
+  "resultado": "actualizado",
+  "nombreAnterior": "SUPER MAMI 7 - ALTA GRACIA",
   "externoId": "SRV-00123",
   "empresa": { "id": 1, "slug": "kazaro", "nombre": "Kazaro" },
-  "servicio": { "id": 907, "nombre": "SUPER MAMI 7 - ALTA GRACIA", "direccion": "Av. Libertador 1200", "ciudad": "Alta Gracia", "activo": true },
+  "servicio": {
+    "id": 907,
+    "nombre": "SUPER MAMI 7 - ALTA GRACIA CENTRO",
+    "direccion": "Av. Libertador 1200",
+    "ciudad": "Alta Gracia",
+    "activo": true
+  },
   "vinculadoEl": "2026-09-10 14:00:00"
 }
 ```
 
-### Advertencias
+El servicio **conserva su id**: sigue siendo el mismo servicio, con todo lo que
+tenía (pedidos, supervisor, presupuesto, mails). Solo cambia el nombre.
 
-Las respuestas exitosas pueden traer un campo `advertencias` (lista de textos).
-**No son errores**: el alta se hizo igual. Avisan de algo que conviene que una
-persona revise:
+### Otros resultados posibles
 
-- Hay un servicio con **el mismo nombre en la otra empresa**. Puede ser
-  legítimo (un cliente que atienden las dos), o puede ser que se eligió mal la
-  empresa.
-- **Otro servicio de 360** ya estaba vinculado al mismo servicio de Insumos,
-  porque tienen el mismo nombre. Si en 360 son dos servicios distintos, hay que
-  diferenciarlos por nombre.
+| HTTP | `resultado` / `error` | Qué pasó |
+|---|---|---|
+| `200` | `sin_cambios` | El nombre ya era ése. No se tocó nada. |
+| `404` | `no_encontrado` | Ese `externoId` todavía no se dio de alta. Hay que crearlo primero con `POST /servicios`. |
+| `409` | `nombre_en_uso` | Ya hay **otro** servicio con ese nombre en la misma empresa. No se renombró: en Insumos no puede haber dos servicios con el mismo nombre. |
+| `409` | `servicio_compartido` | Dos servicios de 360 quedaron vinculados al mismo servicio de Insumos (porque tenían el mismo nombre). No se renombra, porque le cambiaría el nombre al otro. Lo tiene que separar una persona. |
+| `409` | `ya_creado_en_otra_empresa` | Se envió `empresa` y no es la del servicio. Un servicio no se cambia de empresa desde 360. |
 
-```json
-{
-  "resultado": "creado",
-  "...": "...",
-  "advertencias": ["Ya existe un servicio con el mismo nombre en Kazaro (id 907)."]
-}
-```
+> **Alternativa:** si a 360 le resulta más fácil mandar siempre el mismo aviso
+> (el del alta) cada vez que se guarda un servicio, también funciona: si llega
+> un `POST /servicios` con un `externoId` que ya existe y otro nombre, se toma
+> como un cambio de nombre y responde `"resultado": "actualizado"`.
 
 ---
 
-## `GET /servicios/{externoId}` — consultar cómo quedó un alta
+## `GET /servicios/{externoId}` — consultar cómo quedó
 
 ```bash
 curl -H "Authorization: Bearer <token>" \
   https://insumos.kazaro.com.ar/api/v1/360/servicios/SRV-00123
 ```
 
-Devuelve lo mismo que el alta (sin `resultado`), o `404` si ese servicio de 360
-todavía no se dio de alta.
+Devuelve el servicio (igual que las respuestas de arriba, sin `resultado`), o
+`404` si ese servicio de 360 todavía no se dio de alta.
 
-`servicio.activo` viene en `false` si el servicio se dio de baja después en
-Insumos.
+`servicio.activo` viene en `false` si el servicio se dio de baja en Insumos.
+
+---
+
+## Campos que no se usan
+
+Desde 360 **solo se crea y se renombra**. Cualquier otro dato que se mande
+(supervisor, presupuesto, mails, teléfono, etc.) **no se guarda**. El pedido no
+se rechaza por eso, pero la respuesta lo avisa en `camposIgnorados`, para que
+nadie crea que se cargó:
+
+```json
+{
+  "resultado": "creado",
+  "...": "...",
+  "camposIgnorados": ["supervisor", "presupuesto", "emails"]
+}
+```
+
+---
+
+## Advertencias
+
+Las respuestas exitosas pueden traer `advertencias` (una lista de textos). **No
+son errores**: la operación se hizo igual. Avisan de algo que conviene que una
+persona revise:
+
+- Hay un servicio con **el mismo nombre en la otra empresa**. Puede ser
+  legítimo (un cliente que atienden las dos), o puede ser que se eligió mal la
+  empresa.
+- **Otro servicio de 360** ya estaba vinculado al mismo servicio de Insumos.
 
 ---
 
 ## Errores
 
-Todos devuelven JSON con `error` (código estable, para programar contra él) y
+Todos devuelven JSON con `error` (código fijo, para programar contra él) y
 `mensaje` (texto explicativo). Los `400` agregan `campo`, con el dato que falló.
 
 | HTTP | `error` | Cuándo |
@@ -159,8 +223,10 @@ Todos devuelven JSON con `error` (código estable, para programar contra él) y
 | `400` | `parametro_invalido` | Falta `externoId`, `empresa` o `nombre`, o la empresa no es válida. |
 | `401` | `falta_token` | No se envió el header de autenticación. |
 | `403` | `token_invalido` | El token no es válido. |
-| `404` | `no_encontrado` | Consulta de un `externoId` que no existe, o ruta inexistente. |
-| `409` | `ya_creado_en_otra_empresa` | El servicio ya se creó en la otra empresa. |
+| `404` | `no_encontrado` | El `externoId` no está dado de alta, o la ruta no existe. |
+| `409` | `ya_creado_en_otra_empresa` | El servicio está en la otra empresa. |
+| `409` | `nombre_en_uso` | El nombre nuevo ya lo usa otro servicio de esa empresa. |
+| `409` | `servicio_compartido` | El servicio lo comparten dos servicios de 360. |
 | `429` | `demasiadas_consultas` | Más de 60 llamadas por minuto. |
 | `500` | `error_interno` | Error del servidor. Se puede reintentar. |
 | `503` | `api_no_configurada` | El servidor todavía no tiene el token cargado. |
@@ -172,16 +238,17 @@ Todos devuelven JSON con `error` (código estable, para programar contra él) y
 
 ### Qué reintentar
 
-- **`500`, `503`, `429` o corte de red:** reintentar más tarde. Es seguro,
-  porque el alta no se duplica.
-- **`400` y `409`:** no reintentar igual, porque va a volver a fallar. Hay que
-  corregir los datos.
+- **`500`, `503`, `429` o corte de red:** reintentar más tarde. Es seguro:
+  nada se duplica.
+- **`400`, `404` y `409`:** no reintentar igual, porque va a volver a fallar.
+  Hay que corregir los datos, o que una persona lo revise.
 
 ---
 
-## Qué NO hace esta integración (por ahora)
+## Lo que esta integración no hace
 
-- **No actualiza** servicios: si en 360 se cambia el nombre, no se refleja acá.
+- **No asigna** supervisor, presupuesto ni mails: eso se hace solo desde el
+  panel de Insumos.
 - **No da de baja** servicios.
-- **No asigna** supervisor, presupuesto ni mails del servicio: eso se sigue
-  configurando en Insumos, igual que con un servicio cargado a mano.
+- **No cambia** un servicio de empresa.
+- **No actualiza** la dirección ni la ciudad después del alta: solo el nombre.

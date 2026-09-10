@@ -46,6 +46,20 @@ test("nunca hay empresa por defecto: vacía o desconocida da null", () => {
   assert.equal(resolverEmpresa(3, EMPRESAS), null);
 });
 
+function camposIgnorados(body, permitidos) {
+  if (!body || typeof body !== "object") return [];
+  return Object.keys(body).filter((k) => !permitidos.includes(k));
+}
+
+test("supervisor, presupuesto y mails no se toman: se informan como ignorados", () => {
+  const alta = ["externoId", "empresa", "nombre", "direccion", "ciudad"];
+  assert.deepEqual(
+    camposIgnorados({ externoId: "A", empresa: 1, nombre: "X", supervisor: 5, presupuesto: 10, emails: [] }, alta),
+    ["supervisor", "presupuesto", "emails"]);
+  assert.deepEqual(camposIgnorados({ externoId: "A", empresa: 1, nombre: "X", ciudad: "Cba" }, alta), []);
+  assert.deepEqual(camposIgnorados({ nombre: "Y", presupuesto: 1 }, ["nombre", "empresa"]), ["presupuesto"]);
+});
+
 test("una empresa desactivada no se acepta", () => {
   const conInactiva = [...EMPRESAS, { EmpresaID: 3, slug: "vieja", nombre: "Vieja", is_active: 0 }];
   assert.equal(resolverEmpresa("vieja", conInactiva), null);

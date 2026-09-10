@@ -26,6 +26,10 @@
 //     empresa se rechaza.
 //   · Si en esa empresa ya había un servicio con el mismo nombre (cargado a
 //     mano antes de la integración), se vincula a ése en vez de duplicarlo.
+//   · Si en 360 se cambia el nombre, se cambia acá (PUT, o reenviando el alta).
+//   · Desde 360 SÓLO se crea y se renombra. Supervisor, presupuesto y mails del
+//     servicio se asignan únicamente desde el panel: si 360 los manda, se
+//     ignoran y se avisa en `camposIgnorados`.
 
 import { Router } from "express";
 import crypto from "crypto";
@@ -111,6 +115,30 @@ export function validarAlta(body, empresas) {
   return {
     ok: true,
     datos: { externoId, empresa, nombre, direccion: opcional("direccion"), ciudad: opcional("ciudad") },
+  };
+}
+
+/**
+ * Campos que 360 mandó pero que esta API no usa (ej. supervisor, presupuesto,
+ * mails: eso se maneja sólo desde el panel). No se rechaza el pedido; se
+ * informa en la respuesta para que del otro lado no crean que se cargaron.
+ */
+export function camposIgnorados(body, permitidos) {
+  if (!body || typeof body !== "object") return [];
+  return Object.keys(body).filter((k) => !permitidos.includes(k));
+}
+const CAMPOS_ALTA = ["externoId", "empresa", "nombre", "direccion", "ciudad"];
+const CAMPOS_CAMBIO = ["nombre", "empresa"];
+
+/** Middleware: agrega `camposIgnorados` a la respuesta si vino algo de más. */
+function avisarIgnorados(permitidos) {
+  return (req, res, next) => {
+    const ign = camposIgnorados(req.body, permitidos);
+    if (ign.length) {
+      const original = res.json.bind(res);
+      res.json = (b) => original(b && typeof b === "object" && !Array.isArray(b) ? { ...b, camposIgnorados: ign } : b);
+    }
+    next();
   };
 }
 
@@ -218,6 +246,87 @@ function respuestaServicio(vinculo, servicio, empresas) {
   };
 }
 
+/**
+ * Cambia el nombre del servicio vinculado a un externoId. El nombre de 360
+ * manda: lo que se renombre allá se renombra acá.
+ *
+ * No renombra (y no toca nada) si:
+ *   · el nombre nuevo ya lo usa OTRO servicio de la misma empresa: acá los
+ *     nombres son únicos por empresa.
+ *   · el servicio lo comparten dos servicios de 360 (quedaron vinculados al
+ *     mismo por tener el mismo nombre): renombrarlo por uno le cambiaría el
+ *     nombre al otro. Lo tiene que separar una persona.
+ *
+ * Devuelve { status, body }. El cambio queda en la auditoría.
+ */
+function renombrar(vinculo, nombreNuevo, empresas) {
+  const r = db.transaction(() => {
+    const actual = servicioPorId(vinculo.servicio_id);
+    if (!actual) {
+      return { status: 404, body: { error: "no_encontrado", mensaje: "El servicio vinculado ya no existe en Insumos." } };
+    }
+    if (actual.nombre === nombreNuevo) return { status: 200, tipo: "sin_cambios" };
+
+    const otroVinculo = db.prepare(
+      `SELECT externo_id FROM servicios_externos
+       WHERE origen = ? AND servicio_id = ? AND externo_id <> ? LIMIT 1`
+    ).get(ORIGEN, vinculo.servicio_id, vinculo.externo_id);
+    if (otroVinculo) {
+      return {
+        status: 409,
+        body: {
+          error: "servicio_compartido",
+          mensaje: `Este servicio también está vinculado al servicio de 360 "${otroVinculo.externo_id}". `
+            + "No se renombra para no cambiarle el nombre al otro: hay que separarlos a mano.",
+        },
+      };
+    }
+
+    const choque = db.prepare(
+      `SELECT ServiciosID AS id FROM Servicios
+       WHERE empresa_id = ? AND deleted_at IS NULL AND ServiciosID <> ?
+         AND lower(trim(ServicioNombre)) = lower(trim(?)) LIMIT 1`
+    ).get(vinculo.empresa_id, vinculo.servicio_id, nombreNuevo);
+    if (choque) {
+      return {
+        status: 409,
+        body: {
+          error: "nombre_en_uso",
+          mensaje: `Ya hay otro servicio llamado "${nombreNuevo}" en esta empresa (id ${choque.id}). No se renombró.`,
+        },
+      };
+    }
+
+    db.prepare(`UPDATE Servicios SET ServicioNombre = ? WHERE ServiciosID = ?`).run(nombreNuevo, vinculo.servicio_id);
+    return { status: 200, tipo: "actualizado", anterior: actual.nombre };
+  })();
+
+  if (r.body) {
+    return { status: r.status, body: { ...r.body, ...respuestaServicio(vinculo, servicioPorId(vinculo.servicio_id), empresas) } };
+  }
+
+  if (r.tipo === "actualizado") {
+    audit({
+      empresaId: vinculo.empresa_id,
+      usuario: "integracion-360",
+      accion: "update",
+      entidad: "Servicio",
+      entidadId: String(vinculo.servicio_id),
+      detalle: `360 externoId=${vinculo.externo_id}: renombrado de "${r.anterior}" a "${nombreNuevo}"`,
+    });
+    console.log(`[360] Servicio renombrado: "${r.anterior}" -> "${nombreNuevo}" (id ${vinculo.servicio_id}, externoId ${vinculo.externo_id})`);
+  }
+
+  return {
+    status: 200,
+    body: {
+      resultado: r.tipo,
+      ...(r.tipo === "actualizado" ? { nombreAnterior: r.anterior } : {}),
+      ...respuestaServicio(vinculo, servicioPorId(vinculo.servicio_id), empresas),
+    },
+  };
+}
+
 /* ─────────────── Endpoints ─────────────── */
 
 /**
@@ -226,10 +335,11 @@ function respuestaServicio(vinculo, servicio, empresas) {
  *
  * 201 creado      — se creó el servicio.
  * 200 ya_existia  — ese externoId ya se había procesado (reintento): no se toca nada.
+ * 200 actualizado — ya existía pero llegó con otro nombre: se renombró (ver renombrar()).
  * 200 vinculado   — ya había un servicio con ese nombre en esa empresa: se vinculó a ése.
  * 409 ya_creado_en_otra_empresa — ese externoId ya existe, pero en la otra empresa.
  */
-router.post("/servicios", (req, res) => {
+router.post("/servicios", avisarIgnorados(CAMPOS_ALTA), (req, res) => {
   try {
     const empresas = empresasActivas();
     const v = validarAlta(req.body, empresas);
@@ -296,6 +406,13 @@ router.post("/servicios", (req, res) => {
       });
     }
 
+    // Reenvío del alta con OTRO nombre: se toma como un cambio de nombre. Así
+    // funciona aunque 360 mande siempre el mismo aviso al guardar el servicio.
+    if (tipo === "ya_existia" && servicio && servicio.nombre !== nombre) {
+      const r = renombrar(vinculo, nombre, empresas);
+      return res.status(r.status).json(r.body);
+    }
+
     if (tipo === "creado" || tipo === "vinculado") {
       audit({
         empresaId,
@@ -355,6 +472,58 @@ router.get("/servicios/:externoId", (req, res) => {
   } catch (e) {
     console.error("[360] GET /servicios/:id", e?.message);
     res.status(500).json({ error: "error_interno", mensaje: "No se pudo procesar la consulta." });
+  }
+});
+
+/**
+ * PUT /v1/360/servicios/:externoId
+ *   { nombre, empresa? }
+ *
+ * Cambia el nombre. Es lo único que se puede cambiar desde 360: supervisor,
+ * presupuesto y mails del servicio se manejan sólo desde el panel.
+ * `empresa` es opcional; si viene y no coincide con la del servicio, 409.
+ */
+router.put("/servicios/:externoId", avisarIgnorados(CAMPOS_CAMBIO), (req, res) => {
+  try {
+    const empresas = empresasActivas();
+    const externoId = normalizarNombre(req.params.externoId);
+    const b = req.body && typeof req.body === "object" ? req.body : {};
+
+    const nombre = normalizarNombre(b.nombre);
+    if (!nombre) return res.status(400).json({ error: "parametro_invalido", campo: "nombre", mensaje: "Falta el nombre nuevo del servicio." });
+    if (nombre.length > 200) return res.status(400).json({ error: "parametro_invalido", campo: "nombre", mensaje: "El nombre no puede superar los 200 caracteres." });
+
+    const vinculo = db.prepare(
+      `SELECT * FROM servicios_externos WHERE origen = ? AND externo_id = ?`
+    ).get(ORIGEN, externoId);
+    if (!vinculo) {
+      return res.status(404).json({
+        error: "no_encontrado",
+        mensaje: "Ese servicio de 360 todavía no se dio de alta acá. Primero hay que crearlo con POST /servicios.",
+      });
+    }
+
+    if (b.empresa != null && String(b.empresa).trim() !== "") {
+      const emp = resolverEmpresa(b.empresa, empresas);
+      if (!emp) {
+        return res.status(400).json({ error: "parametro_invalido", campo: "empresa", mensaje: `Empresa desconocida: "${b.empresa}". Valores válidos: ${listaEmpresas(empresas)}.` });
+      }
+      if (Number(emp.EmpresaID) !== Number(vinculo.empresa_id)) {
+        const suya = empresas.find((e) => Number(e.EmpresaID) === Number(vinculo.empresa_id));
+        return res.status(409).json({
+          error: "ya_creado_en_otra_empresa",
+          mensaje: `Ese servicio de 360 está dado de alta en ${suya?.nombre || "otra empresa"}, no en ${emp.nombre}. `
+            + "Un servicio no se cambia de empresa desde 360.",
+          ...respuestaServicio(vinculo, servicioPorId(vinculo.servicio_id), empresas),
+        });
+      }
+    }
+
+    const r = renombrar(vinculo, nombre, empresas);
+    res.status(r.status).json(r.body);
+  } catch (e) {
+    console.error("[360] PUT /servicios/:id", e?.message);
+    res.status(500).json({ error: "error_interno", mensaje: "No se pudo procesar el cambio." });
   }
 });
 
