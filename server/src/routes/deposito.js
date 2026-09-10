@@ -250,9 +250,94 @@ router.get("/orders", mustWarehouse, (req, res) => {
     let empresaWhere = hasEmpresaCol ? `WHERE empresa_id = ${Number(empresaId)}` : "";
     if (hasDeletedCol) empresaWhere += `${empresaWhere ? " AND" : "WHERE"} deleted_at IS NULL`;
 
-    const rawOrders = db
-      .prepare(`SELECT rowid AS __rowid, * FROM Pedidos ${empresaWhere} ORDER BY Fecha DESC LIMIT 100`)
-      .all();
+    // Por defecto se traen los últimos 100 pedidos: es lo que se trabaja en el
+    // día a día y mantiene la lista liviana. Pero si se BUSCA (texto o fechas)
+    // se busca en todo el historial; antes un pedido retirado el mes pasado
+    // quedaba fuera de esos 100 y el buscador no lo encontraba nunca.
+    const q = String(req.query.q || "").trim();
+    const esDia = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? String(v) : "");
+    const desde = esDia(req.query.desde);
+    const hasta = esDia(req.query.hasta);
+    const buscando = !!q || !!desde || !!hasta;
+
+    let rawOrders;
+    // Pedidos traídos sólo por su tarjeta de pendiente: el original no se
+    // muestra, para que la lista quede igual que siempre.
+    const soloPorPendiente = new Set();
+    if (!buscando) {
+      rawOrders = db
+        .prepare(`SELECT rowid AS __rowid, * FROM Pedidos ${empresaWhere} ORDER BY Fecha DESC LIMIT 100`)
+        .all();
+      // Lo que quedó pendiente de entregar puede esperar semanas a que entre
+      // stock: su tarjeta no puede desaparecer sólo porque el pedido original
+      // quedó fuera de los últimos 100.
+      if (colNames.includes("pendiente_status")) {
+        const ya = new Set(rawOrders.map((r) => r.__rowid));
+        const conPendiente = db.prepare(`
+          SELECT rowid AS __rowid, * FROM Pedidos ${empresaWhere}
+            ${empresaWhere ? "AND" : "WHERE"} TRIM(COALESCE(pendiente_status,'')) <> ''
+            AND TRIM(COALESCE(pendiente_retiro_at,'')) = ''
+        `).all();
+        for (const r of conPendiente) {
+          if (ya.has(r.__rowid)) continue;
+          rawOrders.push(r);
+          soloPorPendiente.add(String(r.PedidoID ?? r.__rowid));
+        }
+      }
+    } else {
+      const cond = [];
+      const params = {};
+      const FECHA = `REPLACE(SUBSTR(p.Fecha,1,19),'T',' ')`;
+      // Las fechas se filtran con un día de margen: el recorte exacto por día
+      // argentino lo hace la pantalla, esto sólo evita perder alguno por el
+      // corrimiento de UTC.
+      const corrido = (dia, dias) => {
+        const d = new Date(`${dia}T00:00:00Z`);
+        d.setUTCDate(d.getUTCDate() + dias);
+        return `${d.toISOString().slice(0, 10)} 00:00:00`;
+      };
+      if (desde) { cond.push(`${FECHA} >= @desde`); params.desde = corrido(desde, -1); }
+      if (hasta) { cond.push(`${FECHA} < @hasta`);  params.hasta = corrido(hasta, 2); }
+
+      if (q) {
+        params.q = `%${normalizarBusqueda(q)}%`;
+        const campos = [
+          sinAcentosSql("s.ServicioNombre"),
+          sinAcentosSql("e.Nombre"),
+          sinAcentosSql("e.Apellido"),
+          sinAcentosSql("e.Nombre || ' ' || e.Apellido"),
+          sinAcentosSql("e.Apellido || ' ' || e.Nombre"),
+          sinAcentosSql("e.username"),
+          sinAcentosSql("p.Rol"),
+        ].map((c) => `${c} LIKE @q`);
+        // Número de pedido: sirve "808", "0000808" y "#0000808".
+        const soloDigitos = q.replace(/[^\d]/g, "");
+        if (soloDigitos) {
+          params.qNum = `%${soloDigitos.replace(/^0+/, "") || "0"}%`;
+          params.qNumPad = `%${soloDigitos}%`;
+          campos.push(`CAST(p.PedidoID AS TEXT) LIKE @qNum`);
+          campos.push(`printf('%07d', p.PedidoID) LIKE @qNumPad`);
+        }
+        // Insumos del pedido (nombre o código)
+        campos.push(`EXISTS (SELECT 1 FROM PedidoItems i WHERE i.PedidoID = p.PedidoID
+          AND (${sinAcentosSql("i.Nombre")} LIKE @q OR ${sinAcentosSql("i.Codigo")} LIKE @q))`);
+        cond.push(`(${campos.join(" OR ")})`);
+      }
+
+      const base = [];
+      if (hasEmpresaCol) base.push(`p.empresa_id = ${Number(empresaId)}`);
+      if (hasDeletedCol) base.push("p.deleted_at IS NULL");
+      const where = [...base, ...cond];
+      rawOrders = db.prepare(`
+        SELECT p.rowid AS __rowid, p.*
+        FROM Pedidos p
+        LEFT JOIN Servicios s ON s.ServiciosID = p.ServicioID
+        LEFT JOIN Empleados e ON e.EmpleadosID = p.EmpleadoID
+        ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+        ORDER BY p.Fecha DESC
+        LIMIT 300
+      `).all(params);
+    }
 
     let employees = [];
     if (hasTable("Empleados")) {
@@ -435,6 +520,7 @@ router.get("/orders", mustWarehouse, (req, res) => {
         if (statusParam === "closed") return o.status === "closed" && !o.retiroAt;
         return o.status === statusParam;
       }
+      if (soloPorPendiente.has(String(o.id))) return false;
       if (statusParam === "revision_deposito") return o.status === "revision_deposito";
       if (statusParam === "preparing") return o.status === "preparing";
       if (statusParam === "closed")    return o.status === "closed" && !o.retiroAt;

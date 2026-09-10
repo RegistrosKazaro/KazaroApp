@@ -1,5 +1,5 @@
 // client/src/pages/Deposito.jsx
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { Navigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
@@ -545,14 +545,41 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
     return new Date(t).toLocaleDateString("en-CA", { timeZone: "America/Argentina/Cordoba" });
   };
 
+  // Sin buscar, el servidor trae lo reciente. Con texto o fechas busca en TODO
+  // el historial, así aparecen pedidos viejos (ej. retirados el mes pasado).
+  const buscandoHistorial = !!(qDeb.trim() || desde || hasta);
+  const pedidoActual = useRef(0);
+
+  const traer = useCallback(() => {
+    const params = { status: tab };
+    if (qDeb.trim()) params.q = qDeb.trim();
+    if (desde) params.desde = desde;
+    if (hasta) params.hasta = hasta;
+    return api.get("/deposito/orders", { params, withCredentials: true });
+  }, [tab, qDeb, desde, hasta]);
+
+  // Al cambiar la búsqueda sólo se reemplaza la lista: no se cierran las
+  // tarjetas abiertas ni se pierde lo que se está editando.
+  const primeraCarga = useRef(true);
+  useEffect(() => {
+    if (primeraCarga.current) { primeraCarga.current = false; return; }
+    const n = ++pedidoActual.current;
+    traer()
+      .then(({ data }) => { if (n === pedidoActual.current) setOrders(Array.isArray(data) ? data : []); })
+      .catch((e) => { if (n === pedidoActual.current) setErr(e?.response?.data?.error || "No se pudo buscar"); });
+    // traer cambia con tab también, pero el cambio de solapa lo maneja list().
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qDeb, desde, hasta]);
+
   const list = useCallback(async () => {
     setErr("");
     setExpandedOrders(new Set());
     setEditingOrders(new Set());
     setPickupFaltantes({});
+    const n = ++pedidoActual.current;
     try {
-      const { data } = await api.get("/deposito/orders", { params: { status: tab }, withCredentials: true });
-      setOrders(Array.isArray(data) ? data : []);
+      const { data } = await traer();
+      if (n === pedidoActual.current) setOrders(Array.isArray(data) ? data : []);
     } catch (e) {
       try {
         const { data } = await api.get("/admin/orders", { withCredentials: true });
@@ -562,9 +589,12 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
         setOrders([]);
       }
     }
-  }, [tab]);
+  }, [traer]);
 
-  useEffect(() => { list(); }, [list]);
+  // La carga completa (que cierra tarjetas y ediciones) sólo al cambiar de
+  // solapa; los cambios de búsqueda van por el efecto de arriba.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { list(); }, [tab]);
 
   const toggleExpand = (id) => {
     setExpandedOrders(prev => {
@@ -785,7 +815,7 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
         ))}
         <div style={{ flex: 1 }} />
         <input type="search" className="deposito-search"
-          placeholder="Buscar por número, remito, empleado o servicio…"
+          placeholder="Buscar por número, servicio, empleado o insumo…"
           value={q} onChange={e => setQ(e.target.value)} />
         <label className="deposito-field" style={{ minWidth: 200 }}>
           <span>Ordenar por</span>
@@ -827,6 +857,9 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
           <div style={{ flex: 1 }} />
           <span className="muted" style={{ fontSize: "0.85rem" }}>
             {filtered.length} de {orders.length} pedido{orders.length === 1 ? "" : "s"}
+            {buscandoHistorial
+              ? " · buscando en todo el historial"
+              : " · se muestran los más recientes; para ver más viejos, buscá o elegí fechas"}
           </span>
         </div>
       )}
