@@ -1073,6 +1073,40 @@ function ensurePendientesColumn() {
 }
 ensurePendientesColumn();
 
+/* ============ Legajo y DNI de los empleados ============
+   Los carga el admin en el formulario de usuarios. El legajo es la clave con
+   la que 360 identifica al supervisor de un servicio (integracion360.js). */
+function ensureEmpleadosLegajoDni() {
+  try {
+    const cols = db.prepare(`PRAGMA table_info(Empleados)`).all().map((c) => c.name.toLowerCase());
+    for (const col of ["legajo", "dni"]) {
+      if (!cols.includes(col)) {
+        db.prepare(`ALTER TABLE Empleados ADD COLUMN ${col} TEXT DEFAULT NULL`).run();
+        console.log(`[db] Columna '${col}' agregada a Empleados`);
+      }
+    }
+  } catch (e) {
+    console.warn("[db] ensureEmpleadosLegajoDni:", e?.message || e);
+  }
+}
+ensureEmpleadosLegajoDni();
+
+/**
+ * Forma comparable de un legajo: sin espacios, en mayúsculas y, si es sólo
+ * números, sin ceros a la izquierda ("00123" y "123" son el mismo legajo).
+ * Se guarda como lo escribió el admin; esto es sólo para comparar.
+ */
+export function normalizarLegajo(v) {
+  const s = String(v ?? "").replace(/\s+/g, "").toUpperCase();
+  if (!s) return "";
+  return /^\d+$/.test(s) ? (s.replace(/^0+/, "") || "0") : s;
+}
+
+/** DNI sólo con dígitos: "30.111.222" → "30111222". Así se guarda y se compara. */
+export function normalizarDni(v) {
+  return String(v ?? "").replace(/\D/g, "");
+}
+
 /* ============ Foto del despacho (para la conciliación) ============
    Cuando un pedido se marca LISTO PARA RETIRAR se guarda el detalle exacto de
    ese momento. Es lo que quedó registrado como movimiento en Flexxus, así que

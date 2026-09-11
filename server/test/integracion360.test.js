@@ -60,52 +60,57 @@ test("presupuesto y mails no se toman: se informan como ignorados", () => {
   assert.deepEqual(camposIgnorados({ nombre: "Y", presupuesto: 1 }, ["nombre", "empresa"]), ["presupuesto"]);
 });
 
-// ── Coincidencia del supervisor por nombre ──
-function palabrasNombre(s) {
-  return String(s ?? "")
-    .normalize("NFD").replace(/\p{Diacritic}/gu, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9 ]+/g, " ")
-    .split(/\s+/).filter(Boolean);
+// ── Supervisor por legajo (réplica de db.js / integracion360.js) ──
+function normalizarLegajo(v) {
+  const s = String(v ?? "").replace(/\s+/g, "").toUpperCase();
+  if (!s) return "";
+  return /^\d+$/.test(s) ? (s.replace(/^0+/, "") || "0") : s;
 }
-function buscarSupervisor(nombre360, supervisores) {
-  const del360 = new Set(palabrasNombre(nombre360));
-  if (!del360.size) return { tipo: "ninguno", coincidencias: [] };
-  const coincidencias = supervisores.filter((s) => {
-    const apellido = palabrasNombre(s.Apellido);
-    const nombres = palabrasNombre(s.Nombre);
-    return apellido.length > 0 && nombres.length > 0
-      && apellido.every((p) => del360.has(p))
-      && nombres.some((p) => del360.has(p));
-  });
+function normalizarDni(v) {
+  return String(v ?? "").replace(/\D/g, "");
+}
+function elegirPorLegajo(legajo, empleados) {
+  const buscado = normalizarLegajo(legajo);
+  if (!buscado) return { tipo: "ninguno", coincidencias: [] };
+  const coincidencias = empleados.filter((e) => normalizarLegajo(e.legajo) === buscado);
   if (coincidencias.length === 1) return { tipo: "unico", coincidencias };
   return { tipo: coincidencias.length ? "varios" : "ninguno", coincidencias };
 }
-const SUPS = [
-  { id: 33, Nombre: "Eugenia", Apellido: "Alvarez" },
-  { id: 31, Nombre: "Nicolas", Apellido: "Barcena" },
-  { id: 19, Nombre: "Nicolas", Apellido: "Bustos" },
-  { id: 59, Nombre: "Juan Domingo", Apellido: "Murua" },
+const EMPS = [
+  { id: 33, legajo: "0123" },
+  { id: 31, legajo: "456" },
+  { id: 50, legajo: "K-77" },
 ];
-const idDe = (n) => {
-  const r = buscarSupervisor(n, SUPS);
+const idDe = (l) => {
+  const r = elegirPorLegajo(l, EMPS);
   return r.tipo === "unico" ? r.coincidencias[0].id : r.tipo;
 };
 
-test("encuentra al supervisor aunque 360 lo mande como en el DNI", () => {
-  assert.equal(idDe("ALVAREZ, MARIA EUGENIA"), 33);   // con segundo nombre y coma
-  assert.equal(idDe("Barcena Nicolas"), 31);          // al revés
-  assert.equal(idDe("Juan Murua"), 59);               // sin el segundo nombre
-  assert.equal(idDe("MURUA JUAN DOMINGO"), 59);
-  assert.equal(idDe("Nicolás Bárcena"), 31);          // con acentos
+test("el legajo se compara sin ceros a la izquierda ni espacios", () => {
+  assert.equal(normalizarLegajo("00123"), "123");
+  assert.equal(normalizarLegajo(" 12 3 "), "123");
+  assert.equal(normalizarLegajo("k-77"), "K-77");
+  assert.equal(normalizarLegajo("000"), "0");
+  assert.equal(normalizarLegajo(""), "");
 });
 
-test("sin apellido, sin coincidencia o con dos coincidencias no asigna", () => {
-  assert.equal(idDe("Nicolas"), "ninguno");                 // falta el apellido
-  assert.equal(idDe("Juan Perez"), "ninguno");
-  assert.equal(idDe("Alvarez"), "ninguno");                 // falta el nombre
-  assert.equal(idDe("Nicolas Barcena Bustos"), "varios");   // coincide con dos
+test("el DNI queda solo con números", () => {
+  assert.equal(normalizarDni("30.111.222"), "30111222");
+  assert.equal(normalizarDni(" 30 111 222 "), "30111222");
+  assert.equal(normalizarDni(null), "");
+});
+
+test("encuentra al supervisor por legajo", () => {
+  assert.equal(idDe("123"), 33);      // cargado como "0123"
+  assert.equal(idDe("0123"), 33);
+  assert.equal(idDe(456), 31);
+  assert.equal(idDe("k-77"), 50);
+});
+
+test("legajo vacío, inexistente o repetido no asigna", () => {
   assert.equal(idDe(""), "ninguno");
+  assert.equal(idDe("999"), "ninguno");
+  assert.equal(elegirPorLegajo("1", [{ legajo: "1" }, { legajo: "01" }]).tipo, "varios");
 });
 
 test("una empresa desactivada no se acepta", () => {

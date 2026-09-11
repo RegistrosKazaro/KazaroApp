@@ -42,6 +42,8 @@ const EMPTY_FORM = {
   apellido: "",
   email: "",
   username: "",
+  legajo: "",
+  dni: "",
   password: "",
   isActive: true,
   rolIds: [],
@@ -100,6 +102,8 @@ export default function EmployeesSection() {
       norm(e.apellido).includes(s) ||
       norm(e.email).includes(s) ||
       norm(e.username).includes(s) ||
+      norm(e.legajo).includes(s) ||
+      String(e.dni || "").includes(s) ||
       String(e.id).includes(s)
     );
   });
@@ -119,6 +123,8 @@ export default function EmployeesSection() {
       apellido: emp.apellido,
       email:    emp.email,
       username: emp.username,
+      legajo:   emp.legajo || "",
+      dni:      emp.dni || "",
       password: "",
       isActive: emp.isActive,
       rolIds:   emp.roles.map((r) => r.id),
@@ -146,7 +152,7 @@ export default function EmployeesSection() {
   // ── Guardar ───────────────────────────────────────────────
   const handleSave = async () => {
     setFormErr("");
-    const { nombre, apellido, email, username, password, isActive, rolIds } = form;
+    const { nombre, apellido, email, username, legajo, dni, password, isActive, rolIds } = form;
 
     if (!nombre.trim())    return setFormErr("El nombre es obligatorio");
     if (!apellido.trim())  return setFormErr("El apellido es obligatorio");
@@ -156,10 +162,13 @@ export default function EmployeesSection() {
       return setFormErr("La contraseña es obligatoria para empleados nuevos");
     if (rolIds.length === 0)
       return setFormErr("Asigná al menos un rol");
+    const dniNum = dni.replace(/\D/g, "");
+    if (dni.trim() && (dniNum.length < 7 || dniNum.length > 8))
+      return setFormErr("El DNI tiene que tener 7 u 8 números");
 
     setSaving(true);
     try {
-      const payload = { nombre, apellido, email, username, isActive, rolIds };
+      const payload = { nombre, apellido, email, username, legajo: legajo.trim(), dni: dniNum, isActive, rolIds };
       if (password.trim()) payload.password = password.trim();
 
       if (editing.mode === "create") {
@@ -214,7 +223,7 @@ export default function EmployeesSection() {
           <input
             className="input"
             style={{ flex: 1, minWidth: 200, maxWidth: 360 }}
-            placeholder="Buscar por nombre, apellido, email o username…"
+            placeholder="Buscar por nombre, apellido, email, username, legajo o DNI…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
@@ -269,6 +278,11 @@ export default function EmployeesSection() {
 
                 <span style={{ fontWeight: 600 }}>
                   {emp.apellido}, {emp.nombre}
+                  {emp.legajo && (
+                    <div className="muted" style={{ fontWeight: 400, fontSize: "0.78rem" }}>
+                      Legajo {emp.legajo}
+                    </div>
+                  )}
                 </span>
 
                 <span>
@@ -432,6 +446,33 @@ export default function EmployeesSection() {
                 <option value="1">Activo</option>
                 <option value="0">Inactivo</option>
               </select>
+            </div>
+
+            {/* Legajo: con este número 360 identifica al supervisor de un servicio */}
+            <div className="select-row">
+              <label className="muted">Legajo</label>
+              <input
+                className="input"
+                value={form.legajo}
+                onChange={(e) => setField("legajo", e.target.value)}
+                placeholder="Ej: 1234"
+                autoComplete="off"
+                maxLength={30}
+              />
+            </div>
+
+            {/* DNI */}
+            <div className="select-row">
+              <label className="muted">DNI</label>
+              <input
+                className="input"
+                inputMode="numeric"
+                value={form.dni}
+                onChange={(e) => setField("dni", e.target.value.replace(/[^\d.]/g, ""))}
+                placeholder="Ej: 30111222"
+                autoComplete="off"
+                maxLength={11}
+              />
             </div>
           </div>
 

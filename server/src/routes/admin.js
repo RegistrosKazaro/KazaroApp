@@ -26,6 +26,8 @@ import {
   recomputeFlexxusMatch,
   listFlexxusMatch,
   softDeleteOrder,
+  normalizarLegajo,
+  normalizarDni,
 } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendMail, pauseMail, resumeMail, getMailPauseState } from "../utils/mailer.js";
@@ -1751,6 +1753,41 @@ router.get("/products/history/summary", mustBeAdmin, (req, res) => {
    Empleados
    ========================= */
 
+/**
+ * Valida legajo y DNI del formulario de empleados. Los dos son opcionales,
+ * pero no se pueden repetir dentro de la misma empresa: el legajo es la clave
+ * con la que 360 identifica al supervisor de un servicio, así que dos
+ * empleados con el mismo legajo harían imposible saber a quién asignar.
+ *
+ * Devuelve { ok, legajo, dni } (null si vienen vacíos) o { ok:false, error }.
+ */
+function validarLegajoDni(body, empresaId, excluirId = null) {
+  const legajo = String(body?.legajo ?? "").trim();
+  const dni = normalizarDni(body?.dni);
+  if (legajo.length > 30) return { ok: false, status: 400, error: "El legajo no puede superar los 30 caracteres" };
+  if (String(body?.dni ?? "").trim() && (dni.length < 7 || dni.length > 8)) {
+    return { ok: false, status: 400, error: "El DNI tiene que tener 7 u 8 números" };
+  }
+
+  const otros = db.prepare(
+    `SELECT EmpleadosID AS id, Nombre, Apellido, legajo, dni FROM Empleados
+     WHERE empresa_id = ? AND EmpleadosID <> ?
+       AND (COALESCE(TRIM(legajo),'') <> '' OR COALESCE(TRIM(dni),'') <> '')`
+  ).all(Number(empresaId), Number(excluirId ?? -1));
+  const quien = (e) => `${e.Nombre || ""} ${e.Apellido || ""}`.trim();
+
+  if (legajo) {
+    const n = normalizarLegajo(legajo);
+    const choque = otros.find((e) => normalizarLegajo(e.legajo) === n);
+    if (choque) return { ok: false, status: 409, error: `El legajo ${legajo} ya lo tiene ${quien(choque)} (ID ${choque.id})` };
+  }
+  if (dni) {
+    const choque = otros.find((e) => normalizarDni(e.dni) === dni);
+    if (choque) return { ok: false, status: 409, error: `El DNI ${dni} ya lo tiene ${quien(choque)} (ID ${choque.id})` };
+  }
+  return { ok: true, legajo: legajo || null, dni: dni || null };
+}
+
 router.put("/employees/:id", mustBeAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -1778,6 +1815,15 @@ router.put("/employees/:id", mustBeAdmin, async (req, res) => {
       if (!owner || Number(owner.empresa_id) !== Number(empresaId)) return res.status(404).json({ ok: false, error: "Empleado no encontrado" });
     }
 
+    // Legajo y DNI sólo se tocan si vinieron en el pedido: quien edite un
+    // empleado sin conocer estos campos no los borra sin querer.
+    const traeLegajoDni = req.body && ("legajo" in req.body || "dni" in req.body);
+    let ld = null;
+    if (traeLegajoDni) {
+      ld = validarLegajoDni(req.body, empresaId, id);
+      if (!ld.ok) return res.status(ld.status).json({ ok: false, error: ld.error });
+    }
+
     const active = isActive === false || isActive === "false" || isActive === 0 ? 0 : 1;
 
     if (password?.trim()) {
@@ -1787,6 +1833,9 @@ router.put("/employees/:id", mustBeAdmin, async (req, res) => {
     } else {
       db.prepare(`UPDATE Empleados SET Nombre = ?, Apellido = ?, Email = ?, username = ?, is_active = ? WHERE EmpleadosID = ?`)
         .run(nombre.trim(), apellido.trim(), email.trim().toLowerCase(), username.trim().toLowerCase(), active, id);
+    }
+    if (ld) {
+      db.prepare(`UPDATE Empleados SET legajo = ?, dni = ? WHERE EmpleadosID = ?`).run(ld.legajo, ld.dni, id);
     }
 
     db.prepare(`DELETE FROM Roles_Empleados WHERE EmpleadoID = ?`).run(id);
@@ -1811,6 +1860,7 @@ router.get("/employees", mustBeAdmin, (req, res) => {
     const rows = db.prepare(`
       SELECT e.EmpleadosID AS id, TRIM(e.Nombre) AS nombre, TRIM(e.Apellido) AS apellido,
         TRIM(e.Email) AS email, TRIM(e.username) AS username, e.is_active, e.password_hash, e.password_plain,
+        TRIM(e.legajo) AS legajo, TRIM(e.dni) AS dni,
         GROUP_CONCAT(re.RolID) AS rolIds, GROUP_CONCAT(r.Nombre) AS rolNombres
       FROM Empleados e
       LEFT JOIN Roles_Empleados re ON re.EmpleadoID = e.EmpleadosID
@@ -1824,6 +1874,7 @@ router.get("/employees", mustBeAdmin, (req, res) => {
       ok: true,
       employees: rows.map((r) => ({
         id: r.id, nombre: r.nombre ?? "", apellido: r.apellido ?? "", email: r.email ?? "", username: r.username ?? "",
+        legajo: r.legajo ?? "", dni: r.dni ?? "",
         isActive: r.is_active !== 0 && r.is_active !== "0",
         tieneHash: !!r.password_hash, tienePlain: !!r.password_plain,
         passwordPendiente: !r.password_hash && !!r.password_plain,
@@ -1883,6 +1934,9 @@ router.post("/employees", mustBeAdmin, async (req, res) => {
       : db.prepare("SELECT EmpleadosID FROM Empleados WHERE LOWER(TRIM(username)) = LOWER(TRIM(?))").get(username.trim());
     if (existing) return res.status(409).json({ ok: false, error: "Ya existe un empleado con ese username" });
 
+    const ld = validarLegajoDni(req.body, empresaId);
+    if (!ld.ok) return res.status(ld.status).json({ ok: false, error: ld.error });
+
     const hash   = await argon2.hash(password, { type: argon2.argon2id });
     const active = isActive === false || isActive === "false" || isActive === 0 ? 0 : 1;
 
@@ -1896,6 +1950,9 @@ router.post("/employees", mustBeAdmin, async (req, res) => {
     }
 
     const newId = result.lastInsertRowid;
+    if (ld.legajo || ld.dni) {
+      db.prepare(`UPDATE Empleados SET legajo = ?, dni = ? WHERE EmpleadosID = ?`).run(ld.legajo, ld.dni, newId);
+    }
     if (Array.isArray(rolIds) && rolIds.length > 0) {
       const insRol = db.prepare("INSERT OR IGNORE INTO Roles_Empleados (EmpleadoID, RolID) VALUES (?, ?)");
       for (const rolId of rolIds) { const n = Number(rolId); if (Number.isFinite(n) && n > 0) insRol.run(newId, n); }

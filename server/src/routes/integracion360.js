@@ -27,16 +27,17 @@
 //   · Si en esa empresa ya había un servicio con el mismo nombre (cargado a
 //     mano antes de la integración), se vincula a ése en vez de duplicarlo.
 //   · Si en 360 se cambia el nombre, se cambia acá (PUT, o reenviando el alta).
-//   · Si en 360 se asigna el supervisor, se asigna acá (sólo Kazaro: en Pazar
-//     todos los supervisores ven todos los servicios). Se busca por nombre y
-//     sólo se asigna si coincide con exactamente un supervisor activo.
+//   · Supervisor, por LEGAJO (el que se carga en el panel de usuarios). En
+//     Kazaro es OBLIGATORIO al crear: sin un legajo de un supervisor activo no
+//     se crea el servicio. En Pazar no aplica: todos los supervisores ven
+//     todos los servicios.
 //   · Presupuesto y mails del servicio se asignan únicamente desde el panel:
 //     si 360 los manda, se ignoran y se avisa en `camposIgnorados`.
 
 import { Router } from "express";
 import crypto from "crypto";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
-import { db, audit, empresaVeTodosLosServicios } from "../db.js";
+import { db, audit, empresaVeTodosLosServicios, normalizarLegajo, normalizarDni } from "../db.js";
 
 const router = Router();
 const ORIGEN = "360";
@@ -121,8 +122,8 @@ export function validarAlta(body, empresas) {
 }
 
 /**
- * Campos que 360 mandó pero que esta API no usa (ej. supervisor, presupuesto,
- * mails: eso se maneja sólo desde el panel). No se rechaza el pedido; se
+ * Campos que 360 mandó pero que esta API no usa (ej. presupuesto o mails del
+ * servicio: eso se maneja sólo desde el panel). No se rechaza el pedido; se
  * informa en la respuesta para que del otro lado no crean que se cargaron.
  */
 export function camposIgnorados(body, permitidos) {
@@ -131,60 +132,48 @@ export function camposIgnorados(body, permitidos) {
 }
 const CAMPOS_ALTA = ["externoId", "empresa", "nombre", "direccion", "ciudad", "supervisor"];
 const CAMPOS_CAMBIO = ["nombre", "empresa"];
-const CAMPOS_SUPERVISOR = ["nombre", "dni"];
+const CAMPOS_SUPERVISOR = ["legajo", "nombre", "dni"];
 
 /* ─────────────── Supervisor (pura, testeable) ─────────────── */
 
 /**
- * Lee el supervisor que manda 360. Acepta `"Juan Pérez"` o
- * `{ nombre: "Juan Pérez", dni: "30123456" }`. Si no vino, datos = null.
+ * Lee el supervisor que manda 360. La clave es el LEGAJO: acepta `"1234"` o
+ * `{ legajo: "1234", nombre?: "...", dni?: "..." }`. El nombre y el DNI son
+ * informativos (quedan en la auditoría); el DNI además se usa como control.
+ * Si no vino nada, datos = null.
  */
 export function leerSupervisor(valor) {
   if (valor == null || valor === "") return { ok: true, datos: null };
-  if (typeof valor === "string") {
-    const nombre = normalizarNombre(valor);
-    return nombre ? { ok: true, datos: { nombre, dni: null } } : { ok: true, datos: null };
+  if (typeof valor === "string" || typeof valor === "number") {
+    const legajo = normalizarNombre(valor);
+    return legajo ? { ok: true, datos: { legajo, nombre: null, dni: null } } : { ok: true, datos: null };
   }
   if (typeof valor !== "object" || Array.isArray(valor)) {
-    return { ok: false, campo: "supervisor", mensaje: "supervisor tiene que ser un texto o { nombre, dni }." };
+    return { ok: false, campo: "supervisor", mensaje: "supervisor tiene que ser { legajo, nombre?, dni? }." };
   }
-  const nombre = normalizarNombre(valor.nombre);
-  if (!nombre) return { ok: false, campo: "supervisor.nombre", mensaje: "Falta el nombre del supervisor." };
-  if (nombre.length > 200) return { ok: false, campo: "supervisor.nombre", mensaje: "El nombre del supervisor no puede superar los 200 caracteres." };
-  const dni = normalizarNombre(valor.dni).slice(0, 30) || null;
-  return { ok: true, datos: { nombre, dni } };
-}
-
-/** "MURUA, Juan  Domingo" → ["murua", "juan", "domingo"]: sin acentos, mayúsculas ni signos. */
-export function palabrasNombre(s) {
-  return String(s ?? "")
-    .normalize("NFD").replace(/\p{Diacritic}/gu, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9 ]+/g, " ")
-    .split(/\s+/).filter(Boolean);
+  const legajo = normalizarNombre(valor.legajo);
+  if (!legajo) return { ok: false, campo: "supervisor.legajo", mensaje: "Falta el legajo del supervisor." };
+  if (legajo.length > 30) return { ok: false, campo: "supervisor.legajo", mensaje: "El legajo no puede superar los 30 caracteres." };
+  return {
+    ok: true,
+    datos: {
+      legajo,
+      nombre: normalizarNombre(valor.nombre).slice(0, 200) || null,
+      dni: normalizarDni(valor.dni) || null,
+    },
+  };
 }
 
 /**
- * Busca el supervisor que corresponde al nombre que manda 360 (que allá sale
- * del DNI, así que puede venir en otro orden, con los dos apellidos o sin el
- * segundo nombre).
- *
- * Un supervisor coincide si el nombre de 360 contiene TODO su apellido y AL
- * MENOS UNO de sus nombres. Sólo se asigna si coincide exactamente uno: con
- * cero o con más de uno no se adivina.
+ * Elige, entre los empleados de la empresa, el que tiene ese legajo.
+ * "00123" y "123" son el mismo legajo (normalizarLegajo).
  *
  * @returns {{ tipo: "unico"|"ninguno"|"varios", coincidencias: object[] }}
  */
-export function buscarSupervisor(nombre360, supervisores) {
-  const del360 = new Set(palabrasNombre(nombre360));
-  if (!del360.size) return { tipo: "ninguno", coincidencias: [] };
-  const coincidencias = supervisores.filter((s) => {
-    const apellido = palabrasNombre(s.Apellido);
-    const nombres = palabrasNombre(s.Nombre);
-    return apellido.length > 0 && nombres.length > 0
-      && apellido.every((p) => del360.has(p))
-      && nombres.some((p) => del360.has(p));
-  });
+export function elegirPorLegajo(legajo, empleados) {
+  const buscado = normalizarLegajo(legajo);
+  if (!buscado) return { tipo: "ninguno", coincidencias: [] };
+  const coincidencias = empleados.filter((e) => normalizarLegajo(e.legajo) === buscado);
   if (coincidencias.length === 1) return { tipo: "unico", coincidencias };
   return { tipo: coincidencias.length ? "varios" : "ninguno", coincidencias };
 }
@@ -386,29 +375,72 @@ function renombrar(vinculo, nombreNuevo, empresas) {
   };
 }
 
+const nombreDe = (e) => `${e?.Nombre || ""} ${e?.Apellido || ""}`.trim();
+
 /**
- * Asigna al servicio el supervisor que manda 360, buscándolo por nombre.
+ * Busca, por legajo, el supervisor que manda 360 en la empresa del servicio.
+ * No asigna nada: se usa también ANTES de crear el servicio, para que en
+ * Kazaro un alta con un supervisor inválido no deje un servicio a medias.
  *
- *   · Pazar: no se asigna nada. Allá todos los supervisores ven todos los
- *     servicios (empresaVeTodosLosServicios), así que el servicio ya lo ve
- *     cualquiera sin asignación.
- *   · Cada servicio tiene UN supervisor: si ya tenía otro (asignado desde el
- *     panel o antes desde 360), se reemplaza. Es lo mismo que "reasignar" en
- *     el panel.
- *   · Si el nombre no coincide con ningún supervisor, o con más de uno, no se
- *     toca la asignación que hubiera.
+ * Tiene que ser un empleado de esa empresa, ACTIVO y con rol Supervisor. Si
+ * 360 manda también el DNI y el empleado lo tiene cargado, tienen que
+ * coincidir: un legajo mal tipeado en 360 no puede terminar asignando a otra
+ * persona.
  *
- * Devuelve { status, body } con body = { resultado, mensaje, supervisor, ... }.
- * `dni` se guarda en la auditoría: acá no hay DNI de los empleados para
- * comparar, pero queda registrado qué persona mandó 360.
+ * @returns {{ ok: true, empleado } | { ok: false, status, body }}
  */
-function asignarSupervisor(vinculo, datos) {
-  const nombre = normalizarNombre(datos?.nombre);
-  const dni = normalizarNombre(datos?.dni) || null;
-  if (!nombre) {
-    return { status: 400, body: { resultado: "error", error: "parametro_invalido", campo: "supervisor.nombre", mensaje: "Falta el nombre del supervisor." } };
+function resolverSupervisor(empresaId, datos) {
+  const empleados = db.prepare(`
+    SELECT e.EmpleadosID AS id, e.Nombre, e.Apellido, e.legajo, e.dni,
+           COALESCE(e.is_active, 1) AS activo,
+           EXISTS (SELECT 1 FROM Roles_Empleados re JOIN Roles r ON r.RolID = re.RolID
+                   WHERE re.EmpleadoID = e.EmpleadosID AND lower(r.Nombre) = 'supervisor') AS esSupervisor
+    FROM Empleados e
+    WHERE e.empresa_id = ? AND COALESCE(TRIM(e.legajo), '') <> ''
+  `).all(Number(empresaId));
+
+  const falla = (status, error, mensaje, extra = {}) => ({
+    ok: false, status, body: { resultado: error.replace(/^supervisor_/, ""), error, mensaje, supervisor: null, ...extra },
+  });
+
+  const b = elegirPorLegajo(datos.legajo, empleados);
+  if (b.tipo === "ninguno") {
+    return falla(422, "supervisor_no_encontrado",
+      `No hay ningún empleado con el legajo ${datos.legajo} en Insumos. Hay que cargarle el legajo al supervisor en el panel de usuarios.`);
+  }
+  if (b.tipo === "varios") {
+    return falla(422, "supervisor_ambiguo",
+      `El legajo ${datos.legajo} lo tiene más de un empleado. Hay que corregirlo en el panel de usuarios.`,
+      { candidatos: b.coincidencias.map(nombreDe) });
   }
 
+  const e = b.coincidencias[0];
+  if (!Number(e.activo)) {
+    return falla(422, "supervisor_inactivo", `El legajo ${datos.legajo} es de ${nombreDe(e)}, que está dado de baja en Insumos.`);
+  }
+  if (!Number(e.esSupervisor)) {
+    return falla(422, "no_es_supervisor", `El legajo ${datos.legajo} es de ${nombreDe(e)}, que no tiene el rol Supervisor en Insumos.`);
+  }
+  const dniGuardado = normalizarDni(e.dni);
+  if (datos.dni && dniGuardado && datos.dni !== dniGuardado) {
+    return falla(422, "supervisor_dni_no_coincide",
+      `El legajo ${datos.legajo} es de ${nombreDe(e)}, pero el DNI que mandó 360 no coincide con el suyo. No se asignó, para no asignar a otra persona.`);
+  }
+  return { ok: true, empleado: e };
+}
+
+/**
+ * Asigna al servicio el supervisor que manda 360 (por legajo).
+ *
+ *   · Pazar: no se asigna nada. Allá todos los supervisores ven todos los
+ *     servicios (empresaVeTodosLosServicios).
+ *   · Cada servicio tiene UN supervisor: si ya tenía otro (asignado desde el
+ *     panel o antes desde 360), se reemplaza, igual que al reasignar en el panel.
+ *   · Si el legajo no sirve (ver resolverSupervisor), no se toca nada.
+ *
+ * Devuelve { status, body } con body = { resultado, supervisor, ... }.
+ */
+function asignarSupervisor(vinculo, datos) {
   if (empresaVeTodosLosServicios(vinculo.empresa_id)) {
     return {
       status: 200,
@@ -420,47 +452,17 @@ function asignarSupervisor(vinculo, datos) {
     };
   }
 
-  const supervisores = db.prepare(`
-    SELECT e.EmpleadosID AS id, e.Nombre, e.Apellido
-    FROM Empleados e
-    WHERE e.empresa_id = ? AND COALESCE(e.is_active, 1) = 1
-      AND EXISTS (SELECT 1 FROM Roles_Empleados re JOIN Roles r ON r.RolID = re.RolID
-                  WHERE re.EmpleadoID = e.EmpleadosID AND lower(r.Nombre) = 'supervisor')
-  `).all(vinculo.empresa_id);
+  const r = resolverSupervisor(vinculo.empresa_id, datos);
+  if (!r.ok) return { status: r.status, body: r.body };
+  const elegido = r.empleado;
 
-  const nombreDe = (s) => `${s.Nombre || ""} ${s.Apellido || ""}`.trim();
-  const b = buscarSupervisor(nombre, supervisores);
-
-  if (b.tipo === "ninguno") {
-    return {
-      status: 422,
-      body: {
-        resultado: "no_encontrado", error: "supervisor_no_encontrado",
-        mensaje: `No hay ningún supervisor activo llamado "${nombre}" en Insumos. No se asignó: hay que revisar el nombre o crear el usuario.`,
-        supervisor: null,
-      },
-    };
-  }
-  if (b.tipo === "varios") {
-    return {
-      status: 422,
-      body: {
-        resultado: "ambiguo", error: "supervisor_ambiguo",
-        mensaje: `"${nombre}" coincide con más de un supervisor. No se asignó para no elegir mal.`,
-        candidatos: b.coincidencias.map(nombreDe),
-        supervisor: null,
-      },
-    };
-  }
-
-  const elegido = b.coincidencias[0];
   const previo = db.prepare(
     `SELECT a.EmpleadoID AS id, e.Nombre, e.Apellido FROM supervisor_services a
      LEFT JOIN Empleados e ON e.EmpleadosID = a.EmpleadoID
      WHERE a.ServicioID = ? LIMIT 1`
   ).get(vinculo.servicio_id);
 
-  const supervisorJson = { id: Number(elegido.id), nombre: nombreDe(elegido) };
+  const supervisorJson = { id: Number(elegido.id), nombre: nombreDe(elegido), legajo: elegido.legajo };
   if (previo && Number(previo.id) === Number(elegido.id)) {
     return { status: 200, body: { resultado: "ya_asignado", supervisor: supervisorJson } };
   }
@@ -482,11 +484,12 @@ function asignarSupervisor(vinculo, datos) {
     accion: "assign",
     entidad: "Servicio",
     entidadId: String(vinculo.servicio_id),
-    detalle: `360 externoId=${vinculo.externo_id}: supervisor "${nombreDe(elegido)}" (id ${elegido.id})`
+    detalle: `360 externoId=${vinculo.externo_id}: supervisor "${nombreDe(elegido)}" (legajo ${elegido.legajo}, id ${elegido.id})`
       + (previo ? `, reemplaza a "${nombreDe(previo)}" (id ${previo.id})` : "")
-      + ` — 360 mandó "${nombre}"${dni ? `, DNI ${dni}` : ""}`,
+      + (datos.nombre ? ` — 360 mandó "${datos.nombre}"` : "")
+      + (datos.dni ? `, DNI ${datos.dni}` : ""),
   });
-  console.log(`[360] Supervisor asignado: servicio ${vinculo.servicio_id} -> ${nombreDe(elegido)} (id ${elegido.id})`);
+  console.log(`[360] Supervisor asignado: servicio ${vinculo.servicio_id} -> ${nombreDe(elegido)} (legajo ${elegido.legajo})`);
 
   return {
     status: 200,
@@ -523,9 +526,30 @@ router.post("/servicios", avisarIgnorados(CAMPOS_ALTA), (req, res) => {
     const sup = leerSupervisor(req.body?.supervisor);
     if (!sup.ok) return res.status(400).json({ error: "parametro_invalido", campo: sup.campo, mensaje: sup.mensaje });
 
-    // El supervisor se asigna después del alta o del cambio de nombre, y su
-    // resultado viaja aparte: que no se encuentre al supervisor no deshace el
-    // alta del servicio.
+    // En Kazaro el supervisor es OBLIGATORIO: el servicio se crea acá tal cual
+    // se creó en 360, con su supervisor, o no se crea. Se verifica antes de
+    // tocar nada, así un legajo inválido no deja un servicio sin supervisor.
+    // (better-sqlite3 es sincrónico: entre esta verificación y la asignación
+    // de más abajo no se puede meter otro pedido.)
+    if (!empresaVeTodosLosServicios(empresaId)) {
+      if (!sup.datos) {
+        return res.status(400).json({
+          error: "parametro_invalido", campo: "supervisor",
+          mensaje: `En ${empresa.nombre} el supervisor es obligatorio: mandá supervisor.legajo. No se creó el servicio.`,
+        });
+      }
+      const chequeo = resolverSupervisor(empresaId, sup.datos);
+      if (!chequeo.ok) {
+        return res.status(chequeo.status).json({
+          ...chequeo.body,
+          mensaje: `${chequeo.body.mensaje} No se creó el servicio.`,
+        });
+      }
+    }
+
+    // El supervisor se asigna después del alta o del cambio de nombre. En
+    // Kazaro ya se verificó arriba, así que va a salir bien; en Pazar
+    // responde "no_aplica".
     const responder = (status, body, vinc) => {
       if (sup.datos && vinc && status < 500) {
         body = { ...body, asignacionSupervisor: asignarSupervisor(vinc, sup.datos).body };
@@ -656,14 +680,14 @@ router.get("/servicios/:externoId", (req, res) => {
     }
     // Supervisor actual, para que 360 pueda confirmar cómo quedó.
     const sa = db.prepare(
-      `SELECT a.EmpleadoID AS id, e.Nombre, e.Apellido FROM supervisor_services a
+      `SELECT a.EmpleadoID AS id, e.Nombre, e.Apellido, e.legajo FROM supervisor_services a
        LEFT JOIN Empleados e ON e.EmpleadosID = a.EmpleadoID WHERE a.ServicioID = ? LIMIT 1`
     ).get(vinculo.servicio_id);
     res.json({
       ...respuestaServicio(vinculo, servicioPorId(vinculo.servicio_id), empresasActivas()),
       supervisorActual: empresaVeTodosLosServicios(vinculo.empresa_id)
         ? "todos (en esta empresa todos los supervisores ven todos los servicios)"
-        : (sa ? { id: Number(sa.id), nombre: `${sa.Nombre || ""} ${sa.Apellido || ""}`.trim() } : null),
+        : (sa ? { id: Number(sa.id), nombre: `${sa.Nombre || ""} ${sa.Apellido || ""}`.trim(), legajo: sa.legajo || null } : null),
     });
   } catch (e) {
     console.error("[360] GET /servicios/:id", e?.message);
@@ -725,18 +749,18 @@ router.put("/servicios/:externoId", avisarIgnorados(CAMPOS_CAMBIO), (req, res) =
 
 /**
  * PUT /v1/360/servicios/:externoId/supervisor
- *   { nombre, dni? }
+ *   { legajo, nombre?, dni? }
  *
  * Asigna (o reemplaza) el supervisor del servicio. En Pazar responde
- * "no_aplica" sin tocar nada. Si el nombre no coincide con exactamente un
- * supervisor activo, 422 y no se toca la asignación que hubiera.
+ * "no_aplica" sin tocar nada. Si el legajo no es de un supervisor activo,
+ * 422 y no se toca la asignación que hubiera.
  */
 router.put("/servicios/:externoId/supervisor", avisarIgnorados(CAMPOS_SUPERVISOR), (req, res) => {
   try {
     const externoId = normalizarNombre(req.params.externoId);
     const sup = leerSupervisor(req.body && typeof req.body === "object" ? req.body : null);
     if (!sup.ok || !sup.datos) {
-      return res.status(400).json({ error: "parametro_invalido", campo: "nombre", mensaje: "Falta el nombre del supervisor." });
+      return res.status(400).json({ error: "parametro_invalido", campo: "legajo", mensaje: "Falta el legajo del supervisor." });
     }
 
     const vinculo = db.prepare(
