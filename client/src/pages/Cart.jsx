@@ -4,6 +4,7 @@ import { useAuth } from "../hooks/useAuth";
 import { useCart } from "../hooks/useCart";
 import { api } from "../api/client";
 import { formatMoney } from "../utils/format";
+import { normalizeText } from "../utils/text";
 import "../styles/catalog.css";
 
 function useServiceBudget(servicioId) {
@@ -40,6 +41,11 @@ function useServiceBudget(servicioId) {
   }, [servicioId]);
 
   return { ...settings, loading };
+}
+
+/** Uniformes: tienen su propio circuito y no consumen el presupuesto del servicio. */
+function esUniforme(it) {
+  return normalizeText(it?.categoryName) === "uniformes";
 }
 
 function safeDateLabel(value) {
@@ -118,12 +124,23 @@ export default function Cart() {
 
   const nf = { format: formatMoney };
 
+  // Los uniformes NO cuentan para el presupuesto del servicio: se pueden
+  // pedir aunque lo superen. Es la misma regla que aplica el servidor al
+  // crear el pedido (createOrder en db.js); antes el carrito sumaba todo y
+  // bloqueaba el botón de enviar aunque el servidor lo hubiera aceptado.
+  // Un carrito viejo sin categoría cuenta como insumo (lo prudente).
+  const totalPresupuestable = useMemo(
+    () => items.reduce((s, it) => (esUniforme(it) ? s : s + Number(it.price || 0) * Number(it.qty || 1)), 0),
+    [items]
+  );
+  const esPedidoUniformes = items.length > 0 && items.every(esUniforme);
+
   const usagePct = useMemo(() => {
     if (!isSupervisorRoute) return null;
     if (!service) return null;
     if (!budget || budget <= 0) return null;
-    return (Number(total) / Number(budget)) * 100;
-  }, [total, budget, isSupervisorRoute, service]);
+    return (Number(totalPresupuestable) / Number(budget)) * 100;
+  }, [totalPresupuestable, budget, isSupervisorRoute, service]);
 
   const maxPctAllowed = useMemo(() => {
     if (!isSupervisorRoute) return null;
@@ -225,8 +242,14 @@ export default function Cart() {
           </div>
         )}
 
-        {/* % de presupuesto usado SOLO en modo supervisor */}
-        {isSupervisorRoute && service && usagePct != null && (
+        {/* % de presupuesto usado SOLO en modo supervisor. Un pedido de
+            uniformes no cuenta para el presupuesto: se aclara en vez del %. */}
+        {isSupervisorRoute && service && esPedidoUniformes && (
+          <div style={{ marginTop: 8 }}>
+            <span className="budget-chip ok">Pedido de uniformes: no cuenta para el presupuesto</span>
+          </div>
+        )}
+        {isSupervisorRoute && service && !esPedidoUniformes && usagePct != null && (
           <div style={{ marginTop: 8 }}>
             <span className={`budget-chip ${overLimit ? "over" : "ok"}`}>
               {usagePct.toFixed(2)}%
