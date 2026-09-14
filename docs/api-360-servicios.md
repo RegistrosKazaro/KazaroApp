@@ -1,5 +1,9 @@
 # API 360 → Insumos: servicios
 
+**Versión del 11/09/2026** — el supervisor se identifica por **legajo** y es
+obligatorio al crear servicios de Kazaro. Si tenés una copia anterior, esta la
+reemplaza.
+
 **Base:** `https://insumos.kazaro.com.ar/api/v1/360`
 
 **Header en todas las llamadas:**
