@@ -1,7 +1,8 @@
 # API 360 → Insumos: servicios
 
-**Versión del 11/09/2026** — el supervisor se identifica por **legajo** y es
-obligatorio al crear servicios de Kazaro. Si tenés una copia anterior, esta la
+**Versión del 14/09/2026** — el supervisor se identifica por **legajo** y es
+obligatorio al crear servicios de Kazaro. Incluye el detalle de las respuestas
+y las preguntas frecuentes del final. Si tenés una copia anterior, esta la
 reemplaza.
 
 **Base:** `https://insumos.kazaro.com.ar/api/v1/360`
@@ -51,6 +52,39 @@ curl -X POST https://insumos.kazaro.com.ar/api/v1/360/servicios \
 
 - **Kazaro:** sin un legajo válido de un supervisor activo, **no se crea el servicio**.
 - **Pazar:** el supervisor no hace falta (si se manda, responde `no_aplica`).
+
+### Respuesta de un alta exitosa
+
+El código viene en la clave **`resultado`**. HTTP `201` si se creó, `200` en los
+demás casos. El resultado del supervisor viene aparte, en
+**`asignacionSupervisor.resultado`**.
+
+```json
+{
+  "resultado": "creado",
+  "externoId": "SRV-00123",
+  "empresa": { "id": 1, "slug": "kazaro", "nombre": "Kazaro" },
+  "servicio": { "id": 907, "nombre": "SUPER MAMI 7 - ALTA GRACIA", "direccion": null, "ciudad": null, "activo": true },
+  "vinculadoEl": "2026-09-11 14:00:00",
+  "asignacionSupervisor": {
+    "resultado": "asignado",
+    "supervisor": { "id": 33, "nombre": "Eugenia Alvarez", "legajo": "1234" }
+  }
+}
+```
+
+| `resultado` | HTTP | Qué pasó |
+|---|---|---|
+| `creado` | `201` | Se creó el servicio. |
+| `ya_existia` | `200` | Ese `externoId` ya estaba dado de alta. No se creó nada nuevo (reintento). |
+| `vinculado` | `200` | En esa empresa **ya había un servicio con ese mismo nombre**, cargado a mano antes de la integración. En vez de duplicarlo, se vincula el `externoId` a ése: de ahí en adelante es el mismo servicio. |
+| `actualizado` | `200` | Ya existía y llegó con otro nombre: se renombró. |
+
+| `asignacionSupervisor.resultado` | Qué pasó |
+|---|---|
+| `asignado` | Se asignó. Si reemplazó a otro, viene `reemplazoA`. |
+| `ya_asignado` | Ya era el supervisor de ese servicio. |
+| `no_aplica` | Empresa Pazar: allá todos los supervisores ven todos los servicios. |
 
 ---
 
@@ -118,3 +152,35 @@ Cada servicio tiene **un** supervisor: el nuevo reemplaza al anterior.
 Reintentar es seguro: nunca duplica.
 
 **Presupuesto y mails no se toman** (vuelven listados en `camposIgnorados`).
+
+---
+
+## Preguntas frecuentes
+
+**¿Qué empresas acepta `empresa`?** Sólo **`"kazaro"`** y **`"pazar"`** (o `1` y
+`2`). Cualquier otro valor devuelve `400` y no crea nada. Si en 360 hay más
+empresas, hay que definir con Kazaro cuál corresponde a cada una.
+
+**En Pazar, ¿el supervisor sigue sin aplicar?** Sí. En Pazar todos los
+supervisores ven todos los servicios, así que no hay asignación: si se manda un
+supervisor, responde `no_aplica` y el alta se hace igual.
+
+**Si al cambiar el supervisor el legajo no está en Insumos, ¿se queda el
+anterior?** Sí. Devuelve `422` y **no toca la asignación**: el servicio conserva
+el supervisor que tenía. Lo mismo si el legajo es de alguien que no es
+supervisor, está dado de baja, o el DNI no coincide.
+
+**¿Cuál es el límite de consultas?** **60 por minuto**, contadas por token. Cada
+respuesta trae los headers `RateLimit-Limit`, `RateLimit-Remaining` y
+`RateLimit-Reset`. Al pasarse, `429` con `Retry-After` (segundos a esperar).
+
+**¿Cómo es el formato de los errores?** Siempre JSON con `error` (código fijo,
+para programar contra él) y `mensaje` (texto explicativo). Los `400` agregan
+`campo`, con el dato que falló. Los del supervisor traen además `resultado`.
+
+```json
+{ "error": "supervisor_no_encontrado",
+  "resultado": "no_encontrado",
+  "mensaje": "No hay ningún empleado con el legajo 999999 en Insumos. Hay que cargarle el legajo al supervisor en el panel de usuarios. No se creó el servicio.",
+  "supervisor": null }
+```
