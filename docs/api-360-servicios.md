@@ -147,11 +147,18 @@ Cada servicio tiene **un** supervisor: el nuevo reemplaza al anterior.
 | `404` | `no_encontrado` | Crear primero el servicio |
 | `409` | `ya_creado_en_otra_empresa` / `nombre_en_uso` / `servicio_compartido` | No reintentar; lo revisa Kazaro |
 | `422` | `supervisor_no_encontrado` / `no_es_supervisor` / `supervisor_inactivo` / `supervisor_dni_no_coincide` / `supervisor_ambiguo` | No reintentar; lo revisa Kazaro |
-| `429` / `500` / `503` | | Reintentar más tarde |
+| `429` | `demasiadas_consultas` | Reintentar más tarde (ver `Retry-After`) |
+| `500` | `error_interno` | Reintentar más tarde |
+| `503` | `api_no_configurada` | El servidor no tiene el token cargado. Avisar a Kazaro |
 
 Reintentar es seguro: nunca duplica.
 
 **Presupuesto y mails no se toman** (vuelven listados en `camposIgnorados`).
+
+Las respuestas exitosas pueden traer **`advertencias`** (una lista de textos).
+No son errores: la operación se hizo igual. Avisan de algo que conviene que una
+persona mire, por ejemplo que ya existe un servicio con el mismo nombre en la
+otra empresa.
 
 ---
 
