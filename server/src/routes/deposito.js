@@ -435,7 +435,12 @@ router.get("/orders", mustWarehouse, (req, res) => {
       // vuelve a ser parte del pedido y se edita ahí.
       const seDespacho = finalStatus === "closed"
         || !!(getVal(row, ["retiro_at"]) && String(getVal(row, ["retiro_at"])).trim());
-      const pendienteActivo = !!String(row.pendiente_status || "").trim() && seDespacho;
+      // Con pendientes, la tarjeta del pedido muestra SOLO lo que salió. Se
+      // mira también si hay unidades pendientes y no sólo el estado: si el
+      // depósito las marcó corrigiendo un pedido ya despachado, el estado
+      // puede faltar y la tarjeta mostraría de más.
+      const pendienteActivo = seDespacho
+        && (!!String(row.pendiente_status || "").trim() || todosLosItems.some((i) => i.pendiente > 0));
       const itemsEntrega = pendienteActivo
         ? todosLosItems
           .filter((i) => i.entregado > 0)
@@ -477,8 +482,7 @@ router.get("/orders", mustWarehouse, (req, res) => {
     // pedido. Es interno del depósito: el supervisor no lo ve aparte.
     const pendientesRows = [];
     for (const row of rawOrders) {
-      const estadoPend = String(row.pendiente_status || "").toLowerCase();
-      if (!estadoPend) continue;
+      let estadoPend = String(row.pendiente_status || "").toLowerCase();
 
       // La tarjeta de pendiente sólo tiene sentido si el pedido YA se despachó.
       // Si el pedido volvió atrás (está abierto o en preparación), lo pendiente
@@ -490,6 +494,12 @@ router.get("/orders", mustWarehouse, (req, res) => {
       const id = getVal(row, ["pedidoid", "id", "idpedido", "pedido_id"]) ?? row.__rowid;
       const items = (itemsMap[String(id)] || []).filter((i) => i.pendiente > 0);
       if (!items.length) continue;
+
+      // Red de seguridad: un pedido despachado con unidades pendientes SIEMPRE
+      // tiene que mostrar su tarjeta, aunque le falte el estado. Pasaba con los
+      // pendientes marcados al corregir un pedido ya despachado: quedaban
+      // guardados pero sin tarjeta, y nadie los veía para entregarlos.
+      if (!estadoPend) estadoPend = "open";
 
       const base = cleanRows.find((c) => String(c.id) === String(id));
       pendientesRows.push({
@@ -1151,6 +1161,29 @@ router.put("/orders/:id/items", mustWarehouse, (req, res) => {
     if (yaDespachado) {
       try { snapshotDespacho(id); }
       catch (e) { console.warn("[deposito] resnapshot:", e?.message || e); }
+
+    }
+
+    // Si al corregir un pedido ya despachado quedó algo pendiente, arranca su
+    // recorrido acá mismo. Antes esto sólo pasaba al marcar "listo para
+    // retirar": si el depósito dejaba pendientes editando un pedido YA
+    // despachado, las unidades quedaban guardadas pero sin tarjeta, o sea
+    // invisibles para todos. Se mira el estado del pedido y no la foto, que
+    // puede faltar en pedidos viejos.
+    const yaCerrado = String(chk.pedido?.Status || "").toLowerCase() === "closed"
+      || !!String(chk.pedido?.retiro_at || "").trim();
+    if (yaCerrado) {
+      try {
+        const pend = db.prepare(
+          `SELECT COALESCE(SUM(cantidad_pendiente),0) AS n FROM PedidoItems WHERE PedidoID = ?`
+        ).get(id).n;
+        if (Number(pend) > 0) {
+          db.prepare(
+            `UPDATE Pedidos SET pendiente_status = 'open'
+             WHERE PedidoID = ? AND COALESCE(NULLIF(TRIM(pendiente_status),''), '') = ''`
+          ).run(id);
+        }
+      } catch (e) { console.warn("[deposito] pendiente tras corregir:", e?.message || e); }
     }
 
     res.json({
