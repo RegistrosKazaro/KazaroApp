@@ -2409,6 +2409,30 @@ function CreateServiceSection() {
   const [importServiceFile, setImportServiceFile] = useState(null);
   const [importingServices, setImportingServices] = useState(false);
 
+  // Buscador y paginado: con cientos de servicios, la lista completa era
+  // imposible de recorrer.
+  const [q, setQ] = useState("");
+  const [pagina, setPagina] = useState(1);
+  const POR_PAGINA = 20;
+
+  const filtrados = useMemo(() => {
+    const t = norm(q);
+    if (!t) return services;
+    const digitos = t.replace(/\D/g, "");
+    // Por nombre, sin importar acentos ni mayúsculas; y por número de id.
+    return services.filter((s) => norm(s.name).includes(t) || (digitos && String(s.id).includes(digitos)));
+  }, [services, q]);
+
+  const paginas = Math.max(1, Math.ceil(filtrados.length / POR_PAGINA));
+  const paginaActual = Math.min(pagina, paginas);
+  const visibles = filtrados.slice((paginaActual - 1) * POR_PAGINA, paginaActual * POR_PAGINA);
+
+  // Volver a la primera página se hace en el momento en que corresponde: al
+  // buscar y al recargar la lista. Con un useEffect que mirara services.length,
+  // el reinicio llegaba tarde y podía pisar un clic en "Siguiente" hecho justo
+  // cuando terminaba de cargar la lista.
+  const buscar = (texto) => { setQ(texto); setPagina(1); };
+
   const loadAll = useCallback(async () => {
     setLoading(true);
     setErr("");
@@ -2416,6 +2440,7 @@ function CreateServiceSection() {
     try {
       const { data } = await api.get("/admin/services-all");
       setServices(Array.isArray(data) ? data : []);
+      setPagina(1);
     } catch (e) {
       setErr(e?.response?.data?.error || "No se pudieron cargar los servicios");
       setServices([]);
@@ -2601,6 +2626,24 @@ function CreateServiceSection() {
         </button>
       </div>
 
+      {/* Buscar dentro de los servicios ya cargados: responde al instante. */}
+      <div className="toolbar" style={{ gap: 10, marginTop: 10 }}>
+        <input
+          className="input"
+          type="search"
+          style={{ flex: 1, minWidth: 220, maxWidth: 420 }}
+          placeholder="Buscar servicio por nombre o número…"
+          value={q}
+          onChange={(e) => buscar(e.target.value)}
+          aria-label="Buscar servicio"
+        />
+        <span className="muted" style={{ fontSize: "0.84rem" }}>
+          {q.trim()
+            ? `${filtrados.length} de ${services.length} servicios`
+            : `${services.length} servicio${services.length === 1 ? "" : "s"}`}
+        </span>
+      </div>
+
       {loading ? (
         <div className="state">Cargando…</div>
       ) : (
@@ -2611,13 +2654,15 @@ function CreateServiceSection() {
             <div style={{ width: 140 }} />
           </div>
 
-          {services.length === 0 ? (
+          {visibles.length === 0 ? (
             <div className="t-row">
               <div style={{ flex: 1 }}>—</div>
-              <div style={{ flex: 6 }}>Sin servicios</div>
+              <div style={{ flex: 6 }}>
+                {q.trim() ? `Ningún servicio coincide con “${q.trim()}”` : "Sin servicios"}
+              </div>
             </div>
           ) : (
-            services.map((s) => (
+            visibles.map((s) => (
               <div key={String(s.id)} className="t-row">
                 <div style={{ flex: 2 }} className="mono">
                   {s.id}
@@ -2642,6 +2687,24 @@ function CreateServiceSection() {
                 </div>
               </div>
             ))
+          )}
+
+          {paginas > 1 && (
+            <div className="t-row" style={{ justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+              <span className="muted" style={{ fontSize: "0.84rem" }}>
+                Mostrando {(paginaActual - 1) * POR_PAGINA + 1}–
+                {Math.min(paginaActual * POR_PAGINA, filtrados.length)} de {filtrados.length}
+              </span>
+              <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <button type="button" className="pill" onClick={() => setPagina((p) => Math.max(1, p - 1))}
+                  disabled={paginaActual === 1} aria-label="Página anterior">‹ Anterior</button>
+                <span className="muted" style={{ fontSize: "0.84rem" }}>
+                  Página {paginaActual} de {paginas}
+                </span>
+                <button type="button" className="pill" onClick={() => setPagina((p) => Math.min(paginas, p + 1))}
+                  disabled={paginaActual === paginas} aria-label="Página siguiente">Siguiente ›</button>
+              </span>
+            </div>
           )}
         </div>
       )}
