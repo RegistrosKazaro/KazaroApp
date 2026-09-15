@@ -2975,6 +2975,16 @@ const NAV_GROUPS = [
   },
 ];
 
+// Secciones que no se están usando y se sacaron del menú (15/09/2026).
+// El código de cada una queda intacto: para volver a mostrarlas, alcanza con
+// borrarlas de esta lista. Mientras tanto siguen alcanzables a mano, con
+// ?tab=<id> en la dirección, por si hace falta entrar una vez.
+const NAV_OCULTOS = new Set(["stockCritico", "incomingStock", "historial", "twofa"]);
+
+const NAV_VISIBLE = NAV_GROUPS
+  .map((g) => ({ ...g, items: g.items.filter((i) => !i.id || !NAV_OCULTOS.has(i.id)) }))
+  .filter((g) => g.items.length > 0);
+
 const NAV_ICONS = {
   products:        ["M21 8 12 3 3 8v8l9 5 9-5Z", "M3 8l9 5 9-5M12 13v8"],
   stockCritico:    ["M10.3 3.9 2.4 17.5A2 2 0 0 0 4.1 20.5h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z", "M12 9v4M12 17h.01"],
@@ -3105,7 +3115,7 @@ export default function AdminPanel() {
 
       <div className="admin-shell">
         <nav className="admin-side" aria-label="Secciones de administración">
-          {NAV_GROUPS.map((grupo) => (
+          {NAV_VISIBLE.map((grupo) => (
             <div className="admin-side-group" key={grupo.title}>
               <p className="admin-side-title">{grupo.title}</p>
               <ul>
