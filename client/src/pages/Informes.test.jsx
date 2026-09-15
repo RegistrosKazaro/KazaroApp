@@ -25,6 +25,11 @@ const RESPUESTA = {
     { id: "10", codigo: "004", nombre: "BOLSA NEGRA", monto: 200, unidades: 20, pedidos: 2, servicios: 2 },
     { id: "11", codigo: "007", nombre: "LAMPAZO", monto: 100, unidades: 10, pedidos: 1, servicios: 1 },
   ],
+  tendencia: [
+    { semana: "2026-08-31", monto: 100, unidades: 10, pedidos: 1 },
+    { semana: "2026-09-07", monto: 120, unidades: 12, pedidos: 1 },
+    { semana: "2026-09-14", monto: 80, unidades: 8, pedidos: 1 },
+  ],
   supervisores: [{ id: "31", nombre: "Barcena, Nicolas", rol: "supervisor", monto: 300, unidades: 30, pedidos: 3, servicios: 2 }],
   insumosPorServicio: {
     1: [{ id: "10", codigo: "004", nombre: "BOLSA NEGRA", monto: 100, unidades: 25 }],
@@ -117,6 +122,34 @@ describe("Informes", () => {
     const unidades = within(dev).getByText("unidades devueltas").closest(".inf-dev-kpi");
     expect(within(unidades).getByText("7")).toBeInTheDocument();
     expect(within(dev).getByText("Insumos más devueltos")).toBeInTheDocument();
+  });
+
+  it("dibuja la tendencia y las barras con eje", async () => {
+    abrir();
+    await esperarCarga();
+    expect(screen.getByRole("img", { name: /Cómo viene/ })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Los 8 servicios que más pidieron" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Los 8 insumos más pedidos" })).toBeInTheDocument();
+  });
+
+  it("el botón de Excel pide el archivo con el período y el modo elegidos", async () => {
+    const user = userEvent.setup({ delay: null });
+    const blob = new Blob(["x"]);
+    api.get.mockImplementation((url) =>
+      Promise.resolve({ data: url.includes("excel") ? blob : RESPUESTA }));
+    URL.createObjectURL = vi.fn(() => "blob:x");
+    URL.revokeObjectURL = vi.fn();
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    abrir();
+    await esperarCarga();
+    await user.click(screen.getByRole("button", { name: "Exportar a Excel" }));
+    await waitFor(() => expect(click).toHaveBeenCalled());
+    const llamada = api.get.mock.calls.find((c) => c[0].includes("excel"));
+    expect(llamada[1].responseType).toBe("blob");
+    expect(llamada[1].params.modo).toBe("insumos");
+    expect(llamada[1].params.desde).toMatch(/^\d{4}-\d{2}-01$/);
+    click.mockRestore();
   });
 
   it("si falla, lo dice", async () => {

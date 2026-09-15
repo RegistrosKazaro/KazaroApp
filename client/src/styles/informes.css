@@ -149,6 +149,19 @@
 .inf-mes-valor { font-size: 0.72rem; font-weight: 700; margin-top: 5px; white-space: nowrap; }
 .inf-mes-label { font-size: 0.72rem; color: #64748b; }
 
+/* ── Gráficos (línea de tendencia y barras con eje) ── */
+.inf-grafico { width: 100%; height: auto; display: block; overflow: visible; }
+.inf-eje { font-size: 11px; fill: #64748b; }
+.inf-eje-nombre { font-size: 11.5px; fill: #334155; font-weight: 600; }
+.inf-barra-svg { transition: width .5s cubic-bezier(.22,.61,.36,1); }
+/* La línea se dibuja sola al entrar: da la sensación de que el dato "llega". */
+.inf-linea { stroke-dasharray: 2600; stroke-dashoffset: 0; animation: inf-trazo 1.1s ease-out; }
+@keyframes inf-trazo { from { stroke-dashoffset: 2600; } to { stroke-dashoffset: 0; } }
+
+.inf-head-acciones { display: flex; align-items: center; gap: 10px; }
+.inf-btn--excel { border-color: #15803d; color: #15803d; font-weight: 700; }
+.inf-btn--excel:hover:not(:disabled) { background: #f0fdf4; border-color: #15803d; }
+
 /* ── Devoluciones ── */
 .inf-dev-kpis { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
 .inf-dev-kpi {

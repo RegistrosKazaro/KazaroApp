@@ -53,28 +53,126 @@ function Kpi({ label, valor, detalle, destacado }) {
   );
 }
 
-/** Evolución mes a mes. Sólo aparece si el período abarca más de un mes. */
-function Evolucion({ datos, metrica }) {
+/* ── Gráficos ──────────────────────────────────────────────────── */
+
+/** Escala "linda" para el eje: 0, 1/4, 1/2, 3/4 y el máximo redondeado. */
+function escala(max) {
+  if (!Number.isFinite(max) || max <= 0) return { tope: 1, marcas: [0, 1] };
+  const paso = Math.pow(10, Math.floor(Math.log10(max)));
+  const tope = Math.ceil(max / (paso / 2)) * (paso / 2);
+  return { tope, marcas: [0, 0.25, 0.5, 0.75, 1].map((f) => tope * f) };
+}
+
+const corto = (n) => {
+  const v = Math.abs(n);
+  if (v >= 1e6) return `${(n / 1e6).toFixed(1).replace(".0", "")}M`;
+  if (v >= 1e3) return `${Math.round(n / 1e3)}k`;
+  return String(Math.round(n));
+};
+
+/**
+ * Línea de tendencia con ejes y grilla. La curva se suaviza con una
+ * interpolación monótona: se ve redondeada pero nunca inventa subidas ni
+ * bajadas que los datos no tengan.
+ */
+function LineaTendencia({ datos, etiqueta, valor, titulo, ayuda, formato }) {
   if (!datos || datos.length < 2) return null;
-  const valor = (d) => (metrica === "monto" ? d.monto : d.unidades);
-  const max = Math.max(...datos.map(valor), 1);
+  const W = 820, H = 260, IZQ = 62, DER = 18, ARR = 16, ABA = 32;
+  const ancho = W - IZQ - DER, alto = H - ARR - ABA;
+  const vals = datos.map(valor);
+  const { tope, marcas } = escala(Math.max(...vals));
+  const x = (i) => IZQ + (datos.length === 1 ? ancho / 2 : (i * ancho) / (datos.length - 1));
+  const y = (v) => ARR + alto - (v / tope) * alto;
+  const puntos = datos.map((d, i) => [x(i), y(valor(d))]);
+
+  // Tangentes monótonas (Fritsch–Carlson simplificado): sin sobrepasos.
+  const d = puntos.map((p, i) => {
+    if (i === 0 || i === puntos.length - 1) return 0;
+    const [x0, y0] = puntos[i - 1], [x1, y1] = puntos[i + 1];
+    const izq = (puntos[i][1] - y0) / (puntos[i][0] - x0 || 1);
+    const der = (y1 - puntos[i][1]) / (x1 - puntos[i][0] || 1);
+    return izq * der <= 0 ? 0 : (izq + der) / 2;
+  });
+  let path = `M ${puntos[0][0]} ${puntos[0][1]}`;
+  for (let i = 0; i < puntos.length - 1; i++) {
+    const [x0, y0] = puntos[i], [x1, y1] = puntos[i + 1];
+    const dx = (x1 - x0) / 3;
+    path += ` C ${x0 + dx} ${y0 + d[i] * dx}, ${x1 - dx} ${y1 - d[i + 1] * dx}, ${x1} ${y1}`;
+  }
+  const area = `${path} L ${puntos.at(-1)[0]} ${ARR + alto} L ${puntos[0][0]} ${ARR + alto} Z`;
+  const cadaCuantos = Math.ceil(datos.length / 6);
+
   return (
     <section className="inf-card">
-      <h3 className="inf-card-titulo">Mes a mes</h3>
-      <div className="inf-evolucion">
-        {datos.map((d) => {
-          const v = valor(d);
+      <h3 className="inf-card-titulo">{titulo}</h3>
+      {ayuda && <p className="inf-card-ayuda">{ayuda}</p>}
+      <svg className="inf-grafico" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={titulo}>
+        <defs>
+          <linearGradient id="infArea" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#2563eb" stopOpacity="0.22" />
+            <stop offset="100%" stopColor="#2563eb" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {marcas.map((m, i) => (
+          <g key={i}>
+            <line x1={IZQ} y1={y(m)} x2={W - DER} y2={y(m)} stroke="#e5e7eb" strokeDasharray={i ? "3 4" : ""} />
+            <text x={IZQ - 8} y={y(m) + 4} textAnchor="end" className="inf-eje">{corto(m)}</text>
+          </g>
+        ))}
+        <path d={area} fill="url(#infArea)" />
+        <path d={path} fill="none" stroke="#2563eb" strokeWidth="2.5" strokeLinecap="round" className="inf-linea" />
+        {puntos.map(([px, py], i) => (
+          <g key={i}>
+            <circle cx={px} cy={py} r="4.5" fill="#fff" stroke="#2563eb" strokeWidth="2.5" />
+            <title>{`${etiqueta(datos[i])}: ${formato(valor(datos[i]))} · ${datos[i].pedidos} pedidos`}</title>
+          </g>
+        ))}
+        {datos.map((dd, i) => (i % cadaCuantos === 0 || i === datos.length - 1 ? (
+          <text key={i} x={x(i)} y={H - 9} textAnchor="middle" className="inf-eje">{etiqueta(dd)}</text>
+        ) : null))}
+      </svg>
+    </section>
+  );
+}
+
+/** Barras horizontales con eje, al estilo de un gráfico de barras clásico. */
+function BarrasHorizontales({ datos, metrica, titulo, ayuda, formato }) {
+  if (!datos?.length) return null;
+  const top = [...datos].sort((a, b) => (metrica === "monto" ? b.monto - a.monto : b.unidades - a.unidades)).slice(0, 8);
+  const valor = (d) => (metrica === "monto" ? d.monto : d.unidades);
+  const { tope, marcas } = escala(Math.max(...top.map(valor)));
+  const W = 820, IZQ = 210, DER = 14, ALTO_FILA = 30, ABA = 26;
+  const H = top.length * ALTO_FILA + ABA;
+  const ancho = W - IZQ - DER;
+  const COLORES = ["#2563eb", "#0ea5e9", "#14b8a6", "#22c55e", "#84cc16", "#f59e0b", "#f97316", "#ef4444"];
+
+  return (
+    <section className="inf-card">
+      <h3 className="inf-card-titulo">{titulo}</h3>
+      {ayuda && <p className="inf-card-ayuda">{ayuda}</p>}
+      <svg className="inf-grafico" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={titulo}>
+        {marcas.map((m, i) => (
+          <g key={i}>
+            <line x1={IZQ + (m / tope) * ancho} y1={0} x2={IZQ + (m / tope) * ancho} y2={H - ABA}
+              stroke="#e5e7eb" strokeDasharray={i ? "3 4" : ""} />
+            <text x={IZQ + (m / tope) * ancho} y={H - 8} textAnchor="middle" className="inf-eje">{corto(m)}</text>
+          </g>
+        ))}
+        {top.map((d, i) => {
+          const largo = Math.max(2, (valor(d) / tope) * ancho);
+          const y = i * ALTO_FILA + 6;
           return (
-            <div key={d.mes} className="inf-mes" title={`${mesLabel(d.mes)}: ${metrica === "monto" ? formatMoney(d.monto) : formatNumber(d.unidades) + " unidades"} · ${d.pedidos} pedidos`}>
-              <div className="inf-mes-barra-fondo">
-                <div className="inf-mes-barra" style={{ height: `${Math.max(3, (v / max) * 100)}%` }} />
-              </div>
-              <div className="inf-mes-valor">{metrica === "monto" ? formatMoney(d.monto) : formatNumber(d.unidades)}</div>
-              <div className="inf-mes-label">{mesLabel(d.mes)}</div>
-            </div>
+            <g key={d.id ?? i}>
+              <text x={IZQ - 10} y={y + 13} textAnchor="end" className="inf-eje-nombre">
+                {String(d.nombre).length > 30 ? String(d.nombre).slice(0, 29) + "…" : d.nombre}
+              </text>
+              <rect x={IZQ} y={y} width={largo} height={18} rx="4" fill={COLORES[i % COLORES.length]} className="inf-barra-svg" />
+              <text x={IZQ + largo + 7} y={y + 13} className="inf-eje">{formato(valor(d))}</text>
+              <title>{`${d.nombre}: ${formato(valor(d))}`}</title>
+            </g>
           );
         })}
-      </div>
+      </svg>
     </section>
   );
 }
@@ -185,6 +283,7 @@ export default function Informes() {
   const [cargando, setCargando] = useState(true);
   const [err, setErr] = useState("");
   const [servicioAbierto, setServicioAbierto] = useState(null);
+  const [bajando, setBajando] = useState(false);
 
   useEffect(() => {
     let vivo = true;
@@ -199,6 +298,23 @@ export default function Informes() {
   const k = data?.kpis;
   const dev = data?.devoluciones;
   const elegirPeriodo = (p) => { setPersonalizado(false); setRango(p); setServicioAbierto(null); };
+  const exportarExcel = async () => {
+    setBajando(true);
+    try {
+      const { data: blob } = await api.get("/reports/panel/excel", {
+        params: { desde: rango.desde, hasta: rango.hasta, modo }, responseType: "blob",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `informe_${modo}_${rango.desde}_a_${rango.hasta}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setErr("No se pudo generar el Excel");
+    } finally { setBajando(false); }
+  };
+
   const detalleServicio = servicioAbierto ? (data?.insumosPorServicio?.[servicioAbierto.id] || []) : [];
 
   return (
@@ -211,7 +327,12 @@ export default function Informes() {
             {modo === "uniformes" ? "uniformes" : "insumos"} · pedidos ya retirados
           </p>
         </div>
-        <Link className="inf-link" to="/app/admin/reports/completo">Informe clásico</Link>
+        <div className="inf-head-acciones">
+          <button type="button" className="inf-btn inf-btn--excel" onClick={exportarExcel} disabled={bajando || cargando}>
+            {bajando ? "Generando…" : "Exportar a Excel"}
+          </button>
+          <Link className="inf-link" to="/app/admin/reports/completo">Informe clásico</Link>
+        </div>
       </header>
 
       {/* Filtros: período, qué se mira y en qué unidad */}
@@ -272,7 +393,34 @@ export default function Informes() {
             </div>
           )}
 
-          <Evolucion datos={data.evolucion} metrica={metrica} />
+          {(() => {
+            // Con pocas semanas se muestra semana a semana, que es más fino;
+            // con muchas, mes a mes, para que no quede ilegible.
+            const semanal = data.tendencia?.length >= 3 && data.tendencia.length <= 30;
+            const serie = semanal ? data.tendencia : data.evolucion;
+            return (
+              <LineaTendencia
+                datos={serie}
+                titulo={semanal ? "Cómo viene, semana a semana" : "Cómo viene, mes a mes"}
+                ayuda={semanal ? "Cada punto es una semana, de lunes a domingo." : null}
+                etiqueta={(d) => (semanal ? fechaCorta(d.semana).slice(0, 5) : mesLabel(d.mes))}
+                valor={(d) => (metrica === "monto" ? d.monto : d.unidades)}
+                formato={(v) => (metrica === "monto" ? formatMoney(v) : `${formatNumber(v)} u.`)}
+              />
+            );
+          })()}
+
+          <BarrasHorizontales
+            datos={data.servicios} metrica={metrica}
+            titulo="Los 8 servicios que más pidieron"
+            formato={(v) => (metrica === "monto" ? formatMoney(v) : `${formatNumber(v)} u.`)}
+          />
+
+          <BarrasHorizontales
+            datos={data.insumos} metrica={metrica}
+            titulo="Los 8 insumos más pedidos"
+            formato={(v) => (metrica === "monto" ? formatMoney(v) : `${formatNumber(v)} u.`)}
+          />
 
           <Ranking
             titulo="Servicios que más pidieron"

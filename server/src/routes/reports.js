@@ -2,6 +2,7 @@
 // Combinado: reportes completos de main (general, anual, depósitos, categoría)
 // + filtrado por empresa_id (Kazaro=1 ve lo suyo, Pazar=2 lo suyo).
 import { Router } from "express";
+import XLSX from "xlsx";
 import {
   db,
   getBudgetByServiceId,
@@ -893,8 +894,9 @@ function rangoUtcAr(desde, hasta) {
 
 const ES_DIA_REP = /^\d{4}-\d{2}-\d{2}$/;
 
-router.get("/panel", mustBeAdmin, (req, res) => {
-  try {
+/** Arma el informe completo. La usan el endpoint JSON y el de Excel. */
+function construirPanel(req) {
+  {
     const empresaId = getEmpresaId(req);
     const modo = String(req.query.modo || "insumos").toLowerCase() === "uniformes" ? "uniformes" : "insumos";
     const dia = (v) => (ES_DIA_REP.test(String(v || "").trim()) ? String(v).trim() : null);
@@ -903,7 +905,7 @@ router.get("/panel", mustBeAdmin, (req, res) => {
     const hoyAr = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
     const desde = dia(req.query.desde) || `${hoyAr.slice(0, 7)}-01`;
     const hasta = dia(req.query.hasta) || hoyAr;
-    if (desde > hasta) return res.status(400).json({ error: "El 'desde' no puede ser posterior al 'hasta'" });
+    if (desde > hasta) { const e = new Error("El 'desde' no puede ser posterior al 'hasta'"); e.status = 400; throw e; }
 
     const ef = empresaFilter("Pedidos", empresaId, "p");                    // empresa + no borrados + contabilizados
     const { sqlExclusions, params: exParams } = buildGeneralReportFilter(); // sin servicios de depósito
@@ -928,6 +930,14 @@ router.get("/panel", mustBeAdmin, (req, res) => {
              COALESCE(SUM(i.Subtotal),0) AS monto, COALESCE(SUM(i.Cantidad),0) AS unidades,
              COUNT(DISTINCT p.PedidoID) AS pedidos ${BASE()}
       GROUP BY mes ORDER BY mes`);
+
+    // Semana argentina que arranca el lunes: se corre la fecha hacia atrás
+    // tantos días como haga falta (strftime %w: 0=domingo).
+    const SEM = "date(datetime(p.Fecha,'-3 hours'), '-' || ((CAST(strftime('%w', datetime(p.Fecha,'-3 hours')) AS INTEGER) + 6) % 7) || ' days')";
+    const tendencia = q(`
+      SELECT ${SEM} AS semana, COALESCE(SUM(i.Subtotal),0) AS monto,
+             COALESCE(SUM(i.Cantidad),0) AS unidades, COUNT(DISTINCT p.PedidoID) AS pedidos ${BASE()}
+      GROUP BY semana ORDER BY semana`);
 
     const servicios = q(`
       SELECT CAST(p.ServicioID AS TEXT) AS id,
@@ -1014,7 +1024,7 @@ router.get("/panel", mustBeAdmin, (req, res) => {
         AND (p.retiro_at IS NULL OR TRIM(p.retiro_at) = '')`).get(desdeUtc, hastaUtc, empresaId);
 
     const num = (v) => Number(v || 0);
-    res.json({
+    return {
       ok: true,
       periodo: { desde, hasta },
       modo,
@@ -1024,6 +1034,7 @@ router.get("/panel", mustBeAdmin, (req, res) => {
         promedioPorPedido: num(kpi.pedidos) ? num(kpi.monto) / num(kpi.pedidos) : 0,
       },
       evolucion: evolucion.map((r) => ({ mes: r.mes, monto: num(r.monto), unidades: num(r.unidades), pedidos: num(r.pedidos) })),
+      tendencia: tendencia.map((r) => ({ semana: r.semana, monto: num(r.monto), unidades: num(r.unidades), pedidos: num(r.pedidos) })),
       servicios: servicios.map((r) => ({ ...r, monto: num(r.monto), unidades: num(r.unidades), pedidos: num(r.pedidos), insumos: num(r.insumos) })),
       insumos: insumos.map((r) => ({ ...r, monto: num(r.monto), unidades: num(r.unidades), pedidos: num(r.pedidos), servicios: num(r.servicios) })),
       supervisores: supervisores.map((r) => ({ ...r, monto: num(r.monto), unidades: num(r.unidades), pedidos: num(r.pedidos), servicios: num(r.servicios) })),
@@ -1039,11 +1050,124 @@ router.get("/panel", mustBeAdmin, (req, res) => {
         topServicios: devServicios.map((r) => ({ ...r, cantidad: num(r.cantidad), unidades: num(r.unidades) })),
       },
       sinRetirar: { pedidos: num(sinRetirar?.pedidos), monto: num(sinRetirar?.monto) },
-    });
+    };
+  }
+}
+
+router.get("/panel", mustBeAdmin, (req, res) => {
+  try {
+    res.json(construirPanel(req));
   } catch (e) {
+    if (e?.status === 400) return res.status(400).json({ error: e.message });
     console.error("[reports] GET /panel error:", e);
     res.status(500).json({ error: "No se pudo construir el informe" });
   }
 });
 
+/* ── Exportar el informe a Excel ──────────────────────────────────────
+   Un archivo con una hoja por bloque, con los números como números (para
+   poder sumarlos y filtrarlos en Excel) y los montos con formato moneda.
+   Sale del mismo construirPanel(), así que el Excel y la pantalla siempre
+   dicen lo mismo. */
+const FMT_PESOS = '"$"#,##0.00';
+
+/** Hoja a partir de una matriz, con anchos y formato de moneda por columna. */
+function hoja(filas, { anchos = [], pesos = [] } = {}) {
+  const ws = XLSX.utils.aoa_to_sheet(filas);
+  if (anchos.length) ws["!cols"] = anchos.map((w) => ({ wch: w }));
+  for (let f = 1; f < filas.length; f++) {
+    for (const c of pesos) {
+      const dir = XLSX.utils.encode_cell({ r: f, c });
+      if (ws[dir] && typeof ws[dir].v === "number") ws[dir].z = FMT_PESOS;
+    }
+  }
+  if (filas.length > 1) ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: filas.length - 1, c: filas[0].length - 1 } }) };
+  return ws;
+}
+
+router.get("/panel/excel", mustBeAdmin, (req, res) => {
+  try {
+    const d = construirPanel(req);
+    const wb = XLSX.utils.book_new();
+    const r2 = (n) => Math.round(Number(n || 0) * 100) / 100;
+
+    XLSX.utils.book_append_sheet(wb, hoja([
+      ["Informe de pedidos"],
+      [],
+      ["Período", `${d.periodo.desde} a ${d.periodo.hasta}`],
+      ["Muestra", d.modo === "uniformes" ? "Uniformes" : "Insumos (sin uniformes)"],
+      ["Incluye", "Pedidos ya retirados, netos de devoluciones aprobadas y de lo que quedó pendiente"],
+      [],
+      ["Total", r2(d.kpis.monto)],
+      ["Unidades", d.kpis.unidades],
+      ["Pedidos", d.kpis.pedidos],
+      ["Promedio por pedido", r2(d.kpis.promedioPorPedido)],
+      ["Servicios que pidieron", d.kpis.servicios],
+      ["Insumos distintos", d.kpis.insumos],
+      [],
+      ["Devoluciones aprobadas", d.devoluciones.aprobadas],
+      ["Devoluciones a aprobar", d.devoluciones.pendientes],
+      ["Devoluciones rechazadas", d.devoluciones.rechazadas],
+      ["Unidades devueltas", d.devoluciones.unidades],
+      ["Monto devuelto", r2(d.devoluciones.monto)],
+      [],
+      ["Pedidos sin marcar como retirados (NO entran)", d.sinRetirar.pedidos],
+      ["Monto de esos pedidos", r2(d.sinRetirar.monto)],
+    ], { anchos: [44, 26], pesos: [1] }), "Resumen");
+
+    XLSX.utils.book_append_sheet(wb, hoja([
+      ["#", "Servicio", "Monto", "Unidades", "Pedidos", "Insumos distintos"],
+      ...d.servicios.map((s, i) => [i + 1, s.nombre, r2(s.monto), s.unidades, s.pedidos, s.insumos]),
+    ], { anchos: [5, 52, 16, 11, 9, 17], pesos: [2] }), "Servicios");
+
+    XLSX.utils.book_append_sheet(wb, hoja([
+      ["#", "Código", "Insumo", "Monto", "Unidades", "Pedidos", "Servicios"],
+      ...d.insumos.map((s, i) => [i + 1, s.codigo || "", s.nombre, r2(s.monto), s.unidades, s.pedidos, s.servicios]),
+    ], { anchos: [5, 13, 52, 16, 11, 9, 11], pesos: [3] }), "Insumos");
+
+    XLSX.utils.book_append_sheet(wb, hoja([
+      ["#", "Quién pidió", "Rol", "Monto", "Unidades", "Pedidos", "Servicios"],
+      ...d.supervisores.map((s, i) => [i + 1, s.nombre, s.rol || "", r2(s.monto), s.unidades, s.pedidos, s.servicios]),
+    ], { anchos: [5, 34, 16, 16, 11, 9, 11], pesos: [3] }), "Quien pidio");
+
+    // Una fila por servicio + insumo: es la hoja para armar tablas dinámicas.
+    const detalle = [["Servicio", "Código", "Insumo", "Unidades", "Monto"]];
+    for (const s of d.servicios) {
+      for (const it of d.insumosPorServicio[s.id] || []) {
+        detalle.push([s.nombre, it.codigo || "", it.nombre, it.unidades, r2(it.monto)]);
+      }
+    }
+    XLSX.utils.book_append_sheet(wb, hoja(detalle, { anchos: [44, 13, 52, 11, 16], pesos: [4] }), "Detalle por servicio");
+
+    XLSX.utils.book_append_sheet(wb, hoja([
+      ["Mes", "Monto", "Unidades", "Pedidos"],
+      ...d.evolucion.map((m) => [m.mes, r2(m.monto), m.unidades, m.pedidos]),
+      [],
+      ["Semana (lunes)", "Monto", "Unidades", "Pedidos"],
+      ...d.tendencia.map((m) => [m.semana, r2(m.monto), m.unidades, m.pedidos]),
+    ], { anchos: [17, 16, 11, 9], pesos: [1] }), "Evolucion");
+
+    XLSX.utils.book_append_sheet(wb, hoja([
+      ["Insumos más devueltos"],
+      ["Insumo", "Devoluciones", "Unidades", "Monto"],
+      ...d.devoluciones.topInsumos.map((x) => [x.nombre || `#${x.id}`, x.cantidad, x.unidades, r2(x.monto)]),
+      [],
+      ["Servicios que más devolvieron"],
+      ["Servicio", "Devoluciones", "Unidades"],
+      ...d.devoluciones.topServicios.map((x) => [x.nombre, x.cantidad, x.unidades]),
+    ], { anchos: [52, 14, 11, 16], pesos: [3] }), "Devoluciones");
+
+    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+    const nombre = `informe_${d.modo}_${d.periodo.desde}_a_${d.periodo.hasta}.xlsx`;
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${nombre}"`);
+    res.send(buf);
+  } catch (e) {
+    if (e?.status === 400) return res.status(400).json({ error: e.message });
+    console.error("[reports] GET /panel/excel error:", e);
+    res.status(500).json({ error: "No se pudo generar el Excel" });
+  }
+});
+
 export default router;
+
