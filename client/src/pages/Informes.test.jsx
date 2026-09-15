@@ -18,7 +18,7 @@ const RESPUESTA = {
   ],
   // El segundo gana por monto, el primero por cantidad: sirve para probar el toggle.
   servicios: [
-    { id: "1", nombre: "HOSPITAL OLIVA", monto: 100, unidades: 25, pedidos: 2, insumos: 1 },
+    { id: "1", nombre: "MIN. EDUC - ZONA UNION", monto: 100, unidades: 25, pedidos: 2, insumos: 1 },
     { id: "2", nombre: "SUPER MAMI 7", monto: 200, unidades: 5, pedidos: 1, insumos: 1 },
   ],
   insumos: [
@@ -38,7 +38,7 @@ const RESPUESTA = {
   devoluciones: {
     total: 3, aprobadas: 2, pendientes: 1, rechazadas: 0, unidades: 7, monto: 150,
     topInsumos: [{ id: "10", nombre: "BOLSA NEGRA", cantidad: 2, unidades: 7, monto: 150 }],
-    topServicios: [{ nombre: "HOSPITAL OLIVA", cantidad: 2, unidades: 7 }],
+    topServicios: [{ nombre: "MIN. EDUC - ZONA UNION", cantidad: 2, unidades: 7 }],
   },
   sinRetirar: { pedidos: 4, monto: 5000 },
 };
@@ -79,17 +79,17 @@ describe("Informes", () => {
     const user = userEvent.setup({ delay: null });
     abrir();
     await esperarCarga();
-    const nombres = () => within(tarjeta("Servicios que más pidieron")).getAllByText(/HOSPITAL OLIVA|SUPER MAMI 7/).map((n) => n.textContent);
+    const nombres = () => within(tarjeta("Servicios que más pidieron")).getAllByText(/MIN. EDUC - ZONA UNION|SUPER MAMI 7/).map((n) => n.textContent);
     expect(nombres()[0]).toBe("SUPER MAMI 7");     // 200 > 100 en pesos
     await user.click(screen.getByRole("button", { name: "Por cantidad" }));
-    expect(nombres()[0]).toBe("HOSPITAL OLIVA");   // 25 > 5 en unidades
+    expect(nombres()[0]).toBe("MIN. EDUC - ZONA UNION");   // 25 > 5 en unidades
   });
 
   it("al tocar un servicio muestra qué insumos pidió", async () => {
     const user = userEvent.setup({ delay: null });
     abrir();
     await esperarCarga();
-    await user.click(within(tarjeta("Servicios que más pidieron")).getByText("HOSPITAL OLIVA"));
+    await user.click(within(tarjeta("Servicios que más pidieron")).getByText("MIN. EDUC - ZONA UNION"));
     const detalle = document.querySelector(".inf-detalle");
     expect(within(detalle).getByText("BOLSA NEGRA")).toBeInTheDocument();
     expect(within(detalle).getByText("004")).toBeInTheDocument();
@@ -128,8 +128,12 @@ describe("Informes", () => {
     abrir();
     await esperarCarga();
     expect(screen.getByRole("img", { name: /Cómo viene/ })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "Los 8 servicios que más pidieron" })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "Los 8 insumos más pedidos" })).toBeInTheDocument();
+    // Las barras van en HTML (no SVG) para que el nombre entre completo.
+    const barras = tarjeta("Los 8 servicios que más pidieron");
+    expect(within(barras).getByText("MIN. EDUC - ZONA UNION")).toBeInTheDocument();
+    expect(barras.querySelectorAll(".inf-barra-fila").length).toBe(2);
+    expect(barras.querySelector(".inf-eje-x")).toBeInTheDocument();
+    expect(tarjeta("Los 8 insumos más pedidos")).toBeInTheDocument();
   });
 
   it("el botón de Excel pide el archivo con el período y el modo elegidos", async () => {

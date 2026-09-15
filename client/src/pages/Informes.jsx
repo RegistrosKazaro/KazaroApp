@@ -77,7 +77,7 @@ const corto = (n) => {
  */
 function LineaTendencia({ datos, etiqueta, valor, titulo, ayuda, formato }) {
   if (!datos || datos.length < 2) return null;
-  const W = 820, H = 260, IZQ = 62, DER = 18, ARR = 16, ABA = 32;
+  const W = 820, H = 170, IZQ = 54, DER = 14, ARR = 14, ABA = 26;
   const ancho = W - IZQ - DER, alto = H - ARR - ABA;
   const vals = datos.map(valor);
   const { tope, marcas } = escala(Math.max(...vals));
@@ -96,7 +96,7 @@ function LineaTendencia({ datos, etiqueta, valor, titulo, ayuda, formato }) {
   let path = `M ${puntos[0][0]} ${puntos[0][1]}`;
   for (let i = 0; i < puntos.length - 1; i++) {
     const [x0, y0] = puntos[i], [x1, y1] = puntos[i + 1];
-    const dx = (x1 - x0) / 3;
+    const dx = (x1 - x0) / 4;   // curva suave pero sin exagerar las ondas
     path += ` C ${x0 + dx} ${y0 + d[i] * dx}, ${x1 - dx} ${y1 - d[i + 1] * dx}, ${x1} ${y1}`;
   }
   const area = `${path} L ${puntos.at(-1)[0]} ${ARR + alto} L ${puntos[0][0]} ${ARR + alto} Z`;
@@ -120,10 +120,10 @@ function LineaTendencia({ datos, etiqueta, valor, titulo, ayuda, formato }) {
           </g>
         ))}
         <path d={area} fill="url(#infArea)" />
-        <path d={path} fill="none" stroke="#2563eb" strokeWidth="2.5" strokeLinecap="round" className="inf-linea" />
+        <path d={path} fill="none" stroke="#2563eb" strokeWidth="2" strokeLinecap="round" className="inf-linea" />
         {puntos.map(([px, py], i) => (
           <g key={i}>
-            <circle cx={px} cy={py} r="4.5" fill="#fff" stroke="#2563eb" strokeWidth="2.5" />
+            <circle cx={px} cy={py} r="3.5" fill="#fff" stroke="#2563eb" strokeWidth="2" />
             <title>{`${etiqueta(datos[i])}: ${formato(valor(datos[i]))} · ${datos[i].pedidos} pedidos`}</title>
           </g>
         ))}
@@ -135,44 +135,38 @@ function LineaTendencia({ datos, etiqueta, valor, titulo, ayuda, formato }) {
   );
 }
 
-/** Barras horizontales con eje, al estilo de un gráfico de barras clásico. */
-function BarrasHorizontales({ datos, metrica, titulo, ayuda, formato }) {
+/**
+ * Barras horizontales con eje. Van en HTML y no en SVG a propósito: así el
+ * nombre del insumo o del servicio se muestra COMPLETO, partido en dos
+ * renglones si hace falta, en vez de recortado con puntos suspensivos.
+ */
+function BarrasHorizontales({ datos, metrica, titulo, ayuda, formato, cuantas = 8 }) {
   if (!datos?.length) return null;
-  const top = [...datos].sort((a, b) => (metrica === "monto" ? b.monto - a.monto : b.unidades - a.unidades)).slice(0, 8);
   const valor = (d) => (metrica === "monto" ? d.monto : d.unidades);
+  const top = [...datos].sort((a, b) => valor(b) - valor(a)).slice(0, cuantas);
   const { tope, marcas } = escala(Math.max(...top.map(valor)));
-  const W = 820, IZQ = 210, DER = 14, ALTO_FILA = 30, ABA = 26;
-  const H = top.length * ALTO_FILA + ABA;
-  const ancho = W - IZQ - DER;
-  const COLORES = ["#2563eb", "#0ea5e9", "#14b8a6", "#22c55e", "#84cc16", "#f59e0b", "#f97316", "#ef4444"];
+  const COLORES = ["#1d4ed8", "#0ea5e9", "#0d9488", "#16a34a", "#65a30d", "#d97706", "#ea580c", "#dc2626"];
 
   return (
     <section className="inf-card">
       <h3 className="inf-card-titulo">{titulo}</h3>
       {ayuda && <p className="inf-card-ayuda">{ayuda}</p>}
-      <svg className="inf-grafico" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={titulo}>
-        {marcas.map((m, i) => (
-          <g key={i}>
-            <line x1={IZQ + (m / tope) * ancho} y1={0} x2={IZQ + (m / tope) * ancho} y2={H - ABA}
-              stroke="#e5e7eb" strokeDasharray={i ? "3 4" : ""} />
-            <text x={IZQ + (m / tope) * ancho} y={H - 8} textAnchor="middle" className="inf-eje">{corto(m)}</text>
-          </g>
+      <div className="inf-barras">
+        {top.map((d, i) => (
+          <div key={d.id ?? i} className="inf-barra-fila" title={`${d.nombre}: ${formato(valor(d))}`}>
+            <div className="inf-barra-nombre">
+              {d.codigo ? <span className="inf-codigo">{d.codigo}</span> : null}{d.nombre}
+            </div>
+            <div className="inf-barra-pista">
+              <div className="inf-barra-color" style={{ width: `${Math.max(1.5, (valor(d) / tope) * 100)}%`, background: COLORES[i % COLORES.length] }} />
+              <span className="inf-barra-valor">{formato(valor(d))}</span>
+            </div>
+          </div>
         ))}
-        {top.map((d, i) => {
-          const largo = Math.max(2, (valor(d) / tope) * ancho);
-          const y = i * ALTO_FILA + 6;
-          return (
-            <g key={d.id ?? i}>
-              <text x={IZQ - 10} y={y + 13} textAnchor="end" className="inf-eje-nombre">
-                {String(d.nombre).length > 30 ? String(d.nombre).slice(0, 29) + "…" : d.nombre}
-              </text>
-              <rect x={IZQ} y={y} width={largo} height={18} rx="4" fill={COLORES[i % COLORES.length]} className="inf-barra-svg" />
-              <text x={IZQ + largo + 7} y={y + 13} className="inf-eje">{formato(valor(d))}</text>
-              <title>{`${d.nombre}: ${formato(valor(d))}`}</title>
-            </g>
-          );
-        })}
-      </svg>
+        <div className="inf-eje-x">
+          {marcas.map((m, i) => <span key={i}>{corto(m)}</span>)}
+        </div>
+      </div>
     </section>
   );
 }

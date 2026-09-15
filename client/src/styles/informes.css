@@ -99,8 +99,10 @@
 .inf-fila-cuerpo { flex: 1; min-width: 0; }
 .inf-fila-top { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
 .inf-nombre {
-  font-size: 0.87rem; font-weight: 600; white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis; min-width: 0;
+  font-size: 0.87rem; font-weight: 600; min-width: 0; line-height: 1.35;
+  /* Hasta dos renglones: el nombre entero se lee, sin estirar la fila. */
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere;
 }
 .inf-codigo {
   font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.72rem;
@@ -132,28 +134,14 @@
   text-align: left; font-size: 0.72rem; text-transform: uppercase; letter-spacing: .03em;
   color: #64748b; border-bottom: 1px solid #e5e7eb; padding: 7px 8px; font-weight: 700;
 }
-.inf-tabla td { padding: 7px 8px; border-bottom: 1px solid #f1f5f9; }
+.inf-tabla td { padding: 7px 8px; border-bottom: 1px solid #f1f5f9; overflow-wrap: anywhere; }
 .inf-tabla tr:last-child td { border-bottom: 0; }
 .inf-tabla .num { text-align: right; white-space: nowrap; }
 .inf-tabla .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.76rem; color: #64748b; }
 
-/* ── Evolución mes a mes ── */
-.inf-evolucion { display: flex; gap: 10px; align-items: flex-end; overflow-x: auto; padding-top: 6px; }
-.inf-mes { flex: 1; min-width: 54px; text-align: center; }
-.inf-mes-barra-fondo { height: 110px; display: flex; align-items: flex-end; }
-.inf-mes-barra {
-  width: 100%; border-radius: 7px 7px 0 0;
-  background: linear-gradient(180deg, #60a5fa, #2563eb);
-  transition: height .5s cubic-bezier(.22,.61,.36,1);
-}
-.inf-mes-valor { font-size: 0.72rem; font-weight: 700; margin-top: 5px; white-space: nowrap; }
-.inf-mes-label { font-size: 0.72rem; color: #64748b; }
-
 /* ── Gráficos (línea de tendencia y barras con eje) ── */
 .inf-grafico { width: 100%; height: auto; display: block; overflow: visible; }
 .inf-eje { font-size: 11px; fill: #64748b; }
-.inf-eje-nombre { font-size: 11.5px; fill: #334155; font-weight: 600; }
-.inf-barra-svg { transition: width .5s cubic-bezier(.22,.61,.36,1); }
 /* La línea se dibuja sola al entrar: da la sensación de que el dato "llega". */
 .inf-linea { stroke-dasharray: 2600; stroke-dashoffset: 0; animation: inf-trazo 1.1s ease-out; }
 @keyframes inf-trazo { from { stroke-dashoffset: 2600; } to { stroke-dashoffset: 0; } }
@@ -161,6 +149,28 @@
 .inf-head-acciones { display: flex; align-items: center; gap: 10px; }
 .inf-btn--excel { border-color: #15803d; color: #15803d; font-weight: 700; }
 .inf-btn--excel:hover:not(:disabled) { background: #f0fdf4; border-color: #15803d; }
+
+/* ── Barras horizontales (en HTML, para que el nombre entre completo) ── */
+.inf-barras { display: flex; flex-direction: column; gap: 11px; }
+.inf-barra-fila { display: grid; grid-template-columns: minmax(120px, 230px) 1fr; gap: 12px; align-items: center; }
+.inf-barra-nombre {
+  font-size: 0.82rem; font-weight: 600; text-align: right; line-height: 1.3;
+  overflow-wrap: anywhere; color: #334155;
+}
+.inf-barra-pista {
+  position: relative; display: flex; align-items: center; gap: 8px; min-height: 22px;
+  /* Grilla de fondo: las mismas marcas que el eje de abajo. */
+  background-image: repeating-linear-gradient(to right, #eef2f7 0 1px, transparent 1px 25%);
+  border-radius: 4px;
+}
+.inf-barra-color { height: 20px; border-radius: 4px; transition: width .5s cubic-bezier(.22,.61,.36,1); min-width: 3px; }
+.inf-barra-valor { font-size: 0.78rem; font-weight: 700; color: #334155; white-space: nowrap; }
+.inf-eje-x {
+  display: grid; grid-template-columns: repeat(5, 1fr); margin-left: calc(230px + 12px);
+  font-size: 0.72rem; color: #94a3b8; padding-top: 4px; border-top: 1px solid #e5e7eb;
+}
+.inf-eje-x span { text-align: left; }
+.inf-eje-x span:first-child { margin-left: -2px; }
 
 /* ── Devoluciones ── */
 .inf-dev-kpis { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
@@ -183,9 +193,13 @@
   .inf-kpi-valor { font-size: 1.15rem; }
   .inf-fila-pie .inf-secundario { margin-left: 0; }
   .inf-card { padding: 14px; }
+  .inf-barra-fila { grid-template-columns: 1fr; gap: 3px; }
+  .inf-barra-nombre { text-align: left; }
+  .inf-eje-x { margin-left: 0; }
 }
 
 /* Quien prefiera menos movimiento, no lo tiene. */
 @media (prefers-reduced-motion: reduce) {
-  .inf-barra, .inf-mes-barra { transition: none; }
+  .inf-barra, .inf-barra-color { transition: none; }
+  .inf-linea { animation: none; }
 }
