@@ -853,4 +853,197 @@ router.get("/category/by-name/:name", mustBeAdmin, (req, res) => {
   }
 });
 
+/* =====================================================================
+   PANEL DE INFORMES (una sola fuente para todos los rankings)
+   =====================================================================
+   Todo sale de v_pedido_items_neto, o sea de los ÍTEMS netos de
+   devoluciones aprobadas y de lo que quedó pendiente de entregar. Los
+   montos se suman desde los ítems y no desde Pedidos.Total: así el total
+   de un servicio siempre es igual a la suma de sus insumos, y el total
+   general igual a la suma de los servicios. Leyendo Pedidos.Total, un
+   pedido entregado a medias sumaría de más.
+
+   Reglas que ya regían en los informes y se respetan:
+   · Sólo pedidos contabilizados (los de supervisor, al marcarse retirados).
+   · Sin los servicios que son hijos de un depósito.
+   · Uniformes aparte: modo "insumos" los excluye, modo "uniformes" sólo
+     los muestra.
+   ===================================================================== */
+
+/** Ítems de categorías separadas (Uniformes): incluirlos o excluirlos. */
+function filtroItemsCategoria(alias, incluir) {
+  const base = filtroItemsSinCategoriaSeparada(alias);
+  if (!base.sql) return incluir ? { sql: " AND 1=0", params: [] } : { sql: "", params: [] };
+  return incluir
+    ? { sql: base.sql.replace(" AND NOT EXISTS (", " AND EXISTS ("), params: base.params }
+    : base;
+}
+
+/** aaaa-mm-dd → límites UTC del día argentino (que arranca a las 03:00 UTC). */
+function rangoUtcAr(desde, hasta) {
+  const out = {};
+  if (desde) out.desdeUtc = `${desde} 03:00:00`;
+  if (hasta) {
+    const d = new Date(`${hasta}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + 1);
+    out.hastaUtc = `${d.toISOString().slice(0, 10)} 03:00:00`;
+  }
+  return out;
+}
+
+const ES_DIA_REP = /^\d{4}-\d{2}-\d{2}$/;
+
+router.get("/panel", mustBeAdmin, (req, res) => {
+  try {
+    const empresaId = getEmpresaId(req);
+    const modo = String(req.query.modo || "insumos").toLowerCase() === "uniformes" ? "uniformes" : "insumos";
+    const dia = (v) => (ES_DIA_REP.test(String(v || "").trim()) ? String(v).trim() : null);
+
+    // Por defecto, el mes en curso (día argentino).
+    const hoyAr = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+    const desde = dia(req.query.desde) || `${hoyAr.slice(0, 7)}-01`;
+    const hasta = dia(req.query.hasta) || hoyAr;
+    if (desde > hasta) return res.status(400).json({ error: "El 'desde' no puede ser posterior al 'hasta'" });
+
+    const ef = empresaFilter("Pedidos", empresaId, "p");                    // empresa + no borrados + contabilizados
+    const { sqlExclusions, params: exParams } = buildGeneralReportFilter(); // sin servicios de depósito
+    const cat = filtroItemsCategoria("i", modo === "uniformes");
+    const { desdeUtc, hastaUtc } = rangoUtcAr(desde, hasta);
+
+    // Base común de todos los rankings: un solo criterio para todo.
+    const BASE = (join = "") => `FROM v_pedido_items_neto i
+      JOIN Pedidos p ON p.PedidoID = i.PedidoID ${join}
+      WHERE p.Fecha >= ? AND p.Fecha < ? ${ef} ${sqlExclusions} ${cat.sql}
+        AND i.Cantidad > 0`;
+    const P = [desdeUtc, hastaUtc, ...exParams, ...cat.params];
+    const q = (sql) => db.prepare(sql).all(...P);
+
+    const kpi = db.prepare(`
+      SELECT COALESCE(SUM(i.Subtotal),0) AS monto, COALESCE(SUM(i.Cantidad),0) AS unidades,
+             COUNT(DISTINCT p.PedidoID) AS pedidos, COUNT(DISTINCT p.ServicioID) AS servicios,
+             COUNT(DISTINCT i.ProductoID) AS insumos ${BASE()}`).get(...P);
+
+    const evolucion = q(`
+      SELECT strftime('%Y-%m', datetime(p.Fecha,'-3 hours')) AS mes,
+             COALESCE(SUM(i.Subtotal),0) AS monto, COALESCE(SUM(i.Cantidad),0) AS unidades,
+             COUNT(DISTINCT p.PedidoID) AS pedidos ${BASE()}
+      GROUP BY mes ORDER BY mes`);
+
+    const servicios = q(`
+      SELECT CAST(p.ServicioID AS TEXT) AS id,
+             COALESCE(NULLIF(TRIM(s.ServicioNombre),''), 'Sin servicio') AS nombre,
+             COALESCE(SUM(i.Subtotal),0) AS monto, COALESCE(SUM(i.Cantidad),0) AS unidades,
+             COUNT(DISTINCT p.PedidoID) AS pedidos, COUNT(DISTINCT i.ProductoID) AS insumos
+      ${BASE("LEFT JOIN Servicios s ON s.ServiciosID = p.ServicioID")}
+      GROUP BY p.ServicioID ORDER BY monto DESC`);
+
+    const insumos = q(`
+      SELECT CAST(i.ProductoID AS TEXT) AS id, MIN(i.Codigo) AS codigo, MIN(i.Nombre) AS nombre,
+             COALESCE(SUM(i.Subtotal),0) AS monto, COALESCE(SUM(i.Cantidad),0) AS unidades,
+             COUNT(DISTINCT p.PedidoID) AS pedidos, COUNT(DISTINCT p.ServicioID) AS servicios ${BASE()}
+      GROUP BY i.ProductoID ORDER BY monto DESC`);
+
+    const emp = resolveEmployeesTableLocal();
+    const supervisores = emp ? q(`
+      SELECT CAST(p.EmpleadoID AS TEXT) AS id,
+             COALESCE(NULLIF(TRIM(${emp.fullNameExpr}),''), 'Empleado ' || p.EmpleadoID) AS nombre,
+             MAX(COALESCE(p.Rol,'')) AS rol,
+             COALESCE(SUM(i.Subtotal),0) AS monto, COALESCE(SUM(i.Cantidad),0) AS unidades,
+             COUNT(DISTINCT p.PedidoID) AS pedidos, COUNT(DISTINCT p.ServicioID) AS servicios
+      ${BASE(`LEFT JOIN ${emp.table} e ON e.${emp.idCol} = p.EmpleadoID`)}
+      GROUP BY p.EmpleadoID ORDER BY monto DESC`) : [];
+
+    // Qué pidió cada servicio, para poder abrir el detalle de cualquiera.
+    const porServicio = q(`
+      SELECT CAST(p.ServicioID AS TEXT) AS servicioId, CAST(i.ProductoID AS TEXT) AS id,
+             MIN(i.Codigo) AS codigo, MIN(i.Nombre) AS nombre,
+             COALESCE(SUM(i.Subtotal),0) AS monto, COALESCE(SUM(i.Cantidad),0) AS unidades ${BASE()}
+      GROUP BY p.ServicioID, i.ProductoID ORDER BY monto DESC`);
+    const insumosPorServicio = {};
+    for (const r of porServicio) {
+      (insumosPorServicio[r.servicioId] ||= []).push({
+        id: r.id, codigo: r.codigo || "", nombre: r.nombre || "",
+        monto: Number(r.monto || 0), unidades: Number(r.unidades || 0),
+      });
+    }
+
+    /* ── Devoluciones ─────────────────────────────────────────────────
+       Se cuentan por la fecha en que se pidieron, que es lo que se busca
+       al preguntar "cuántas devoluciones hubo este mes". El descuento de
+       los montos de arriba, en cambio, va al mes del pedido original. */
+    const precios = `(SELECT PedidoID, ProductoID, MAX(Nombre) AS Nombre, MAX(Precio) AS Precio
+                      FROM PedidoItems GROUP BY PedidoID, ProductoID)`;
+    const dev = db.prepare(`
+      SELECT LOWER(COALESCE(d.estado,'')) AS estado, COUNT(*) AS cantidad,
+             COALESCE(SUM(d.cantidad),0) AS unidades,
+             COALESCE(SUM(d.cantidad * COALESCE(pi.Precio,0)),0) AS monto
+      FROM devoluciones d
+      LEFT JOIN ${precios} pi ON pi.PedidoID = d.pedido_id AND pi.ProductoID = d.producto_id
+      WHERE d.fecha_solicitud >= ? AND d.fecha_solicitud < ? AND COALESCE(d.empresa_id,1) = ?
+      GROUP BY LOWER(COALESCE(d.estado,''))`).all(desdeUtc, hastaUtc, empresaId);
+
+    const devTop = db.prepare(`
+      SELECT CAST(d.producto_id AS TEXT) AS id, COALESCE(MAX(pi.Nombre),'') AS nombre,
+             COUNT(*) AS cantidad, COALESCE(SUM(d.cantidad),0) AS unidades,
+             COALESCE(SUM(d.cantidad * COALESCE(pi.Precio,0)),0) AS monto
+      FROM devoluciones d
+      LEFT JOIN ${precios} pi ON pi.PedidoID = d.pedido_id AND pi.ProductoID = d.producto_id
+      WHERE d.fecha_solicitud >= ? AND d.fecha_solicitud < ? AND COALESCE(d.empresa_id,1) = ?
+        AND LOWER(COALESCE(d.estado,'')) = 'aprobada'
+      GROUP BY d.producto_id ORDER BY monto DESC LIMIT 10`).all(desdeUtc, hastaUtc, empresaId);
+
+    const devServicios = db.prepare(`
+      SELECT COALESCE(NULLIF(TRIM(s.ServicioNombre),''),'Sin servicio') AS nombre,
+             COUNT(*) AS cantidad, COALESCE(SUM(d.cantidad),0) AS unidades
+      FROM devoluciones d
+      JOIN Pedidos p ON p.PedidoID = d.pedido_id
+      LEFT JOIN Servicios s ON s.ServiciosID = p.ServicioID
+      WHERE d.fecha_solicitud >= ? AND d.fecha_solicitud < ? AND COALESCE(d.empresa_id,1) = ?
+        AND LOWER(COALESCE(d.estado,'')) = 'aprobada'
+      GROUP BY p.ServicioID ORDER BY unidades DESC LIMIT 10`).all(desdeUtc, hastaUtc, empresaId);
+
+    const porEstado = (e) => dev.find((d) => d.estado === e) || {};
+    const aprobadas = porEstado("aprobada");
+
+    // Aviso de confianza: qué quedó afuera por no estar marcado como retirado.
+    const sinRetirar = db.prepare(`
+      SELECT COUNT(*) AS pedidos, COALESCE(SUM(p.Total),0) AS monto
+      FROM Pedidos p
+      WHERE p.Fecha >= ? AND p.Fecha < ? AND p.deleted_at IS NULL AND p.empresa_id = ?
+        AND LOWER(COALESCE(p.Status,'')) = 'closed'
+        AND (p.retiro_at IS NULL OR TRIM(p.retiro_at) = '')`).get(desdeUtc, hastaUtc, empresaId);
+
+    const num = (v) => Number(v || 0);
+    res.json({
+      ok: true,
+      periodo: { desde, hasta },
+      modo,
+      kpis: {
+        monto: num(kpi.monto), unidades: num(kpi.unidades), pedidos: num(kpi.pedidos),
+        servicios: num(kpi.servicios), insumos: num(kpi.insumos),
+        promedioPorPedido: num(kpi.pedidos) ? num(kpi.monto) / num(kpi.pedidos) : 0,
+      },
+      evolucion: evolucion.map((r) => ({ mes: r.mes, monto: num(r.monto), unidades: num(r.unidades), pedidos: num(r.pedidos) })),
+      servicios: servicios.map((r) => ({ ...r, monto: num(r.monto), unidades: num(r.unidades), pedidos: num(r.pedidos), insumos: num(r.insumos) })),
+      insumos: insumos.map((r) => ({ ...r, monto: num(r.monto), unidades: num(r.unidades), pedidos: num(r.pedidos), servicios: num(r.servicios) })),
+      supervisores: supervisores.map((r) => ({ ...r, monto: num(r.monto), unidades: num(r.unidades), pedidos: num(r.pedidos), servicios: num(r.servicios) })),
+      insumosPorServicio,
+      devoluciones: {
+        total: dev.reduce((a, d) => a + num(d.cantidad), 0),
+        aprobadas: num(aprobadas.cantidad),
+        pendientes: num(porEstado("pendiente").cantidad),
+        rechazadas: num(porEstado("rechazada").cantidad),
+        unidades: num(aprobadas.unidades),
+        monto: num(aprobadas.monto),
+        topInsumos: devTop.map((r) => ({ ...r, cantidad: num(r.cantidad), unidades: num(r.unidades), monto: num(r.monto) })),
+        topServicios: devServicios.map((r) => ({ ...r, cantidad: num(r.cantidad), unidades: num(r.unidades) })),
+      },
+      sinRetirar: { pedidos: num(sinRetirar?.pedidos), monto: num(sinRetirar?.monto) },
+    });
+  } catch (e) {
+    console.error("[reports] GET /panel error:", e);
+    res.status(500).json({ error: "No se pudo construir el informe" });
+  }
+});
+
 export default router;

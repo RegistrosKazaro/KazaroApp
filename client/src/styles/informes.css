@@ -1,0 +1,178 @@
+/* informes.css — Pantalla de informes: rankings con barras, simple de leer. */
+
+.informes {
+  max-width: 1100px;
+  margin-inline: auto;
+  padding: 4px 0 40px;
+  color: #0f172a;
+}
+
+/* ── Cabecera ── */
+.inf-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 14px;
+}
+.inf-head h2 { margin: 0; font-size: 1.5rem; }
+.inf-sub { margin: 3px 0 0; color: #64748b; font-size: 0.86rem; }
+.inf-link { font-size: 0.82rem; color: #1d4ed8; text-decoration: none; }
+.inf-link:hover { text-decoration: underline; }
+
+/* ── Filtros ── */
+.inf-filtros {
+  display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center;
+  margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px solid #e5e7eb;
+}
+.inf-grupo { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.inf-grupo--der { margin-left: auto; }
+
+.inf-chip {
+  border: 1px solid #d1d5db; background: #fff; color: #374151;
+  border-radius: 999px; padding: 7px 14px; font-size: 0.84rem; font-weight: 600;
+  cursor: pointer; transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.inf-chip:hover { border-color: #94a3b8; }
+.inf-chip.is-on { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+
+.inf-toggle { display: inline-flex; border: 1px solid #d1d5db; border-radius: 999px; overflow: hidden; background: #fff; }
+.inf-toggle button {
+  border: 0; background: transparent; padding: 7px 14px; font-size: 0.82rem;
+  font-weight: 600; color: #475569; cursor: pointer; transition: background .15s ease, color .15s ease;
+}
+.inf-toggle button.is-on { background: #0f172a; color: #fff; }
+
+.inf-fecha { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: #475569; }
+.inf-fecha input { padding: 6px 9px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 0.82rem; }
+
+/* ── Estados ── */
+.inf-cargando, .inf-vacio { color: #64748b; font-size: 0.88rem; padding: 18px 2px; }
+.inf-error {
+  background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c;
+  border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; font-size: 0.86rem;
+}
+.inf-aviso {
+  background: #fffbeb; border: 1px solid #fde68a; color: #92400e;
+  border-radius: 10px; padding: 11px 14px; margin-bottom: 16px; font-size: 0.85rem; line-height: 1.5;
+}
+
+/* ── KPIs ── */
+.inf-kpis {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px; margin-bottom: 18px;
+}
+.inf-kpi {
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 13px 15px;
+}
+.inf-kpi.is-main { background: linear-gradient(135deg, #1d4ed8, #2563eb); border-color: #1d4ed8; color: #fff; }
+.inf-kpi-label { font-size: 0.76rem; text-transform: uppercase; letter-spacing: .03em; color: #64748b; font-weight: 700; }
+.inf-kpi.is-main .inf-kpi-label { color: rgba(255,255,255,.85); }
+.inf-kpi-valor { font-size: 1.35rem; font-weight: 800; margin-top: 4px; line-height: 1.2; }
+.inf-kpi-detalle { font-size: 0.78rem; color: #64748b; margin-top: 2px; }
+.inf-kpi.is-main .inf-kpi-detalle { color: rgba(255,255,255,.9); }
+
+/* ── Tarjetas ── */
+.inf-card {
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 14px;
+  padding: 16px 18px; margin-bottom: 14px;
+}
+.inf-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.inf-card-titulo { margin: 0; font-size: 1.02rem; font-weight: 700; }
+.inf-card-ayuda { margin: 3px 0 0; font-size: 0.8rem; color: #64748b; line-height: 1.45; }
+.inf-card-acciones { display: flex; gap: 6px; align-items: center; }
+.inf-buscar { padding: 7px 11px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 0.82rem; min-width: 170px; }
+.inf-btn {
+  border: 1px solid #d1d5db; background: #fff; color: #374151; border-radius: 8px;
+  padding: 7px 13px; font-size: 0.8rem; font-weight: 600; cursor: pointer;
+}
+.inf-btn:hover:not(:disabled) { border-color: #94a3b8; }
+.inf-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ── Ranking ── */
+.inf-lista { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.inf-fila { display: flex; gap: 11px; align-items: flex-start; padding: 7px 8px; border-radius: 10px; }
+.inf-fila.is-clickable { cursor: pointer; transition: background .15s ease; }
+.inf-fila.is-clickable:hover { background: #f8fafc; }
+.inf-pos {
+  flex: 0 0 24px; height: 24px; border-radius: 7px; background: #eef2ff; color: #1e3a8a;
+  font-size: 0.76rem; font-weight: 800; display: grid; place-items: center; margin-top: 1px;
+}
+.inf-fila:nth-child(1) .inf-pos { background: #1d4ed8; color: #fff; }
+.inf-fila-cuerpo { flex: 1; min-width: 0; }
+.inf-fila-top { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.inf-nombre {
+  font-size: 0.87rem; font-weight: 600; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.inf-codigo {
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.72rem;
+  color: #64748b; background: #f1f5f9; border-radius: 5px; padding: 1px 5px; margin-right: 6px;
+}
+.inf-valor { font-size: 0.88rem; font-weight: 800; white-space: nowrap; }
+
+.inf-barra-fondo { height: 8px; background: #f1f5f9; border-radius: 999px; overflow: hidden; margin: 5px 0 4px; }
+.inf-barra {
+  height: 100%; border-radius: 999px;
+  background: linear-gradient(90deg, #2563eb, #60a5fa);
+  transition: width .5s cubic-bezier(.22,.61,.36,1);
+}
+.inf-fila-pie { display: flex; gap: 12px; flex-wrap: wrap; font-size: 0.74rem; color: #64748b; }
+.inf-secundario { margin-left: auto; }
+
+.inf-vermas {
+  margin-top: 12px; width: 100%; border: 1px dashed #cbd5e1; background: #fff;
+  border-radius: 9px; padding: 8px; font-size: 0.82rem; font-weight: 600; color: #1d4ed8; cursor: pointer;
+}
+.inf-vermas:hover { background: #f8fafc; }
+
+/* ── Detalle de un servicio ── */
+.inf-detalle { border-color: #bfdbfe; background: #f8fbff; }
+
+/* ── Tablas ── */
+.inf-tabla { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.inf-tabla th {
+  text-align: left; font-size: 0.72rem; text-transform: uppercase; letter-spacing: .03em;
+  color: #64748b; border-bottom: 1px solid #e5e7eb; padding: 7px 8px; font-weight: 700;
+}
+.inf-tabla td { padding: 7px 8px; border-bottom: 1px solid #f1f5f9; }
+.inf-tabla tr:last-child td { border-bottom: 0; }
+.inf-tabla .num { text-align: right; white-space: nowrap; }
+.inf-tabla .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.76rem; color: #64748b; }
+
+/* ── Evolución mes a mes ── */
+.inf-evolucion { display: flex; gap: 10px; align-items: flex-end; overflow-x: auto; padding-top: 6px; }
+.inf-mes { flex: 1; min-width: 54px; text-align: center; }
+.inf-mes-barra-fondo { height: 110px; display: flex; align-items: flex-end; }
+.inf-mes-barra {
+  width: 100%; border-radius: 7px 7px 0 0;
+  background: linear-gradient(180deg, #60a5fa, #2563eb);
+  transition: height .5s cubic-bezier(.22,.61,.36,1);
+}
+.inf-mes-valor { font-size: 0.72rem; font-weight: 700; margin-top: 5px; white-space: nowrap; }
+.inf-mes-label { font-size: 0.72rem; color: #64748b; }
+
+/* ── Devoluciones ── */
+.inf-dev-kpis { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.inf-dev-kpi {
+  flex: 1; min-width: 110px; background: #f8fafc; border: 1px solid #e5e7eb;
+  border-radius: 10px; padding: 10px 12px; font-size: 0.76rem; color: #64748b;
+}
+.inf-dev-kpi span { display: block; font-size: 1.15rem; font-weight: 800; color: #0f172a; }
+.inf-dev-kpi.is-ok { background: #f0fdf4; border-color: #bbf7d0; }
+.inf-dev-kpi.is-wait { background: #fffbeb; border-color: #fde68a; }
+.inf-dev-kpi.is-no { background: #fef2f2; border-color: #fecaca; }
+.inf-dev-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+.inf-dev-cols h4 { margin: 0 0 6px; font-size: 0.84rem; font-weight: 700; }
+
+.inf-pie { font-size: 0.78rem; color: #64748b; line-height: 1.6; margin-top: 18px; }
+
+/* ── Celular ── */
+@media (max-width: 640px) {
+  .inf-grupo--der { margin-left: 0; width: 100%; }
+  .inf-kpi-valor { font-size: 1.15rem; }
+  .inf-fila-pie .inf-secundario { margin-left: 0; }
+  .inf-card { padding: 14px; }
+}
+
+/* Quien prefiera menos movimiento, no lo tiene. */
+@media (prefers-reduced-motion: reduce) {
+  .inf-barra, .inf-mes-barra { transition: none; }
+}
