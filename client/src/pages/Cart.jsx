@@ -60,6 +60,33 @@ export default function Cart() {
   const { user } = useAuth();
   const { items, add, update, remove, clear, total, service } = useCart();
 
+  // Lo que se está escribiendo en cada cantidad, aparte del carrito. Hace falta
+  // para poder dejar el campo vacío mientras se tipea: antes, al borrar el
+  // número se corregía a 1 en el acto, y para poner 25 quedaba "125".
+  const [borradores, setBorradores] = useState({});
+
+  const escribirCantidad = (it, texto, max) => {
+    const soloNumeros = String(texto).replace(/\D/g, "");
+    const n = Number(soloNumeros);
+    // Si se pasa del stock, se muestra el tope: mismo aviso que antes.
+    const tope = max !== undefined ? Math.max(1, max) : Infinity;
+    const limpio = soloNumeros && n > tope ? String(tope) : soloNumeros;
+
+    setBorradores((b) => ({ ...b, [it.productId]: limpio }));
+    if (limpio !== "" && Number(limpio) >= 1) update(it.productId, Number(limpio));
+  };
+
+  // Al salir del campo se descarta el borrador. Si quedó vacío, se vuelve a la
+  // última cantidad válida en vez de forzar un 1 que nadie pidió.
+  const cerrarCantidad = (it) => {
+    setBorradores((b) => {
+      const n = { ...b };
+      delete n[it.productId];
+      return n;
+    });
+    if (!Number(it.qty) || Number(it.qty) < 1) update(it.productId, 1);
+  };
+
   const [sending, setSending] = useState(false);
   const [errorSend, setErrorSend] = useState("");
   const [remito, setRemito] = useState(null);
@@ -343,15 +370,9 @@ export default function Cart() {
                         {...(max !== undefined ? { max: Math.max(1, max) } : {})}
                         step="1"
                         className="qty-input"
-                        value={it.qty}
-                        onChange={(e) => {
-                          const v = Math.max(1, Number(e.target.value) || 1);
-                          const safe =
-                            max !== undefined
-                              ? Math.min(v, Math.max(1, max))
-                              : v;
-                          update(it.productId, safe);
-                        }}
+                        value={borradores[it.productId] ?? it.qty}
+                        onChange={(e) => escribirCantidad(it, e.target.value, max)}
+                        onBlur={() => cerrarCantidad(it)}
                         disabled={sinStock}
                         aria-label={`Cantidad de ${it.name}`}
                       />
