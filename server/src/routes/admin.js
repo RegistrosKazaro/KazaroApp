@@ -28,6 +28,7 @@ import {
   softDeleteOrder,
   normalizarLegajo,
   normalizarDni,
+  desasignarServicio,
 } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendMail, pauseMail, resumeMail, getMailPauseState } from "../utils/mailer.js";
@@ -1408,8 +1409,10 @@ router.delete("/services/:id", mustBeAdmin, (req, res) => {
 
     const r = db.prepare(`UPDATE Servicios SET deleted_at = datetime('now') WHERE CAST(${SRV_ID} AS TEXT) = CAST(? AS TEXT) AND deleted_at IS NULL`).run(id);
     if (!r.changes) return res.status(404).json({ error: "Servicio no encontrado" });
-    audit({ empresaId: req.user?.empresaId ?? null, usuario: req.user?.username || req.user?.email || null, accion: "delete", entidad: "Servicio", entidadId: id });
-    return res.json({ ok: true });
+    // Si no se saca de supervisor_services, el supervisor lo sigue viendo.
+    const desasignados = desasignarServicio(id);
+    audit({ empresaId: req.user?.empresaId ?? null, usuario: req.user?.username || req.user?.email || null, accion: "delete", entidad: "Servicio", entidadId: id, detalle: desasignados ? "Se quitó la asignación del supervisor" : null });
+    return res.json({ ok: true, desasignado: desasignados > 0 });
   } catch (e) {
     console.error("DELETE /admin/services/:id error:", e);
     return res.status(500).json({ error: e?.message || "No se pudo eliminar el servicio" });
@@ -1493,6 +1496,8 @@ router.get("/assignments", mustBeAdmin, (req, res) => {
     const srvCols    = db.prepare("PRAGMA table_info(Servicios)").all().map(c => c.name.toLowerCase());
     const hasEmpresa = srvCols.includes("empresa_id");
     const eFilter    = hasEmpresa ? `AND s.empresa_id = ${Number(empresaId)}` : "";
+    // Los servicios eliminados no se listan aunque haya quedado la asignación.
+    const bFilter    = srvCols.includes("deleted_at") ? "AND s.deleted_at IS NULL" : "";
 
     const base = `
       SELECT a.rowid AS id, a.EmpleadoID, a.ServicioID,
@@ -1500,7 +1505,7 @@ router.get("/assignments", mustBeAdmin, (req, res) => {
       FROM supervisor_services a
       LEFT JOIN Empleados e ON e.${EMP_ID} = a.EmpleadoID
       LEFT JOIN Servicios s ON s.${SRV_ID} = a.ServicioID
-      WHERE 1=1 ${eFilter}
+      WHERE 1=1 ${eFilter} ${bFilter}
     `;
     const rows = EmpleadoID
       ? db.prepare(base + ` AND a.EmpleadoID = ? ORDER BY s.${SRV_NAME} COLLATE NOCASE`).all(EmpleadoID)

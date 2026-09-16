@@ -2187,6 +2187,43 @@ export function ensureSupervisorPivotExclusive() {
 }
 ensureSupervisorPivotExclusive();
 
+// Al eliminar un servicio quedaba viva su fila en supervisor_services, así que
+// el supervisor lo seguía viendo como si existiera. Se borran las asignaciones
+// de servicios ya eliminados. La comparación es numérica porque algunos
+// ServiciosID quedaron guardados como REAL (904.0) y CAST(... AS TEXT) daba
+// "904.0", que no matchea con "904".
+export function limpiarAsignacionesDeServiciosBorrados() {
+  try {
+    const srvInfo = tinfo("Servicios");
+    if (!srvInfo.some((c) => c.name === "deleted_at")) return 0;
+    const idCol = srvInfo.find((c) => c.pk === 1)?.name || "ServiciosID";
+    const r = db.prepare(`
+      DELETE FROM supervisor_services
+      WHERE EXISTS (
+        SELECT 1 FROM Servicios s
+        WHERE CAST(s.${idCol} AS INTEGER) = CAST(supervisor_services.ServicioID AS INTEGER)
+          AND s.deleted_at IS NOT NULL
+      )
+    `).run();
+    if (r.changes) console.log(`[supervisor_services] ${r.changes} asignación(es) de servicios eliminados dadas de baja`);
+    return r.changes || 0;
+  } catch (e) {
+    console.warn("[supervisor_services] no se pudo limpiar asignaciones borradas:", e?.message || e);
+    return 0;
+  }
+}
+limpiarAsignacionesDeServiciosBorrados();
+
+/** Quita al servicio del supervisor que lo tuviera asignado. */
+export function desasignarServicio(ServicioID) {
+  ensureSupervisorPivot();
+  const num = Number(ServicioID);
+  const r = Number.isFinite(num)
+    ? db.prepare(`DELETE FROM supervisor_services WHERE CAST(ServicioID AS INTEGER) = ?`).run(Math.trunc(num))
+    : db.prepare(`DELETE FROM supervisor_services WHERE CAST(ServicioID AS TEXT) = CAST(? AS TEXT)`).run(String(ServicioID));
+  return r.changes || 0;
+}
+
 export function listSupervisorAssignments() {
   ensureSupervisorPivot();
   return db.prepare(`
@@ -2297,9 +2334,10 @@ export function listServicesByUser(userId, empresaId = null) {
     JOIN ${spec.table} s
       ON CAST(s.${spec.idCol} AS TEXT) = CAST(a.ServicioID AS TEXT)
     WHERE CAST(a.EmpleadoID AS TEXT) = CAST(? AS TEXT)
+    ${hasDeleted ? "AND s.deleted_at IS NULL" : ""}
     ${empresaFilter}
     ORDER BY sname COLLATE NOCASE
-  `).all(userId);
+  `).all(String(userId));   // si va como número, se ata como REAL y CAST(? AS TEXT) da "31.0": no matchea
   return rows.map(r => ({ id: Number(r.sid), name: String(r.sname) }));
 }
 export function getAssignedServices(userId) { return listServicesByUser(userId); }

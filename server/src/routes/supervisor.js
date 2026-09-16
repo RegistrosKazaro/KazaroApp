@@ -57,12 +57,14 @@ function listAssignedServicesFor(empleadoId, empresaId) {
   const PIV_SRV = pivotInfo.find((c) => /servicio.*id/i.test(c.name))?.name || "ServicioID";
 
   const empresaFilter = hasEmpresa ? `AND s.empresa_id = ${Number(empresaId)}` : "";
+  const borradoFilter = tinfo("Servicios").some((c) => c.name === "deleted_at") ? "AND s.deleted_at IS NULL" : "";
 
   return db.prepare(`
     SELECT s.${SRV_ID} AS id, s.${SRV_NAME} AS name
     FROM supervisor_services a
     JOIN Servicios s ON CAST(s.${SRV_ID} AS TEXT) = CAST(a.${PIV_SRV} AS TEXT)
     WHERE CAST(a.${PIV_EMP} AS TEXT) = CAST(? AS TEXT)
+    ${borradoFilter}
     ${empresaFilter}
     ORDER BY ${SRV_NAME} COLLATE NOCASE
   `).all(String(empleadoId));
