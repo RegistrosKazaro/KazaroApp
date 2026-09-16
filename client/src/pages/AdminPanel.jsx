@@ -1322,6 +1322,8 @@ function AsignarPorServicio() {
         {assignMsg && <div className="state">{assignMsg}</div>}
       </div>
 
+      <ReglaDelServicio servicio={service} onAplicada={loadProductsAndSelection} />
+
       <div className="toolbar sp-filtros">
         <input
           className="input" value={q} onChange={(e) => setQ(e.target.value)}
@@ -1387,6 +1389,93 @@ function AsignarPorServicio() {
         ))}
       </div>
     </>
+  );
+}
+
+/* La regla del servicio: en vez de tildar insumo por insumo, se dice si lleva
+   limpieza y/o descartables y la lista se arma sola. */
+function ReglaDelServicio({ servicio, onAplicada }) {
+  const [limpieza, setLimpieza] = useState(null);
+  const [descartables, setDescartables] = useState(null);
+  const [guardando, setGuardando] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [disponible, setDisponible] = useState(true);
+
+  useEffect(() => {
+    let vivo = true;
+    api.get(`/admin/servicio-grupos/${servicio.id}`)
+      .then(({ data }) => {
+        if (!vivo) return;
+        setLimpieza(data?.limpieza ?? null);
+        setDescartables(data?.descartables ?? null);
+        setDisponible(true);
+        setMsg("");
+      })
+      .catch((e) => {
+        if (!vivo) return;
+        // En Pazar no aplica: la sección sigue funcionando como siempre.
+        setDisponible(e?.response?.status !== 403);
+        setMsg("");
+      });
+    return () => { vivo = false; };
+  }, [servicio.id]);
+
+  if (!disponible) return null;
+
+  const aplicar = async (l, d) => {
+    setGuardando(true);
+    setMsg("");
+    try {
+      const { data } = await api.put(`/admin/servicio-grupos/${servicio.id}`, { limpieza: l, descartables: d });
+      setLimpieza(l);
+      setDescartables(d);
+      const ag = Number(data?.agregados ?? 0);
+      const qu = Number(data?.quitados ?? 0);
+      setMsg(ag || qu
+        ? `Listo: ${ag} insumo${ag === 1 ? "" : "s"} agregado${ag === 1 ? "" : "s"} y ${qu} quitado${qu === 1 ? "" : "s"}.`
+        : "Listo. La lista ya estaba así.");
+      onAplicada?.();
+    } catch (e) {
+      setMsg(e?.response?.data?.error || "No se pudo aplicar la regla");
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  const sinDefinir = limpieza == null && descartables == null;
+  const opciones = [
+    { id: "ambos", label: "Limpieza y descartables", l: true, d: true },
+    { id: "limpieza", label: "Sólo limpieza", l: true, d: false },
+    { id: "descartables", label: "Sólo descartables", l: false, d: true },
+    { id: "ninguno", label: "Ninguno de los dos", l: false, d: false },
+  ];
+  const actual = sinDefinir ? null : opciones.find((o) => o.l === !!limpieza && o.d === !!descartables)?.id;
+
+  return (
+    <div className="regla-servicio">
+      <div className="regla-titulo">
+        ¿Qué le corresponde a este servicio?
+        {sinDefinir && <span className="regla-pendiente">sin definir</span>}
+      </div>
+      <div className="regla-opciones">
+        {opciones.map((o) => (
+          <button
+            key={o.id} type="button"
+            className={`btn ${actual === o.id ? "primary" : "ghost"}`}
+            onClick={() => aplicar(o.l, o.d)}
+            disabled={guardando}
+            aria-pressed={actual === o.id}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      <div className="muted regla-nota">
+        {msg || (sinDefinir
+          ? "Mientras no elijas, la lista de abajo queda como está."
+          : "La lista de abajo se arma sola con esta regla. Abajo podés hacer ajustes puntuales.")}
+      </div>
+    </div>
   );
 }
 
@@ -1612,6 +1701,215 @@ function AsignarPorInsumo() {
         </div>
       )}
     </>
+  );
+}
+
+/* Se define una sola vez: qué insumo es de limpieza y cuál descartable.
+   Después cada servicio sólo dice si lleva uno, el otro, los dos o ninguno. */
+function GruposInsumosSection() {
+  const [productos, setProductos] = useState([]);
+  const [cats, setCats] = useState([]);
+  const [limpieza, setLimpieza] = useState(new Set());
+  const [descartables, setDescartables] = useState(new Set());
+  const [inicial, setInicial] = useState({ limpieza: new Set(), descartables: new Set() });
+  const [q, setQ] = useState("");
+  const qDeb = useDebounced(q, 300);
+  const [categoria, setCategoria] = useState("todas");
+  const [estado, setEstado] = useState("todos");
+  const [cargando, setCargando] = useState(true);
+  const [guardando, setGuardando] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  const cargar = useCallback(async () => {
+    setCargando(true);
+    try {
+      const [{ data: prods }, { data: cs }, { data: gs }] = await Promise.all([
+        api.get("/admin/products", { params: { q: "", limit: 500 } }),
+        api.get("/catalog/categories"),
+        api.get("/admin/insumo-grupos"),
+      ]);
+      setProductos(Array.isArray(prods) ? prods : []);
+      setCats(Array.isArray(cs) ? cs : []);
+      const l = new Set((gs?.grupos?.limpieza || []).map(String));
+      const d = new Set((gs?.grupos?.descartables || []).map(String));
+      setLimpieza(l);
+      setDescartables(d);
+      setInicial({ limpieza: new Set(l), descartables: new Set(d) });
+      setMsg("");
+    } catch (e) {
+      setMsg(e?.response?.data?.error || "No se pudieron cargar los insumos");
+    } finally {
+      setCargando(false);
+    }
+  }, []);
+
+  useEffect(() => { cargar(); }, [cargar]);
+
+  const enAlgunGrupo = (id) => limpieza.has(String(id)) || descartables.has(String(id));
+
+  const filas = useMemo(() => {
+    const term = norm(String(qDeb || "").trim());
+    return productos.filter((p) => {
+      if (categoria !== "todas" && String(p?.categoryId ?? "") !== String(categoria)) return false;
+      if (estado === "sinGrupo" && enAlgunGrupo(p.id)) return false;
+      if (estado === "conGrupo" && !enAlgunGrupo(p.id)) return false;
+      if (!term) return true;
+      return norm(String(p?.name ?? "")).includes(term)
+        || String(p?.id ?? "").includes(term)
+        || norm(String(p?.code ?? "")).includes(term);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productos, qDeb, categoria, estado, limpieza, descartables]);
+
+  const alternar = (grupo, id) => {
+    const setear = grupo === "limpieza" ? setLimpieza : setDescartables;
+    setear((prev) => {
+      const s = new Set(prev);
+      const k = String(id);
+      if (s.has(k)) s.delete(k); else s.add(k);
+      return s;
+    });
+  };
+
+  const marcarVisibles = (grupo) => {
+    const setear = grupo === "limpieza" ? setLimpieza : setDescartables;
+    setear((prev) => {
+      const s = new Set(prev);
+      for (const p of filas) s.add(String(p.id));
+      return s;
+    });
+  };
+  const desmarcarVisibles = (grupo) => {
+    const setear = grupo === "limpieza" ? setLimpieza : setDescartables;
+    setear((prev) => {
+      const s = new Set(prev);
+      for (const p of filas) s.delete(String(p.id));
+      return s;
+    });
+  };
+
+  const distintos = (a, b) => a.size !== b.size || [...a].some((x) => !b.has(x));
+  const sinGuardar = distintos(limpieza, inicial.limpieza) || distintos(descartables, inicial.descartables);
+  const sinGrupo = productos.filter((p) => !enAlgunGrupo(p.id)).length;
+
+  const guardar = async () => {
+    setGuardando(true);
+    setMsg("");
+    try {
+      // Se guarda grupo por grupo; el servidor rehace los servicios marcados.
+      const r1 = await api.put("/admin/insumo-grupos/limpieza", { productIds: [...limpieza] });
+      const r2 = await api.put("/admin/insumo-grupos/descartables", { productIds: [...descartables] });
+      setInicial({ limpieza: new Set(limpieza), descartables: new Set(descartables) });
+      const tocados = Number(r2?.data?.recalculo?.servicios ?? r1?.data?.recalculo?.servicios ?? 0);
+      setMsg(tocados
+        ? `Guardado. Se actualizaron los insumos de ${tocados} servicio${tocados === 1 ? "" : "s"} ya marcado${tocados === 1 ? "" : "s"}.`
+        : "Guardado. Todavía no hay servicios marcados, así que no cambió ninguno.");
+    } catch (e) {
+      setMsg(e?.response?.data?.error || "No se pudo guardar");
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  return (
+    <section className="srv-card" aria-labelledby="gi-heading">
+      <h3 id="gi-heading">Grupos de insumos</h3>
+
+      <p className="muted gi-intro">
+        Marcá una sola vez qué insumos son de <strong>limpieza</strong> y cuáles <strong>descartables</strong>.
+        Después, en cada servicio alcanza con decir si lleva uno, el otro, los dos o ninguno, y la lista se arma sola.
+        Un insumo puede estar en los dos grupos, o en ninguno. Esto es sólo de Kazaro.
+      </p>
+
+      {cargando ? <div className="state">Cargando…</div> : (
+        <>
+          <div className="section-header">
+            <div className="muted">
+              <strong>{limpieza.size}</strong> de limpieza · <strong>{descartables.size}</strong> descartables
+              {sinGrupo > 0 && <> · <strong>{sinGrupo}</strong> sin grupo</>}
+            </div>
+            <div className="actions-row">
+              <button className="btn primary" onClick={guardar} disabled={guardando || !sinGuardar}>
+                {guardando ? "Guardando…" : sinGuardar ? "Guardar grupos" : "Sin cambios"}
+              </button>
+            </div>
+            {msg && <div className="state">{msg}</div>}
+          </div>
+
+          <div className="toolbar sp-filtros">
+            <input
+              className="input" value={q} onChange={(e) => setQ(e.target.value)}
+              placeholder="Buscar insumo (nombre, código o ID)…" aria-label="Buscar insumo"
+            />
+            <select className="input" value={categoria} onChange={(e) => setCategoria(e.target.value)} aria-label="Categoría">
+              <option value="todas">Todas las categorías</option>
+              {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <select className="input" value={estado} onChange={(e) => setEstado(e.target.value)} aria-label="Estado del insumo">
+              <option value="todos">Todos</option>
+              <option value="sinGrupo">Sólo los que no tienen grupo</option>
+              <option value="conGrupo">Sólo los que ya tienen</option>
+            </select>
+          </div>
+
+          <div className="sp-acciones">
+            <span className="muted">Con lo que se ve ({filas.length}):</span>
+            <button type="button" className="btn ghost" onClick={() => marcarVisibles("limpieza")} disabled={!filas.length}>
+              Todos a limpieza
+            </button>
+            <button type="button" className="btn ghost" onClick={() => desmarcarVisibles("limpieza")} disabled={!filas.length}>
+              Sacar de limpieza
+            </button>
+            <button type="button" className="btn ghost" onClick={() => marcarVisibles("descartables")} disabled={!filas.length}>
+              Todos a descartables
+            </button>
+            <button type="button" className="btn ghost" onClick={() => desmarcarVisibles("descartables")} disabled={!filas.length}>
+              Sacar de descartables
+            </button>
+          </div>
+
+          <div className="muted sp-aviso">
+            {sinGuardar
+              ? <strong>Tenés cambios sin guardar: tocá “Guardar grupos”.</strong>
+              : "Al guardar se rehacen los insumos de todos los servicios ya marcados."}
+          </div>
+
+          <div className="table like">
+            <div className="t-head">
+              <div style={{ flex: 4 }}>Insumo</div>
+              <div style={{ flex: 2 }}>Código</div>
+              <div style={{ width: 110, textAlign: "center" }}>Limpieza</div>
+              <div style={{ width: 130, textAlign: "center" }}>Descartable</div>
+            </div>
+
+            {filas.length === 0 ? (
+              <div className="state">Ningún insumo coincide con el filtro</div>
+            ) : filas.map((p) => (
+              <div key={p.id} className="t-row">
+                <div style={{ flex: 4, minWidth: 0 }}>
+                  <div className="truncate">{p.name} <span className="muted">#{p.id}</span></div>
+                </div>
+                <div style={{ flex: 2 }}>{p.code ?? "—"}</div>
+                <div style={{ width: 110, textAlign: "center" }}>
+                  <input
+                    type="checkbox" checked={limpieza.has(String(p.id))}
+                    onChange={() => alternar("limpieza", p.id)}
+                    aria-label={`${p.name} es de limpieza`}
+                  />
+                </div>
+                <div style={{ width: 130, textAlign: "center" }}>
+                  <input
+                    type="checkbox" checked={descartables.has(String(p.id))}
+                    onChange={() => alternar("descartables", p.id)}
+                    aria-label={`${p.name} es descartable`}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 
@@ -3261,6 +3559,7 @@ const NAV_GROUPS = [
       { id: "services",        label: "Asignar servicios" },
       { id: "createService",   label: "Crear servicio" },
       { id: "serviceProducts", label: "Servicio ↔ Productos" },
+      { id: "insumoGrupos",    label: "Grupos de insumos" },
       { id: "massReassign",    label: "Reasignación masiva" },
     ],
   },
@@ -3301,6 +3600,7 @@ const NAV_ICONS = {
   services:        ["M2.5 20a6.5 6.5 0 0 1 13 0M17 11h5M19.5 8.5V14", "M9 4.8a3.2 3.2 0 1 1 0 6.4 3.2 3.2 0 0 1 0-6.4"],
   createService:   ["M12 5v14M5 12h14"],
   serviceProducts: ["M4 6h7M4 12h7M4 18h7M15 6h5M15 12h5M15 18h5"],
+  insumoGrupos: ["M4 7h16M4 12h10M4 17h6", "M18 14l2 2 3-3"],
   massReassign:    ["M4 8h13l-3-3M20 16H7l3 3"],
   orders:          ["M9 4h6v3H9zM7 5H5v15h14V5h-2M9 12h6M9 16h4"],
   historial:       ["M3 12a9 9 0 1 0 3-6.7L3 8", "M3 4v4h4M12 7v5l3 2"],
@@ -3465,6 +3765,7 @@ export default function AdminPanel() {
           {tab === "services" && <AssignServicesSection />}
           {tab === "createService" && <CreateServiceSection />}
           {tab === "serviceProducts" && <ServiceProductsSection />}
+          {tab === "insumoGrupos" && <GruposInsumosSection />}
           {tab === "budgets" && <ServiceBudgetsSection />}
           {tab === "incomingStock" && <IncomingStockSection />}
           {tab === "massReassign" && <MassReassignServicesSection />}
