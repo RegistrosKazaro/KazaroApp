@@ -1105,7 +1105,45 @@ function AssignServicesSection() {
 }
 
 function ServiceProductsSection() {
-  const [step, setStep] = useState("pick"); 
+  // Dos formas de cargar lo mismo: eligiendo el servicio (lo de siempre) o
+  // eligiendo el insumo y marcando a qué servicios va, que es mucho más rápido
+  // cuando un insumo nuevo tiene que entrar en decenas de servicios.
+  const [vista, setVista] = useState("porServicio");
+
+  return (
+    <section className="srv-card" aria-labelledby="sp-heading">
+      <h3 id="sp-heading">Servicio ↔ Productos</h3>
+
+      <div className="sp-tabs" role="tablist" aria-label="Forma de asignar">
+        <button
+          type="button" role="tab" aria-selected={vista === "porServicio"}
+          className={`btn ${vista === "porServicio" ? "primary" : "ghost"}`}
+          onClick={() => setVista("porServicio")}
+        >
+          Por servicio
+        </button>
+        <button
+          type="button" role="tab" aria-selected={vista === "porInsumo"}
+          className={`btn ${vista === "porInsumo" ? "primary" : "ghost"}`}
+          onClick={() => setVista("porInsumo")}
+        >
+          Por insumo
+        </button>
+        <span className="muted sp-tabs-hint">
+          {vista === "porServicio"
+            ? "Elegís un servicio y marcás los insumos que lleva."
+            : "Elegís un insumo y marcás todos los servicios que lo llevan."}
+        </span>
+      </div>
+
+      {vista === "porServicio" ? <AsignarPorServicio /> : <AsignarPorInsumo />}
+    </section>
+  );
+}
+
+/* Elegís un servicio y marcás sus insumos. */
+function AsignarPorServicio() {
+  const [step, setStep] = useState("pick");
   const [service, setService] = useState(null);
 
   const [qSrv, setQSrv] = useState("");
@@ -1116,9 +1154,12 @@ function ServiceProductsSection() {
 
   const [q, setQ] = useState("");
   const qDeb = useDebounced(q, 300);
-  const [allRows, setAllRows] = useState([]); 
-  const [rows, setRows] = useState([]);
+  const [categoria, setCategoria] = useState("todas");
+  const [estado, setEstado] = useState("todos");
+  const [cats, setCats] = useState([]);
+  const [allRows, setAllRows] = useState([]);
   const [selected, setSelected] = useState(new Set());
+  const [original, setOriginal] = useState(new Set());
   const [assignMsg, setAssignMsg] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -1131,9 +1172,7 @@ function ServiceProductsSection() {
         setSrvResults([]);
         return;
       }
-      const { data } = await api.get("/admin/services", {
-        params: { q: term, limit: 50 },
-      });
+      const { data } = await api.get("/admin/services", { params: { q: term, limit: 50 } });
       setSrvResults(Array.isArray(data) ? data : []);
     } catch {
       setSrvMsg("Error al buscar servicios");
@@ -1146,77 +1185,69 @@ function ServiceProductsSection() {
     if (!service) return;
     setAssignMsg("");
     try {
-      const { data: products } = await api.get("/admin/products", {
-        params: { q: "", limit: 500 },
-      });
+      const [{ data: products }, current] = await Promise.all([
+        api.get("/admin/products", { params: { q: "", limit: 500 } }),
+        api.get(`/admin/sp/assignments/${service.id}`),
+      ]);
       setAllRows(Array.isArray(products) ? products : []);
-
-      const current = await api.get(`/admin/sp/assignments/${service.id}`);
       const ids = new Set((current.data?.productIds || []).map(String));
       setSelected(ids);
+      setOriginal(new Set(ids));
     } catch {
       setAssignMsg("Error al cargar datos");
     }
   }, [service]);
 
   useEffect(() => {
-    const term = String(qDeb || "").trim().toLowerCase();
-    if (!term) {
-      setRows(allRows);
-    } else {
-      setRows(
-        allRows.filter((p) => {
-          const name = String(p?.name ?? "").toLowerCase();
-          const idStr = String(p?.id ?? "");
-          const code = String(p?.code ?? "").toLowerCase();
-          return (
-            name.includes(term) ||
-            idStr.includes(term) ||
-            (!!code && code.includes(term))
-          );
-        })
-      );
-    }
-  }, [qDeb, allRows]);
+    api.get("/catalog/categories")
+      .then(({ data }) => setCats(Array.isArray(data) ? data : []))
+      .catch(() => setCats([]));
+  }, []);
 
-  useEffect(() => {
-    searchServices();
-  }, [searchServices]);
+  useEffect(() => { searchServices(); }, [searchServices]);
+  useEffect(() => { loadProductsAndSelection(); }, [loadProductsAndSelection]);
 
-  useEffect(() => {
-    loadProductsAndSelection();
-  }, [loadProductsAndSelection]);
+  // Texto + categoría + estado: los tres filtros se combinan y los botones de
+  // asignación masiva trabajan sobre lo que quede a la vista.
+  const rows = useMemo(() => {
+    const term = norm(String(qDeb || "").trim());
+    return allRows.filter((p) => {
+      if (categoria !== "todas" && String(p?.categoryId ?? "") !== String(categoria)) return false;
+      if (estado === "asignados" && !selected.has(String(p.id))) return false;
+      if (estado === "sinAsignar" && selected.has(String(p.id))) return false;
+      if (!term) return true;
+      return norm(String(p?.name ?? "")).includes(term)
+        || String(p?.id ?? "").includes(term)
+        || norm(String(p?.code ?? "")).includes(term);
+    });
+  }, [allRows, qDeb, categoria, estado, selected]);
 
   const toggle = (id) => {
     setSelected((prev) => {
       const s = new Set(prev);
       const k = String(id);
-      if (s.has(k)) s.delete(k);
-      else s.add(k);
+      if (s.has(k)) s.delete(k); else s.add(k);
       return s;
     });
   };
 
-  // Marcar/desmarcar de una sola vez, para no tildar insumo por insumo. Si hay
-  // un filtro activo aplica sólo a lo que se está viendo.
-  const marcarTodos = () => {
-    setSelected((prev) => {
-      const s = new Set(prev);
-      for (const p of rows) s.add(String(p.id));
-      return s;
-    });
-  };
-  const desmarcarTodos = () => {
-    setSelected((prev) => {
-      const s = new Set(prev);
-      for (const p of rows) s.delete(String(p.id));
-      return s;
-    });
-  };
+  const marcarTodos = () => setSelected((prev) => {
+    const s = new Set(prev);
+    for (const p of rows) s.add(String(p.id));
+    return s;
+  });
+  const desmarcarTodos = () => setSelected((prev) => {
+    const s = new Set(prev);
+    for (const p of rows) s.delete(String(p.id));
+    return s;
+  });
 
-  const hayFiltro = String(qDeb || "").trim().length > 0;
+  const hayFiltro = String(qDeb || "").trim().length > 0 || categoria !== "todas" || estado !== "todos";
   const visiblesMarcados = rows.filter((p) => selected.has(String(p.id))).length;
   const todosMarcados = rows.length > 0 && visiblesMarcados === rows.length;
+  const sinGuardar = selected.size !== original.size
+    || [...selected].some((id) => !original.has(id));
+  const nombreCategoria = cats.find((c) => String(c.id) === String(categoria))?.name;
 
   const save = async () => {
     if (!service) return;
@@ -1226,9 +1257,9 @@ function ServiceProductsSection() {
       const res = await api.put(`/admin/sp/assignments/${service.id}`, {
         productIds: Array.from(selected),
       });
-      // El backend devuelve cantidades (números), no listas.
       const added = Number(res?.data?.added ?? 0);
       const removed = Number(res?.data?.removed ?? 0);
+      setOriginal(new Set(selected));
       setAssignMsg(
         added || removed
           ? `Guardado: ${added} asignado${added === 1 ? "" : "s"}, ${removed} quitado${removed === 1 ? "" : "s"}.`
@@ -1241,132 +1272,346 @@ function ServiceProductsSection() {
     }
   };
 
+  if (step === "pick") {
+    return (
+      <>
+        <div className="toolbar">
+          <input
+            className="input" value={qSrv} onChange={(e) => setQSrv(e.target.value)}
+            placeholder="Buscar servicio (mín. 2 letras)…" aria-label="Buscar servicio"
+          />
+          <button className="btn" onClick={searchServices} disabled={srvLoading}>
+            {srvLoading ? "Buscando…" : "Buscar"}
+          </button>
+        </div>
+
+        {srvMsg && <div className="state">{srvMsg}</div>}
+
+        <div className="list">
+          {srvResults.length === 0 ? (
+            <div className="state">Sin resultados</div>
+          ) : (
+            srvResults.map((s) => (
+              <div key={s.id} className="list-row">
+                <div className="truncate">{s.name} <span className="muted">#{s.id}</span></div>
+                <button className="pill" onClick={() => { setService({ id: s.id, name: s.name }); setStep("manage"); }}>
+                  Elegir
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </>
+    );
+  }
+
+  if (!service) return null;
+
   return (
-    <section className="srv-card" aria-labelledby="sp-heading">
-      <h3 id="sp-heading">Servicio ↔ Productos</h3>
+    <>
+      <div className="section-header">
+        <div className="muted">
+          Servicio seleccionado: <strong>{service.name}</strong> (#{service.id})
+        </div>
+        <div className="actions-row">
+          <button className="btn ghost" onClick={() => setStep("pick")}>Cambiar servicio</button>
+          <button className="btn primary" onClick={save} disabled={saving || !sinGuardar}>
+            {saving ? "Guardando…" : sinGuardar ? "Guardar asignaciones" : "Sin cambios"}
+          </button>
+        </div>
+        {assignMsg && <div className="state">{assignMsg}</div>}
+      </div>
 
-      {step === "pick" && (
-        <>
-          <div className="toolbar">
-            <input
-              className="input"
-              value={qSrv}
-              onChange={(e) => setQSrv(e.target.value)}
-              placeholder="Buscar servicio (mín. 2 letras)…"
-            />
-            <button className="btn" onClick={searchServices} disabled={srvLoading}>
-              {srvLoading ? "Buscando…" : "Buscar"}
-            </button>
-          </div>
+      <div className="toolbar sp-filtros">
+        <input
+          className="input" value={q} onChange={(e) => setQ(e.target.value)}
+          placeholder="Filtrar insumos (ID, nombre o código)…" aria-label="Filtrar insumos"
+        />
+        <select className="input" value={categoria} onChange={(e) => setCategoria(e.target.value)} aria-label="Categoría">
+          <option value="todas">Todas las categorías</option>
+          {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <select className="input" value={estado} onChange={(e) => setEstado(e.target.value)} aria-label="Estado">
+          <option value="todos">Todos</option>
+          <option value="asignados">Sólo los asignados</option>
+          <option value="sinAsignar">Sólo los que faltan</option>
+        </select>
+      </div>
 
-          {srvMsg && <div className="state">{srvMsg}</div>}
+      <div className="sp-acciones">
+        <button type="button" className="btn primary" onClick={marcarTodos} disabled={rows.length === 0 || todosMarcados}>
+          {categoria !== "todas" && !String(qDeb).trim() && estado === "todos"
+            ? `Asignar toda la categoría ${nombreCategoria || ""} (${rows.length})`
+            : hayFiltro
+              ? `Asignar ${rows.length} insumo${rows.length === 1 ? "" : "s"} a la vista`
+              : `Asignar todos los insumos (${rows.length})`}
+        </button>
+        <button type="button" className="btn ghost" onClick={desmarcarTodos} disabled={visiblesMarcados === 0}>
+          {hayFiltro ? "Quitar los que se ven" : "Quitar todos"}
+        </button>
+        <span className="muted sp-contador">
+          {visiblesMarcados} de {rows.length} a la vista · <strong>{selected.size}</strong> asignados en total
+        </span>
+      </div>
 
-          <div className="list">
-            {srvResults.length === 0 ? (
-              <div className="state">Sin resultados</div>
-            ) : (
-              srvResults.map((s) => (
-                <div key={s.id} className="list-row">
-                  <div className="truncate">
-                    {s.name} <span className="muted">#{s.id}</span>
-                  </div>
-                  <button
-                    className="pill"
-                    onClick={() => {
-                      setService({ id: s.id, name: s.name });
-                      setStep("manage");
-                    }}
-                  >
-                    Elegir
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-        </>
+      <div className="muted sp-aviso">
+        {sinGuardar
+          ? <strong>Tenés cambios sin guardar: tocá “Guardar asignaciones”.</strong>
+          : "Los cambios se aplican cuando tocás “Guardar asignaciones”."}
+      </div>
+
+      <div className="table like">
+        <div className="t-head">
+          <div style={{ flex: 4 }}>Producto</div>
+          <div style={{ flex: 2 }}>Código</div>
+          <div style={{ flex: 2, textAlign: "right" }}>Precio</div>
+          <div style={{ width: 120, textAlign: "right" }}>Asignado</div>
+        </div>
+
+        {rows.length === 0 ? (
+          <div className="state">Ningún insumo coincide con el filtro</div>
+        ) : rows.map((p) => (
+          <label key={p.id} className="t-row" style={{ cursor: "pointer" }}>
+            <div style={{ flex: 4, minWidth: 0 }}>
+              <div className="truncate">{p.name} <span className="muted">#{p.id}</span></div>
+            </div>
+            <div style={{ flex: 2 }}>{p.code ?? "—"}</div>
+            <div style={{ flex: 2, textAlign: "right" }}>{p.price == null ? "—" : money(p.price)}</div>
+            <div style={{ width: 120, textAlign: "right" }}>
+              <input
+                type="checkbox" checked={selected.has(String(p.id))}
+                onChange={() => toggle(p.id)} aria-label={`Asignar ${p.name}`}
+              />
+            </div>
+          </label>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/* Elegís un insumo y marcás todos los servicios que lo llevan. */
+const SERVICIOS_POR_PAGINA = 50;
+
+function AsignarPorInsumo() {
+  const [producto, setProducto] = useState(null);
+
+  const [qProd, setQProd] = useState("");
+  const qProdDeb = useDebounced(qProd, 300);
+  const [productos, setProductos] = useState([]);
+  const [prodMsg, setProdMsg] = useState("");
+
+  const [servicios, setServicios] = useState([]);
+  const [selected, setSelected] = useState(new Set());
+  const [original, setOriginal] = useState(new Set());
+  const [qSrv, setQSrv] = useState("");
+  const qSrvDeb = useDebounced(qSrv, 300);
+  const [estado, setEstado] = useState("todos");
+  const [pagina, setPagina] = useState(1);
+  const [cargando, setCargando] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let vivo = true;
+    api.get("/admin/products", { params: { q: String(qProdDeb || "").trim(), limit: 500 } })
+      .then(({ data }) => { if (vivo) { setProductos(Array.isArray(data) ? data : []); setProdMsg(""); } })
+      .catch(() => { if (vivo) setProdMsg("No se pudieron cargar los insumos"); });
+    return () => { vivo = false; };
+  }, [qProdDeb]);
+
+  const elegirProducto = async (p) => {
+    setCargando(true);
+    setMsg("");
+    try {
+      const { data } = await api.get(`/admin/sp/by-product/${p.id}`);
+      setServicios(Array.isArray(data?.servicios) ? data.servicios : []);
+      const ids = new Set((data?.serviceIds || []).map(String));
+      setSelected(ids);
+      setOriginal(new Set(ids));
+      setProducto({ id: p.id, name: p.name, code: p.code });
+      setQSrv("");
+      setEstado("todos");
+      setPagina(1);
+    } catch {
+      setMsg("No se pudo cargar a qué servicios va el insumo");
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  const filtrados = useMemo(() => {
+    const term = norm(String(qSrvDeb || "").trim());
+    return servicios.filter((s) => {
+      if (estado === "asignados" && !selected.has(String(s.id))) return false;
+      if (estado === "sinAsignar" && selected.has(String(s.id))) return false;
+      if (!term) return true;
+      return norm(String(s.name ?? "")).includes(term) || String(s.id ?? "").includes(term);
+    });
+  }, [servicios, qSrvDeb, estado, selected]);
+
+  const paginas = Math.max(1, Math.ceil(filtrados.length / SERVICIOS_POR_PAGINA));
+  const paginaActual = Math.min(pagina, paginas);
+  const desde = (paginaActual - 1) * SERVICIOS_POR_PAGINA;
+  const visibles = filtrados.slice(desde, desde + SERVICIOS_POR_PAGINA);
+
+  // Los botones masivos aplican a TODO lo filtrado, no sólo a la página a la vista.
+  const marcarFiltrados = () => setSelected((prev) => {
+    const s = new Set(prev);
+    for (const x of filtrados) s.add(String(x.id));
+    return s;
+  });
+  const desmarcarFiltrados = () => setSelected((prev) => {
+    const s = new Set(prev);
+    for (const x of filtrados) s.delete(String(x.id));
+    return s;
+  });
+  const toggle = (id) => setSelected((prev) => {
+    const s = new Set(prev);
+    const k = String(id);
+    if (s.has(k)) s.delete(k); else s.add(k);
+    return s;
+  });
+
+  const buscarServicio = (texto) => { setQSrv(texto); setPagina(1); };
+  const cambiarEstado = (v) => { setEstado(v); setPagina(1); };
+
+  const hayFiltro = String(qSrvDeb || "").trim().length > 0 || estado !== "todos";
+  const marcadosFiltrados = filtrados.filter((s) => selected.has(String(s.id))).length;
+  const sinGuardar = selected.size !== original.size || [...selected].some((id) => !original.has(id));
+
+  const save = async () => {
+    if (!producto) return;
+    setSaving(true);
+    setMsg("");
+    try {
+      const { data } = await api.put(`/admin/sp/by-product/${producto.id}`, {
+        serviceIds: Array.from(selected),
+      });
+      const added = Number(data?.added ?? 0);
+      const removed = Number(data?.removed ?? 0);
+      setOriginal(new Set(selected));
+      setMsg(added || removed
+        ? `Guardado: se agregó a ${added} servicio${added === 1 ? "" : "s"} y se quitó de ${removed}.`
+        : "Guardado. No hubo cambios.");
+    } catch {
+      setMsg("No se pudo guardar");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!producto) {
+    return (
+      <>
+        <div className="toolbar">
+          <input
+            className="input" value={qProd} onChange={(e) => setQProd(e.target.value)}
+            placeholder="Buscar insumo por nombre, código o ID…" aria-label="Buscar insumo"
+          />
+        </div>
+        {prodMsg && <div className="state">{prodMsg}</div>}
+        {cargando && <div className="state">Cargando servicios…</div>}
+        <div className="list">
+          {productos.length === 0 ? (
+            <div className="state">Sin resultados</div>
+          ) : productos.map((p) => (
+            <div key={p.id} className="list-row">
+              <div className="truncate">
+                {p.name} <span className="muted">#{p.id}{p.code ? ` · ${p.code}` : ""}</span>
+              </div>
+              <button className="pill" onClick={() => elegirProducto(p)} disabled={cargando}>Elegir</button>
+            </div>
+          ))}
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div className="section-header">
+        <div className="muted">
+          Insumo seleccionado: <strong>{producto.name}</strong> (#{producto.id})
+        </div>
+        <div className="actions-row">
+          <button className="btn ghost" onClick={() => setProducto(null)}>Cambiar insumo</button>
+          <button className="btn primary" onClick={save} disabled={saving || !sinGuardar}>
+            {saving ? "Guardando…" : sinGuardar ? "Guardar servicios" : "Sin cambios"}
+          </button>
+        </div>
+        {msg && <div className="state">{msg}</div>}
+      </div>
+
+      <div className="toolbar sp-filtros">
+        <input
+          className="input" value={qSrv} onChange={(e) => buscarServicio(e.target.value)}
+          placeholder="Filtrar servicios por nombre o número…" aria-label="Filtrar servicios"
+        />
+        <select className="input" value={estado} onChange={(e) => cambiarEstado(e.target.value)} aria-label="Estado del servicio">
+          <option value="todos">Todos</option>
+          <option value="asignados">Sólo los que lo llevan</option>
+          <option value="sinAsignar">Sólo los que no lo llevan</option>
+        </select>
+      </div>
+
+      <div className="sp-acciones">
+        <button type="button" className="btn primary" onClick={marcarFiltrados}
+          disabled={filtrados.length === 0 || marcadosFiltrados === filtrados.length}>
+          {hayFiltro
+            ? `Asignar a ${filtrados.length} servicio${filtrados.length === 1 ? "" : "s"} filtrado${filtrados.length === 1 ? "" : "s"}`
+            : `Asignar a los ${filtrados.length} servicios`}
+        </button>
+        <button type="button" className="btn ghost" onClick={desmarcarFiltrados} disabled={marcadosFiltrados === 0}>
+          {hayFiltro ? "Quitar de los filtrados" : "Quitar de todos"}
+        </button>
+        <span className="muted sp-contador">
+          {marcadosFiltrados} de {filtrados.length} filtrados · <strong>{selected.size}</strong> servicios en total
+        </span>
+      </div>
+
+      <div className="muted sp-aviso">
+        {sinGuardar
+          ? <strong>Tenés cambios sin guardar: tocá “Guardar servicios”.</strong>
+          : "Los cambios se aplican cuando tocás “Guardar servicios”."}
+      </div>
+
+      <div className="table like">
+        <div className="t-head">
+          <div style={{ flex: 6 }}>Servicio</div>
+          <div style={{ width: 120, textAlign: "right" }}>Lo lleva</div>
+        </div>
+
+        {visibles.length === 0 ? (
+          <div className="state">Ningún servicio coincide con el filtro</div>
+        ) : visibles.map((s) => (
+          <label key={s.id} className="t-row" style={{ cursor: "pointer" }}>
+            <div style={{ flex: 6, minWidth: 0 }}>
+              <div className="truncate">{s.name} <span className="muted">#{s.id}</span></div>
+            </div>
+            <div style={{ width: 120, textAlign: "right" }}>
+              <input
+                type="checkbox" checked={selected.has(String(s.id))}
+                onChange={() => toggle(s.id)} aria-label={`Asignar a ${s.name}`}
+              />
+            </div>
+          </label>
+        ))}
+      </div>
+
+      {filtrados.length > SERVICIOS_POR_PAGINA && (
+        <div className="sp-paginado">
+          <button className="btn ghost" onClick={() => setPagina((p) => Math.max(1, p - 1))}
+            disabled={paginaActual <= 1} aria-label="Página anterior">‹ Anterior</button>
+          <span className="muted">
+            Mostrando {desde + 1}–{Math.min(desde + SERVICIOS_POR_PAGINA, filtrados.length)} de {filtrados.length}
+            {" · "}Página {paginaActual} de {paginas}
+          </span>
+          <button className="btn ghost" onClick={() => setPagina((p) => Math.min(paginas, p + 1))}
+            disabled={paginaActual >= paginas} aria-label="Página siguiente">Siguiente ›</button>
+        </div>
       )}
-
-      {step === "manage" && service && (
-        <>
-          <div className="section-header">
-            <div className="muted">
-              Servicio seleccionado: <strong>{service.name}</strong> (#{service.id})
-            </div>
-            <div className="actions-row">
-              <button className="btn ghost" onClick={() => setStep("pick")}>
-                Cambiar servicio
-              </button>
-              <button className="btn primary" onClick={save} disabled={saving}>
-                {saving ? "Guardando…" : "Guardar asignaciones"}
-              </button>
-            </div>
-            {assignMsg && <div className="state">{assignMsg}</div>}
-          </div>
-
-          <div className="toolbar">
-            <input
-              className="input"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Filtrar productos (ID, nombre o código)…"
-            />
-          </div>
-
-          {/* Asignación masiva: evita tildar insumo por insumo */}
-          <div className="actions-row" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", margin: "4px 0 10px" }}>
-            <button type="button" className="btn primary" onClick={marcarTodos}
-              disabled={rows.length === 0 || todosMarcados}>
-              {hayFiltro ? `Asignar los ${rows.length} filtrados` : `Asignar todos los insumos (${rows.length})`}
-            </button>
-            <button type="button" className="btn ghost" onClick={desmarcarTodos}
-              disabled={visiblesMarcados === 0}>
-              {hayFiltro ? "Quitar los filtrados" : "Quitar todos"}
-            </button>
-            <span className="muted" style={{ fontSize: "0.85rem", marginLeft: "auto" }}>
-              {visiblesMarcados} de {rows.length} {hayFiltro ? "filtrados" : "insumos"} asignados
-              {" · "}<strong>{selected.size}</strong> en total
-            </span>
-          </div>
-          <div className="muted" style={{ fontSize: "0.8rem", marginBottom: 8 }}>
-            Acordate de tocar <strong>Guardar asignaciones</strong> para que se apliquen.
-          </div>
-
-          <div className="table like">
-            <div className="t-head">
-              <div style={{ flex: 4 }}>Producto</div>
-              <div style={{ flex: 2 }}>Código</div>
-              <div style={{ flex: 2, textAlign: "right" }}>Precio</div>
-              <div style={{ width: 120, textAlign: "right" }}>Asignado</div>
-            </div>
-
-            {rows.map((p) => {
-              const checked = selected.has(String(p.id));
-              return (
-                <label key={p.id} className="t-row" style={{ cursor: "pointer" }}>
-                  <div style={{ flex: 4, minWidth: 0 }}>
-                    <div className="truncate">
-                      {p.name} <span className="muted">#{p.id}</span>
-                    </div>
-                  </div>
-                  <div style={{ flex: 2 }}>{p.code ?? "—"}</div>
-                  <div style={{ flex: 2, textAlign: "right" }}>
-                    {p.price == null ? "—" : money(p.price)}
-                  </div>
-                  <div style={{ width: 120, textAlign: "right" }}>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggle(p.id)}
-                      aria-label={`Asignar ${p.name}`}
-                    />
-                  </div>
-                </label>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </section>
+    </>
   );
 }
 

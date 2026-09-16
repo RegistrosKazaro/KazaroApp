@@ -842,3 +842,58 @@
   will-change: background, box-shadow, transform;
   transition: background .12s ease, box-shadow .12s ease, transform .04s ease;
 }
+
+/* ======================================================
+   Servicio ↔ Productos: dos vistas (por servicio / por insumo)
+   ====================================================== */
+.admin-panel .sp-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.25rem 0 0.9rem;
+}
+
+.admin-panel .sp-tabs-hint {
+  font-size: 0.82rem;
+  flex: 1 1 100%;
+}
+
+@media (min-width: 720px) {
+  .admin-panel .sp-tabs-hint { flex: 1 1 auto; margin-left: 0.5rem; }
+}
+
+/* El buscador manda; los dos selectores no se estiran de más. */
+.admin-panel .toolbar.sp-filtros > select.input {
+  flex: 0 1 230px;
+  min-width: 170px;
+}
+
+.admin-panel .sp-acciones {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.25rem 0 0.6rem;
+}
+
+.admin-panel .sp-contador {
+  font-size: 0.85rem;
+  margin-left: auto;
+}
+
+.admin-panel .sp-aviso {
+  font-size: 0.8rem;
+  margin-bottom: 0.5rem;
+}
+
+.admin-panel .sp-paginado {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.7rem;
+}
+
+.admin-panel .sp-paginado .muted { font-size: 0.85rem; }

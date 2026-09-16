@@ -1700,6 +1700,89 @@ router.put("/sp/assignments/:serviceId", mustBeAdmin, (req, res) => {
   }
 });
 
+/* ------------------------------------------------------
+   La vista inversa: un insumo y a qué servicios va.
+   Dar de alta un insumo que va a media empresa servicio
+   por servicio era imposible; acá se hace de una.
+   ------------------------------------------------------ */
+
+// Servicios vivos de la empresa del admin, con el nombre del producto.
+function serviciosDeLaEmpresa(empresaId) {
+  const srvCols = db.prepare("PRAGMA table_info(Servicios)").all().map((c) => c.name.toLowerCase());
+  const eWhere  = srvCols.includes("empresa_id") ? `AND s.empresa_id = ${Number(empresaId)}` : "";
+  const bWhere  = srvCols.includes("deleted_at") ? "AND s.deleted_at IS NULL" : "";
+  return db.prepare(`
+    SELECT s.${SRV_ID} AS id, s.${SRV_NAME} AS name
+    FROM Servicios s WHERE 1=1 ${eWhere} ${bWhere}
+    ORDER BY s.${SRV_NAME} COLLATE NOCASE
+  `).all();
+}
+
+function productoDeLaEmpresa(productId, empresaId) {
+  const row = db.prepare(`SELECT ProductID AS id, ProductName AS name, Code AS code FROM Productos WHERE CAST(ProductID AS TEXT) = CAST(? AS TEXT) AND empresa_id = ?`)
+    .get(String(productId), Number(empresaId));
+  return row || null;
+}
+
+router.get("/sp/by-product/:productId", mustBeAdmin, (req, res) => {
+  try {
+    const { srv, prod } = detectSPCols();
+    const empresaId = req.user?.empresaId ?? 1;
+    const producto  = productoDeLaEmpresa(req.params.productId, empresaId);
+    if (!producto) return res.status(404).json({ error: "Producto no encontrado" });
+
+    const servicios = serviciosDeLaEmpresa(empresaId);
+    const validos   = new Set(servicios.map((s) => String(s.id)));
+    const asignados = db.prepare(`SELECT ${srv} AS sid FROM service_products WHERE CAST(${prod} AS TEXT) = CAST(? AS TEXT)`)
+      .all(String(producto.id))
+      .map((r) => String(r.sid))
+      .filter((sid) => validos.has(sid));   // no se muestran los de otra empresa ni los borrados
+
+    res.json({ ok: true, producto, servicios, serviceIds: asignados });
+  } catch (e) {
+    console.error("GET /admin/sp/by-product error:", e?.message || e);
+    res.status(500).json({ error: "No se pudo leer a qué servicios va el insumo" });
+  }
+});
+
+router.put("/sp/by-product/:productId", mustBeAdmin, (req, res) => {
+  try {
+    const { srv, prod } = detectSPCols();
+    const empresaId = req.user?.empresaId ?? 1;
+    const producto  = productoDeLaEmpresa(req.params.productId, empresaId);
+    if (!producto) return res.status(404).json({ error: "Producto no encontrado" });
+
+    const validos = new Set(serviciosDeLaEmpresa(empresaId).map((s) => String(s.id)));
+    const pedidos = Array.isArray(req.body?.serviceIds) ? req.body.serviceIds.map(String) : [];
+    const ignorados = pedidos.filter((sid) => !validos.has(sid));
+    const deseados  = new Set(pedidos.filter((sid) => validos.has(sid)));
+
+    // Sólo se tocan los servicios de esta empresa: los de la otra quedan como están.
+    const actuales = new Set(
+      db.prepare(`SELECT ${srv} AS sid FROM service_products WHERE CAST(${prod} AS TEXT) = CAST(? AS TEXT)`)
+        .all(String(producto.id)).map((r) => String(r.sid)).filter((sid) => validos.has(sid))
+    );
+
+    const ins = db.prepare(`INSERT OR IGNORE INTO service_products (${srv}, ${prod}) VALUES (?, ?)`);
+    const del = db.prepare(`DELETE FROM service_products WHERE CAST(${srv} AS TEXT) = CAST(? AS TEXT) AND CAST(${prod} AS TEXT) = CAST(? AS TEXT)`);
+    const insVis = db.prepare(`INSERT OR IGNORE INTO ProductRoleVisibility (product_id, role) VALUES (?, 'supervisor')`);
+
+    const tx = db.transaction(() => {
+      let added = 0, removed = 0;
+      for (const sid of deseados) if (!actuales.has(sid)) added += ins.run(sid, String(producto.id)).changes;
+      for (const sid of actuales) if (!deseados.has(sid)) removed += del.run(sid, String(producto.id)).changes;
+      if (added) insVis.run(String(producto.id));
+      return { added, removed };
+    });
+
+    const { added, removed } = tx();
+    res.json({ ok: true, productId: String(producto.id), added, removed, ignorados: ignorados.length });
+  } catch (e) {
+    console.error("PUT /admin/sp/by-product error:", e?.message || e);
+    res.status(500).json({ error: "No se pudieron actualizar los servicios del insumo" });
+  }
+});
+
 /* =========================
    Historial de cambios de productos
    ========================= */
@@ -1990,11 +2073,8 @@ router.post("/products/:productId/assign-all-services", requireAuth, requireRole
     const ownerRow = db.prepare(`SELECT empresa_id FROM Productos WHERE CAST(ProductID AS TEXT) = CAST(? AS TEXT)`).get(productId);
     if (!ownerRow || Number(ownerRow.empresa_id) !== Number(empresaId)) return res.status(404).json({ error: "Producto no encontrado" });
 
-    const srvCols   = db.prepare("PRAGMA table_info(Servicios)").all().map(c => c.name.toLowerCase());
-    const hasEmpresa = srvCols.includes("empresa_id");
-    const eWhere    = hasEmpresa ? `WHERE empresa_id = ${Number(empresaId)}` : "";
-
-    const services = db.prepare(`SELECT ServiciosID AS id FROM Servicios ${eWhere}`).all();
+    // Los servicios eliminados no se cuentan: asignarles el insumo no sirve de nada.
+    const services = serviciosDeLaEmpresa(empresaId);
     const ins = db.prepare(`INSERT OR IGNORE INTO service_products (${srv}, ${prod}) VALUES (?, ?)`);
     const tx = db.transaction(() => { for (const s of services) ins.run(String(s.id), String(productId)); });
     tx();
