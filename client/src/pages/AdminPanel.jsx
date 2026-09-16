@@ -1818,7 +1818,7 @@ function GruposInsumosSection() {
       <p className="muted gi-intro">
         Marcá una sola vez qué insumos son de <strong>limpieza</strong> y cuáles <strong>descartables</strong>.
         Después, en cada servicio alcanza con decir si lleva uno, el otro, los dos o ninguno, y la lista se arma sola.
-        Un insumo puede estar en los dos grupos, o en ninguno. Esto es sólo de Kazaro.
+        Un insumo puede estar en los dos grupos, o en ninguno.
       </p>
 
       {cargando ? <div className="state">Cargando…</div> : (
