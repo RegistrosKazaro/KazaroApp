@@ -1929,14 +1929,26 @@ router.post("/services/clasificacion/aplicar", mustBeAdmin, (req, res) => {
     const validos = new Set(
       db.prepare(`SELECT ${SRV_ID} AS id FROM Servicios WHERE empresa_id = ? AND deleted_at IS NULL`).all(Number(empresaId)).map((r) => String(r.id))
     );
-    const upd = db.prepare(`UPDATE Servicios SET grupo = ?, zona = ? WHERE CAST(${SRV_ID} AS TEXT) = CAST(? AS TEXT) AND empresa_id = ?`);
+    const donde = `WHERE CAST(${SRV_ID} AS TEXT) = CAST(? AS TEXT) AND empresa_id = ?`;
+    const updAmbos = db.prepare(`UPDATE Servicios SET grupo = ?, zona = ? ${donde}`);
+    const updGrupo = db.prepare(`UPDATE Servicios SET grupo = ? ${donde}`);
+    const updZona = db.prepare(`UPDATE Servicios SET zona = ? ${donde}`);
 
     let aplicados = 0, ignorados = 0;
     const tx = db.transaction(() => {
       for (const c of cambios) {
         const id = String(c?.servicioId ?? "");
         if (!validos.has(id)) { ignorados++; continue; }
-        aplicados += upd.run(limpiarGrupo(c.grupo) || null, limpiarZona(c.zona) || null, id, Number(empresaId)).changes;
+        // El campo que no viene se deja como está: así se puede cambiar sólo
+        // el grupo de muchos servicios sin borrarles la zona.
+        const tieneG = Object.prototype.hasOwnProperty.call(c, "grupo");
+        const tieneZ = Object.prototype.hasOwnProperty.call(c, "zona");
+        if (!tieneG && !tieneZ) { ignorados++; continue; }
+        const g = limpiarGrupo(c.grupo) || null;
+        const z = limpiarZona(c.zona) || null;
+        if (tieneG && tieneZ) aplicados += updAmbos.run(g, z, id, Number(empresaId)).changes;
+        else if (tieneG) aplicados += updGrupo.run(g, id, Number(empresaId)).changes;
+        else aplicados += updZona.run(z, id, Number(empresaId)).changes;
       }
     });
     tx();

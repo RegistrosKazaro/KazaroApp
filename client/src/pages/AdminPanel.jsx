@@ -1119,6 +1119,7 @@ function ClasificarServiciosSection() {
   const [fZona, setFZona] = useState("todas");
   const [pagina, setPagina] = useState(1);
   const [guardandoId, setGuardandoId] = useState(null);
+  const [enTanda, setEnTanda] = useState(false);
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -1173,6 +1174,27 @@ function ClasificarServiciosSection() {
 
   const filtrar = (fn) => { fn(); setPagina(1); };
 
+  // Poner el mismo grupo o la misma zona a todos los que quedaron filtrados.
+  // Se manda sólo el campo elegido: el otro no se toca.
+  const aplicarEnTanda = async ({ grupo, zona }) => {
+    const campos = {};
+    if (grupo !== undefined) campos.grupo = grupo;
+    if (zona !== undefined) campos.zona = zona;
+    if (!Object.keys(campos).length || !filtrados.length) return;
+
+    setEnTanda(true);
+    try {
+      const cambios = filtrados.map((s) => ({ servicioId: String(s.id), ...campos }));
+      await api.post("/admin/services/clasificacion/aplicar", { cambios });
+      await cargar();
+      setErr("");
+    } catch (e) {
+      setErr(e?.response?.data?.error || "No se pudo aplicar en tanda");
+    } finally {
+      setEnTanda(false);
+    }
+  };
+
   return (
     <section className="srv-card" aria-labelledby="cl-heading">
       <h3 id="cl-heading">Clasificar servicios</h3>
@@ -1212,6 +1234,12 @@ function ClasificarServiciosSection() {
             </span>
           </div>
 
+          <EnTanda cantidad={filtrados.length} onAplicar={aplicarEnTanda} trabajando={enTanda} />
+
+          {/* Listas para autocompletar: se puede elegir una o escribir una nueva. */}
+          <datalist id="lista-grupos">{grupos.map((g) => <option key={g} value={g} />)}</datalist>
+          <datalist id="lista-zonas">{zonas.map((z) => <option key={z} value={z} />)}</datalist>
+
           <div className="table like">
             <div className="t-head">
               <div style={{ flex: 5 }}>Servicio</div>
@@ -1227,24 +1255,20 @@ function ClasificarServiciosSection() {
                   <div className="nombre-largo">{s.name}</div>
                 </div>
                 <div style={{ flex: 3 }}>
-                  <select
-                    className="input" value={s.grupo || ""} disabled={guardandoId === s.id}
-                    onChange={(e) => guardarFila(s, { grupo: e.target.value })}
-                    aria-label={`Grupo de ${s.name}`}
-                  >
-                    <option value="">— sin grupo —</option>
-                    {grupos.map((g) => <option key={g} value={g}>{g}</option>)}
-                  </select>
+                  <CampoClasificacion
+                    valor={s.grupo || ""} lista="lista-grupos" etiqueta={`Grupo de ${s.name}`}
+                    placeholder="Elegí o escribí uno nuevo"
+                    guardando={guardandoId === s.id}
+                    onGuardar={(v) => guardarFila(s, { grupo: v })}
+                  />
                 </div>
                 <div style={{ flex: 2 }}>
-                  <select
-                    className="input" value={s.zona || ""} disabled={guardandoId === s.id}
-                    onChange={(e) => guardarFila(s, { zona: e.target.value })}
-                    aria-label={`Zona de ${s.name}`}
-                  >
-                    <option value="">— sin zona —</option>
-                    {zonas.map((z) => <option key={z} value={z}>{z}</option>)}
-                  </select>
+                  <CampoClasificacion
+                    valor={s.zona || ""} lista="lista-zonas" etiqueta={`Zona de ${s.name}`}
+                    placeholder="Zona"
+                    guardando={guardandoId === s.id}
+                    onGuardar={(v) => guardarFila(s, { zona: v })}
+                  />
                 </div>
               </div>
             ))}
@@ -1265,6 +1289,79 @@ function ClasificarServiciosSection() {
         </>
       )}
     </section>
+  );
+}
+
+/* Campo de grupo o zona: se elige uno de los que ya existen o se escribe uno
+   nuevo. Guarda al salir del campo o con Enter, no en cada tecla. */
+function CampoClasificacion({ valor, lista, etiqueta, placeholder, guardando, onGuardar }) {
+  const [borrador, setBorrador] = useState(null);
+  const enPantalla = borrador ?? valor;
+
+  const confirmar = () => {
+    const limpio = String(enPantalla ?? "").trim();
+    setBorrador(null);
+    if (limpio.toUpperCase() !== String(valor ?? "").toUpperCase()) onGuardar(limpio);
+  };
+
+  return (
+    <input
+      className="input" list={lista} value={enPantalla} disabled={guardando}
+      aria-label={etiqueta} placeholder={placeholder}
+      onChange={(e) => setBorrador(e.target.value)}
+      onBlur={confirmar}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
+        if (e.key === "Escape") { setBorrador(null); e.currentTarget.blur(); }
+      }}
+    />
+  );
+}
+
+/* Poner el mismo grupo o la misma zona a todos los servicios filtrados. */
+function EnTanda({ cantidad, onAplicar, trabajando }) {
+  const [grupo, setGrupo] = useState("");
+  const [zona, setZona] = useState("");
+
+  const aplicar = async (campo) => {
+    const valor = (campo === "grupo" ? grupo : zona).trim();
+    if (!valor) return;
+    const cuantos = cantidad;
+    if (!window.confirm(`¿Poner ${campo === "grupo" ? "el grupo" : "la zona"} “${valor}” a ${cuantos} servicio${cuantos === 1 ? "" : "s"}?`)) return;
+    await onAplicar(campo === "grupo" ? { grupo: valor } : { zona: valor });
+    if (campo === "grupo") setGrupo(""); else setZona("");
+  };
+
+  if (!cantidad) return null;
+
+  return (
+    <div className="en-tanda">
+      <span className="muted en-tanda-titulo">
+        A los <strong>{cantidad}</strong> que se ven:
+      </span>
+      <div className="en-tanda-par">
+        <input
+          className="input" list="lista-grupos" value={grupo} disabled={trabajando}
+          placeholder="Grupo…" aria-label="Grupo para todos los filtrados"
+          onChange={(e) => setGrupo(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); aplicar("grupo"); } }}
+        />
+        <button className="btn" onClick={() => aplicar("grupo")} disabled={trabajando || !grupo.trim()}>
+          Poner grupo
+        </button>
+      </div>
+      <div className="en-tanda-par">
+        <input
+          className="input" list="lista-zonas" value={zona} disabled={trabajando}
+          placeholder="Zona…" aria-label="Zona para todos los filtrados"
+          onChange={(e) => setZona(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); aplicar("zona"); } }}
+        />
+        <button className="btn" onClick={() => aplicar("zona")} disabled={trabajando || !zona.trim()}>
+          Poner zona
+        </button>
+      </div>
+    </div>
   );
 }
 

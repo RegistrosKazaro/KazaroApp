@@ -76,13 +76,63 @@ describe("Clasificar servicios — la lista", () => {
     expect(screen.queryByText("SUPER MAMI 7")).not.toBeInTheDocument();
   });
 
-  it("cambiar el grupo de una fila lo guarda solo", async () => {
+  it("cambiar el grupo de una fila lo guarda al salir del campo", async () => {
     const user = userEvent.setup({ delay: null });
     await abrir();
-    await user.selectOptions(screen.getByLabelText("Grupo de CLUB TALLERES"), "SUPERMERCADOS");
+    const campo = screen.getByLabelText("Grupo de CLUB TALLERES");
+    await user.type(campo, "SUPERMERCADOS");
+    expect(api.put).not.toHaveBeenCalled();   // todavía no: se guarda al salir
+    await user.tab();
+
     await waitFor(() => expect(api.put).toHaveBeenCalled());
     expect(api.put.mock.calls[0][0]).toBe("/admin/services/38/clasificacion");
     expect(api.put.mock.calls[0][1]).toEqual({ grupo: "SUPERMERCADOS" });
+  });
+
+  it("se puede escribir un grupo que todavía no existe", async () => {
+    const user = userEvent.setup({ delay: null });
+    await abrir();
+    const campo = screen.getByLabelText("Grupo de CLUB TALLERES");
+    await user.type(campo, "COOPERATIVAS{Enter}");
+
+    await waitFor(() => expect(api.put).toHaveBeenCalled());
+    expect(api.put.mock.calls[0][1]).toEqual({ grupo: "COOPERATIVAS" });
+  });
+
+  it("salir sin cambiar nada no guarda", async () => {
+    const user = userEvent.setup({ delay: null });
+    await abrir();
+    await user.click(screen.getByLabelText("Grupo de HOSPITAL EVA PERON"));
+    await user.tab();
+    expect(api.put).not.toHaveBeenCalled();
+  });
+});
+
+describe("Clasificar servicios — en tanda", () => {
+  it("pone el grupo a todos los filtrados sin tocarles la zona", async () => {
+    const user = userEvent.setup({ delay: null });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    await abrir();
+
+    await user.selectOptions(screen.getByLabelText("Filtrar por grupo"), "sinGrupo");
+    await user.type(screen.getByLabelText("Grupo para todos los filtrados"), "CLUBES Y PREDIOS");
+    await user.click(screen.getByRole("button", { name: "Poner grupo" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalled());
+    const [url, body] = api.post.mock.calls[0];
+    expect(url).toBe("/admin/services/clasificacion/aplicar");
+    expect(body.cambios).toEqual([{ servicioId: "38", grupo: "CLUBES Y PREDIOS" }]);
+    expect(body.cambios[0]).not.toHaveProperty("zona");
+  });
+
+  it("si cancelás el aviso no manda nada", async () => {
+    const user = userEvent.setup({ delay: null });
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    await abrir();
+
+    await user.type(screen.getByLabelText("Zona para todos los filtrados"), "CBA");
+    await user.click(screen.getByRole("button", { name: "Poner zona" }));
+    expect(api.post).not.toHaveBeenCalled();
   });
 });
 

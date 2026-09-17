@@ -1024,3 +1024,29 @@
   .admin-panel .t-row:hover { background: rgba(148, 163, 184, 0.12); }
   .admin-panel .list-row:hover { background: rgba(148, 163, 184, 0.16); }
 }
+
+/* Asignar grupo o zona a todos los servicios filtrados de una */
+.admin-panel .en-tanda {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  padding: 0.55rem 0.7rem;
+  margin-bottom: 0.7rem;
+  border: 1px dashed var(--border, #cbd5e1);
+  border-radius: 9px;
+}
+
+.admin-panel .en-tanda-titulo { font-size: 0.84rem; }
+
+.admin-panel .en-tanda-par {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.admin-panel .en-tanda-par > .input {
+  width: auto;
+  flex: 0 1 190px;
+  min-width: 130px;
+}
