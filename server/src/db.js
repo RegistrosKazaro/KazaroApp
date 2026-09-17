@@ -2450,6 +2450,23 @@ function detectSPCols() {
    llevan, sin tocar servicio por servicio.
    ====================================================== */
 
+/* Clasificación del servicio: el "grupo" son los rubros con los que el área
+   ya venía trabajando (Públicos, Privados, Supermercados, EPEC, Clubes…) y la
+   zona es la operativa (CBA, RIO IV, UNION…). Antes vivían sólo en una planilla
+   aparte, así que la app no podía ni agrupar ni filtrar por ellos. */
+export function ensureServiciosFicha() {
+  try {
+    const cols = tinfo("Servicios").map((c) => c.name);
+    if (!cols.includes("grupo")) db.exec(`ALTER TABLE Servicios ADD COLUMN grupo TEXT`);
+    if (!cols.includes("zona")) db.exec(`ALTER TABLE Servicios ADD COLUMN zona TEXT`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_servicios_grupo ON Servicios(grupo);`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_servicios_zona ON Servicios(zona);`);
+  } catch (e) {
+    console.error("[db] ensureServiciosFicha error:", e?.message || e);
+  }
+}
+ensureServiciosFicha();
+
 export const GRUPOS_INSUMOS = ["limpieza", "descartables"];
 // La regla es sólo de Kazaro; en Pazar los servicios siguen como estaban.
 export const EMPRESA_CON_GRUPOS = 1;

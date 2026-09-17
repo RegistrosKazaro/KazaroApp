@@ -943,3 +943,39 @@
   margin: 0 0 0.9rem;
   max-width: 68ch;
 }
+
+/* Clasificar servicios: importar la planilla y corregir a mano */
+.admin-panel .clasif-import {
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 10px;
+  padding: 0.7rem 0.85rem;
+  margin-bottom: 1rem;
+  background: var(--surface-2, rgba(148, 163, 184, 0.08));
+}
+
+.admin-panel .clasif-import-fila {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.admin-panel .clasif-previo { margin-top: 0.8rem; }
+
+.admin-panel .clasif-resumen {
+  font-size: 0.9rem;
+  margin-bottom: 0.3rem;
+}
+
+.admin-panel .clasif-grupos,
+.admin-panel .clasif-aviso { font-size: 0.8rem; }
+.admin-panel .clasif-aviso { margin: 0.7rem 0 0.4rem; }
+
+.admin-panel .clasif-dudosos { max-height: 320px; overflow-y: auto; }
+
+.admin-panel .clasif-sug { font-size: 0.78rem; }
+
+.admin-panel .clasif-acciones { margin-top: 0.7rem; }
+
+/* Los selects de la tabla no deben estirarse a todo el ancho */
+.admin-panel .t-row > div > select.input { width: 100%; min-width: 120px; }

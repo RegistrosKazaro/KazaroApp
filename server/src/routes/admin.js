@@ -1790,6 +1790,166 @@ router.put("/sp/by-product/:productId", mustBeAdmin, (req, res) => {
 });
 
 /* ------------------------------------------------------
+   Clasificación de servicios: grupo (rubro) y zona.
+   Se cargan desde la planilla que el área ya mantenía y
+   después se editan a mano en la app.
+   ------------------------------------------------------ */
+
+const sinAcentos = (s) => String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "");
+const claveNombre = (s) => sinAcentos(s).toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
+// "MUNICIPALIDAD- SALUD" y "PUBLICOS y PULIZIA" quedan legibles y parejos.
+const limpiarGrupo = (s) => String(s ?? "").replace(/\s*-\s*/g, " - ").replace(/\s+/g, " ").trim().toUpperCase();
+const limpiarZona = (s) => sinAcentos(s).replace(/\s+/g, " ").trim().toUpperCase();
+
+router.get("/services/clasificacion", mustBeAdmin, (req, res) => {
+  try {
+    const empresaId = req.user?.empresaId ?? 1;
+    const rows = db.prepare(`
+      SELECT ${SRV_ID} AS id, ${SRV_NAME} AS name, grupo, zona
+      FROM Servicios WHERE empresa_id = ? AND deleted_at IS NULL
+      ORDER BY ${SRV_NAME} COLLATE NOCASE
+    `).all(Number(empresaId));
+
+    const unicos = (campo) => [...new Set(rows.map((r) => r[campo]).filter(Boolean))].sort();
+    res.json({ ok: true, servicios: rows, grupos: unicos("grupo"), zonas: unicos("zona") });
+  } catch (e) {
+    console.error("GET /admin/services/clasificacion error:", e?.message || e);
+    res.status(500).json({ error: "No se pudo leer la clasificación" });
+  }
+});
+
+router.put("/services/:id/clasificacion", mustBeAdmin, (req, res) => {
+  try {
+    const empresaId = req.user?.empresaId ?? 1;
+    // Mandar el campo vacío lo borra; no mandarlo lo deja como está.
+    const tieneGrupo = Object.prototype.hasOwnProperty.call(req.body || {}, "grupo");
+    const tieneZona = Object.prototype.hasOwnProperty.call(req.body || {}, "zona");
+    if (!tieneGrupo && !tieneZona) return res.status(400).json({ error: "Nada para actualizar" });
+
+    const sets = [], params = [];
+    if (tieneGrupo) { sets.push("grupo = ?"); params.push(limpiarGrupo(req.body.grupo) || null); }
+    if (tieneZona) { sets.push("zona = ?"); params.push(limpiarZona(req.body.zona) || null); }
+    params.push(String(req.params.id), Number(empresaId));
+
+    const r = db.prepare(`UPDATE Servicios SET ${sets.join(", ")} WHERE CAST(${SRV_ID} AS TEXT) = CAST(? AS TEXT) AND empresa_id = ? AND deleted_at IS NULL`).run(...params);
+    if (!r.changes) return res.status(404).json({ error: "Servicio no encontrado" });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("PUT /admin/services/:id/clasificacion error:", e?.message || e);
+    res.status(500).json({ error: "No se pudo guardar la clasificación" });
+  }
+});
+
+/** Lee la planilla: cada hoja es un grupo y la columna Zona da la zona. */
+function leerPlanillaClasificacion(buffer) {
+  const wb = XLSX.read(buffer, { type: "buffer" });
+  const filas = [];
+  for (const hoja of wb.SheetNames) {
+    const tabla = XLSX.utils.sheet_to_json(wb.Sheets[hoja], { header: 1, defval: "" });
+    if (!tabla.length) continue;
+    const encabezado = tabla[0].map((c) => claveNombre(c));
+    const iNombre = encabezado.findIndex((c) => c.includes("NOMBRE DEL SERVICIO")) ;
+    const iZona = encabezado.findIndex((c) => c === "ZONA");
+    for (const fila of tabla.slice(1)) {
+      const nombre = String(fila[iNombre >= 0 ? iNombre : 0] ?? "").trim();
+      if (!nombre) continue;
+      filas.push({
+        hoja,
+        nombre,
+        grupo: limpiarGrupo(hoja),
+        zona: iZona >= 0 ? limpiarZona(fila[iZona]) : "",
+      });
+    }
+  }
+  return filas;
+}
+
+router.post("/services/clasificacion/preview", mustBeAdmin, upload.single("file"), (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "Falta el archivo" });
+    const empresaId = req.user?.empresaId ?? 1;
+    const filas = leerPlanillaClasificacion(req.file.buffer);
+    if (!filas.length) return res.status(400).json({ error: "El archivo no tiene servicios" });
+
+    const servicios = db.prepare(`SELECT ${SRV_ID} AS id, ${SRV_NAME} AS name, grupo, zona FROM Servicios WHERE empresa_id = ? AND deleted_at IS NULL`).all(Number(empresaId));
+    const porNombre = new Map();
+    for (const s of servicios) {
+      const k = claveNombre(s.name);
+      if (!porNombre.has(k)) porNombre.set(k, []);
+      porNombre.get(k).push(s);
+    }
+
+    // Sugerencia por palabras compartidas. Nunca se aplica sola: hay nombres
+    // muy parecidos que son servicios distintos (…AMEGHINO R4 vs …AMEGHINO BV).
+    const palabras = (s) => new Set(claveNombre(s).split(" ").filter((w) => w.length > 2));
+    const parecido = (a, b) => {
+      const i = [...a].filter((x) => b.has(x)).length;
+      return (2 * i) / (a.size + b.size || 1);
+    };
+
+    const items = filas.map((f) => {
+      const cands = porNombre.get(claveNombre(f.nombre)) || [];
+      if (cands.length === 1) {
+        const s = cands[0];
+        const cambia = limpiarGrupo(s.grupo || "") !== f.grupo || limpiarZona(s.zona || "") !== f.zona;
+        return { ...f, estado: cambia ? "listo" : "igual", servicioId: String(s.id), nombreApp: s.name, grupoActual: s.grupo || "", zonaActual: s.zona || "" };
+      }
+      if (cands.length > 1) {
+        return { ...f, estado: "ambiguo", opciones: cands.map((s) => ({ id: String(s.id), name: s.name })) };
+      }
+      const p = palabras(f.nombre);
+      let mejor = null, sc = 0;
+      for (const s of servicios) { const d = parecido(p, palabras(s.name)); if (d > sc) { sc = d; mejor = s; } }
+      return {
+        ...f, estado: "sin_match",
+        sugerencia: mejor && sc >= 0.6 ? { id: String(mejor.id), name: mejor.name, parecido: Number(sc.toFixed(2)) } : null,
+      };
+    });
+
+    const cuenta = (e) => items.filter((i) => i.estado === e).length;
+    res.json({
+      ok: true,
+      total: items.length,
+      resumen: { listo: cuenta("listo"), igual: cuenta("igual"), sinMatch: cuenta("sin_match"), ambiguo: cuenta("ambiguo") },
+      grupos: [...new Set(filas.map((f) => f.grupo))],
+      items,
+    });
+  } catch (e) {
+    console.error("POST /admin/services/clasificacion/preview error:", e?.message || e);
+    res.status(500).json({ error: e?.message || "No se pudo leer el archivo" });
+  }
+});
+
+router.post("/services/clasificacion/aplicar", mustBeAdmin, (req, res) => {
+  try {
+    const empresaId = req.user?.empresaId ?? 1;
+    const cambios = Array.isArray(req.body?.cambios) ? req.body.cambios : [];
+    if (!cambios.length) return res.status(400).json({ error: "No hay cambios para aplicar" });
+
+    const validos = new Set(
+      db.prepare(`SELECT ${SRV_ID} AS id FROM Servicios WHERE empresa_id = ? AND deleted_at IS NULL`).all(Number(empresaId)).map((r) => String(r.id))
+    );
+    const upd = db.prepare(`UPDATE Servicios SET grupo = ?, zona = ? WHERE CAST(${SRV_ID} AS TEXT) = CAST(? AS TEXT) AND empresa_id = ?`);
+
+    let aplicados = 0, ignorados = 0;
+    const tx = db.transaction(() => {
+      for (const c of cambios) {
+        const id = String(c?.servicioId ?? "");
+        if (!validos.has(id)) { ignorados++; continue; }
+        aplicados += upd.run(limpiarGrupo(c.grupo) || null, limpiarZona(c.zona) || null, id, Number(empresaId)).changes;
+      }
+    });
+    tx();
+
+    audit({ empresaId, usuario: req.user?.username || null, accion: "update", entidad: "Servicio", entidadId: "varios", detalle: `Clasificación: ${aplicados} servicios` });
+    res.json({ ok: true, aplicados, ignorados });
+  } catch (e) {
+    console.error("POST /admin/services/clasificacion/aplicar error:", e?.message || e);
+    res.status(500).json({ error: "No se pudo aplicar la clasificación" });
+  }
+});
+
+/* ------------------------------------------------------
    Grupos de insumos: en vez de cargar insumo por insumo,
    cada servicio de Kazaro dice si lleva limpieza y/o
    descartables, y sus insumos se arman solos.

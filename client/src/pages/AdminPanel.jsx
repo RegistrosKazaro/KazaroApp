@@ -1104,6 +1104,297 @@ function AssignServicesSection() {
   );
 }
 
+/* Clasificar servicios: grupo (el rubro de cada hoja de la planilla) y zona.
+   Se cargan de una desde el Excel y después se editan a mano acá. */
+const CLASIF_POR_PAGINA = 25;
+
+function ClasificarServiciosSection() {
+  const [servicios, setServicios] = useState([]);
+  const [grupos, setGrupos] = useState([]);
+  const [zonas, setZonas] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [err, setErr] = useState("");
+
+  const [q, setQ] = useState("");
+  const qDeb = useDebounced(q, 300);
+  const [fGrupo, setFGrupo] = useState("todos");
+  const [fZona, setFZona] = useState("todas");
+  const [pagina, setPagina] = useState(1);
+  const [guardandoId, setGuardandoId] = useState(null);
+
+  const cargar = useCallback(async () => {
+    setCargando(true);
+    try {
+      const { data } = await api.get("/admin/services/clasificacion");
+      setServicios(Array.isArray(data?.servicios) ? data.servicios : []);
+      setGrupos(data?.grupos || []);
+      setZonas(data?.zonas || []);
+      setErr("");
+    } catch (e) {
+      setErr(e?.response?.data?.error || "No se pudo cargar la clasificación");
+    } finally {
+      setCargando(false);
+    }
+  }, []);
+
+  useEffect(() => { cargar(); }, [cargar]);
+
+  const filtrados = useMemo(() => {
+    const t = norm(String(qDeb || "").trim());
+    return servicios.filter((s) => {
+      if (fGrupo === "sinGrupo" ? !!s.grupo : fGrupo !== "todos" && s.grupo !== fGrupo) return false;
+      if (fZona === "sinZona" ? !!s.zona : fZona !== "todas" && s.zona !== fZona) return false;
+      if (!t) return true;
+      return norm(String(s.name ?? "")).includes(t) || String(s.id ?? "").includes(t);
+    });
+  }, [servicios, qDeb, fGrupo, fZona]);
+
+  const paginas = Math.max(1, Math.ceil(filtrados.length / CLASIF_POR_PAGINA));
+  const paginaActual = Math.min(pagina, paginas);
+  const desde = (paginaActual - 1) * CLASIF_POR_PAGINA;
+  const visibles = filtrados.slice(desde, desde + CLASIF_POR_PAGINA);
+
+  const sinClasificar = servicios.filter((s) => !s.grupo).length;
+
+  const guardarFila = async (servicio, campos) => {
+    setGuardandoId(servicio.id);
+    try {
+      await api.put(`/admin/services/${servicio.id}/clasificacion`, campos);
+      setServicios((prev) => prev.map((s) => (String(s.id) === String(servicio.id) ? { ...s, ...campos } : s)));
+      const nuevoGrupo = campos.grupo;
+      const nuevaZona = campos.zona;
+      if (nuevoGrupo && !grupos.includes(nuevoGrupo)) setGrupos((g) => [...g, nuevoGrupo].sort());
+      if (nuevaZona && !zonas.includes(nuevaZona)) setZonas((z) => [...z, nuevaZona].sort());
+      setErr("");
+    } catch (e) {
+      setErr(e?.response?.data?.error || "No se pudo guardar");
+    } finally {
+      setGuardandoId(null);
+    }
+  };
+
+  const filtrar = (fn) => { fn(); setPagina(1); };
+
+  return (
+    <section className="srv-card" aria-labelledby="cl-heading">
+      <h3 id="cl-heading">Clasificar servicios</h3>
+
+      <p className="muted gi-intro">
+        Cada servicio tiene un <strong>grupo</strong> (Públicos, Privados, Supermercados, EPEC…) y una <strong>zona</strong>.
+        Se cargan de una desde la planilla y después se corrigen acá. Sirven para buscar, agrupar y mirar los informes por zona o por rubro.
+      </p>
+
+      <ImportarClasificacion onAplicado={cargar} />
+
+      {err && <div className="state">{err}</div>}
+
+      {cargando ? <div className="state">Cargando…</div> : (
+        <>
+          <div className="toolbar sp-filtros">
+            <input
+              className="input" value={q} onChange={(e) => filtrar(() => setQ(e.target.value))}
+              placeholder="Buscar servicio por nombre o número…" aria-label="Buscar servicio"
+            />
+            <select className="input" value={fGrupo} onChange={(e) => filtrar(() => setFGrupo(e.target.value))} aria-label="Filtrar por grupo">
+              <option value="todos">Todos los grupos</option>
+              <option value="sinGrupo">Sin grupo ({sinClasificar})</option>
+              {grupos.map((g) => <option key={g} value={g}>{g}</option>)}
+            </select>
+            <select className="input" value={fZona} onChange={(e) => filtrar(() => setFZona(e.target.value))} aria-label="Filtrar por zona">
+              <option value="todas">Todas las zonas</option>
+              <option value="sinZona">Sin zona</option>
+              {zonas.map((z) => <option key={z} value={z}>{z}</option>)}
+            </select>
+          </div>
+
+          <div className="sp-acciones">
+            <span className="muted sp-contador">
+              {filtrados.length} de {servicios.length} servicios
+              {sinClasificar > 0 && <> · <strong>{sinClasificar}</strong> sin grupo</>}
+            </span>
+          </div>
+
+          <div className="table like">
+            <div className="t-head">
+              <div style={{ flex: 5 }}>Servicio</div>
+              <div style={{ flex: 3 }}>Grupo</div>
+              <div style={{ flex: 2 }}>Zona</div>
+            </div>
+
+            {visibles.length === 0 ? (
+              <div className="state">Ningún servicio coincide con el filtro</div>
+            ) : visibles.map((s) => (
+              <div key={s.id} className="t-row">
+                <div style={{ flex: 5, minWidth: 0 }}>
+                  <div className="truncate">{s.name} <span className="muted">#{s.id}</span></div>
+                </div>
+                <div style={{ flex: 3 }}>
+                  <select
+                    className="input" value={s.grupo || ""} disabled={guardandoId === s.id}
+                    onChange={(e) => guardarFila(s, { grupo: e.target.value })}
+                    aria-label={`Grupo de ${s.name}`}
+                  >
+                    <option value="">— sin grupo —</option>
+                    {grupos.map((g) => <option key={g} value={g}>{g}</option>)}
+                  </select>
+                </div>
+                <div style={{ flex: 2 }}>
+                  <select
+                    className="input" value={s.zona || ""} disabled={guardandoId === s.id}
+                    onChange={(e) => guardarFila(s, { zona: e.target.value })}
+                    aria-label={`Zona de ${s.name}`}
+                  >
+                    <option value="">— sin zona —</option>
+                    {zonas.map((z) => <option key={z} value={z}>{z}</option>)}
+                  </select>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {filtrados.length > CLASIF_POR_PAGINA && (
+            <div className="sp-paginado">
+              <button className="btn ghost" onClick={() => setPagina((p) => Math.max(1, p - 1))}
+                disabled={paginaActual <= 1} aria-label="Página anterior">‹ Anterior</button>
+              <span className="muted">
+                Mostrando {desde + 1}–{Math.min(desde + CLASIF_POR_PAGINA, filtrados.length)} de {filtrados.length}
+                {" · "}Página {paginaActual} de {paginas}
+              </span>
+              <button className="btn ghost" onClick={() => setPagina((p) => Math.min(paginas, p + 1))}
+                disabled={paginaActual >= paginas} aria-label="Página siguiente">Siguiente ›</button>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+/* Sube la planilla, muestra el previo y recién ahí aplica. */
+function ImportarClasificacion({ onAplicado }) {
+  const [archivo, setArchivo] = useState(null);
+  const [previo, setPrevio] = useState(null);
+  const [leyendo, setLeyendo] = useState(false);
+  const [aplicando, setAplicando] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [confirmados, setConfirmados] = useState({});   // nombre del archivo -> servicioId elegido
+
+  const leer = async () => {
+    if (!archivo) return;
+    setLeyendo(true);
+    setMsg("");
+    setPrevio(null);
+    setConfirmados({});
+    try {
+      const fd = new FormData();
+      fd.append("file", archivo);
+      const { data } = await api.post("/admin/services/clasificacion/preview", fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setPrevio(data);
+    } catch (e) {
+      setMsg(e?.response?.data?.error || "No se pudo leer el archivo");
+    } finally {
+      setLeyendo(false);
+    }
+  };
+
+  const aplicar = async () => {
+    if (!previo) return;
+    setAplicando(true);
+    setMsg("");
+    try {
+      const cambios = [];
+      for (const i of previo.items) {
+        if (i.estado === "listo") cambios.push({ servicioId: i.servicioId, grupo: i.grupo, zona: i.zona });
+        else if (i.estado === "sin_match" && confirmados[i.nombre]) {
+          cambios.push({ servicioId: confirmados[i.nombre], grupo: i.grupo, zona: i.zona });
+        }
+      }
+      if (!cambios.length) { setMsg("No hay nada para aplicar."); return; }
+      const { data } = await api.post("/admin/services/clasificacion/aplicar", { cambios });
+      setMsg(`Listo: se clasificaron ${data.aplicados} servicio${data.aplicados === 1 ? "" : "s"}.`);
+      setPrevio(null);
+      setArchivo(null);
+      onAplicado?.();
+    } catch (e) {
+      setMsg(e?.response?.data?.error || "No se pudo aplicar");
+    } finally {
+      setAplicando(false);
+    }
+  };
+
+  const sinMatch = previo?.items?.filter((i) => i.estado === "sin_match") || [];
+  const aConfirmar = sinMatch.filter((i) => i.sugerencia);
+  const confirmadosN = Object.keys(confirmados).length;
+
+  return (
+    <div className="clasif-import">
+      <div className="clasif-import-fila">
+        <input
+          type="file" accept=".xlsx,.xls" aria-label="Planilla de servicios"
+          onChange={(e) => { setArchivo(e.target.files?.[0] || null); setPrevio(null); setMsg(""); }}
+        />
+        <button className="btn" onClick={leer} disabled={!archivo || leyendo}>
+          {leyendo ? "Leyendo…" : "Ver qué cambiaría"}
+        </button>
+      </div>
+
+      {msg && <div className="state">{msg}</div>}
+
+      {previo && (
+        <div className="clasif-previo">
+          <div className="clasif-resumen">
+            <strong>{previo.total}</strong> servicios en la planilla ·{" "}
+            <strong>{previo.resumen.listo}</strong> para clasificar ·{" "}
+            {previo.resumen.igual > 0 && <>{previo.resumen.igual} ya estaban igual · </>}
+            <strong>{previo.resumen.sinMatch}</strong> sin encontrar
+            {previo.resumen.ambiguo > 0 && <> · {previo.resumen.ambiguo} con nombre repetido</>}
+          </div>
+          <div className="muted clasif-grupos">Grupos: {previo.grupos.join(" · ")}</div>
+
+          {aConfirmar.length > 0 && (
+            <>
+              <div className="muted clasif-aviso">
+                Estos no los encontré por nombre. Te muestro el más parecido, pero <strong>no los aplico si no los confirmás vos</strong>:
+              </div>
+              <div className="table like clasif-dudosos">
+                {aConfirmar.map((i) => (
+                  <div key={i.nombre} className="t-row">
+                    <div style={{ flex: 5, minWidth: 0 }}>
+                      <div className="truncate">{i.nombre}</div>
+                      <div className="muted clasif-sug">se parece a: {i.sugerencia.name} <span className="muted">#{i.sugerencia.id}</span></div>
+                    </div>
+                    <div style={{ width: 130, textAlign: "right" }}>
+                      <button
+                        className={`pill ${confirmados[i.nombre] ? "" : "pill--ghost"}`}
+                        onClick={() => setConfirmados((c) => {
+                          const n = { ...c };
+                          if (n[i.nombre]) delete n[i.nombre]; else n[i.nombre] = i.sugerencia.id;
+                          return n;
+                        })}
+                      >
+                        {confirmados[i.nombre] ? "Confirmado" : "Es el mismo"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          <div className="actions-row clasif-acciones">
+            <button className="btn primary" onClick={aplicar} disabled={aplicando}>
+              {aplicando ? "Aplicando…" : `Aplicar ${previo.resumen.listo + confirmadosN} servicios`}
+            </button>
+            <button className="btn ghost" onClick={() => setPrevio(null)} disabled={aplicando}>Cancelar</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ServiceProductsSection() {
   // Dos formas de cargar lo mismo: eligiendo el servicio (lo de siempre) o
   // eligiendo el insumo y marcando a qué servicios va, que es mucho más rápido
@@ -3560,6 +3851,7 @@ const NAV_GROUPS = [
       { id: "createService",   label: "Crear servicio" },
       { id: "serviceProducts", label: "Servicio ↔ Productos" },
       { id: "insumoGrupos",    label: "Grupos de insumos" },
+      { id: "clasificar",      label: "Clasificar servicios" },
       { id: "massReassign",    label: "Reasignación masiva" },
     ],
   },
@@ -3601,6 +3893,7 @@ const NAV_ICONS = {
   createService:   ["M12 5v14M5 12h14"],
   serviceProducts: ["M4 6h7M4 12h7M4 18h7M15 6h5M15 12h5M15 18h5"],
   insumoGrupos: ["M4 7h16M4 12h10M4 17h6", "M18 14l2 2 3-3"],
+  clasificar: ["M4 5h16M4 12h16M4 19h16", "M9 5v14"],
   massReassign:    ["M4 8h13l-3-3M20 16H7l3 3"],
   orders:          ["M9 4h6v3H9zM7 5H5v15h14V5h-2M9 12h6M9 16h4"],
   historial:       ["M3 12a9 9 0 1 0 3-6.7L3 8", "M3 4v4h4M12 7v5l3 2"],
@@ -3766,6 +4059,7 @@ export default function AdminPanel() {
           {tab === "createService" && <CreateServiceSection />}
           {tab === "serviceProducts" && <ServiceProductsSection />}
           {tab === "insumoGrupos" && <GruposInsumosSection />}
+          {tab === "clasificar" && <ClasificarServiciosSection />}
           {tab === "budgets" && <ServiceBudgetsSection />}
           {tab === "incomingStock" && <IncomingStockSection />}
           {tab === "massReassign" && <MassReassignServicesSection />}
