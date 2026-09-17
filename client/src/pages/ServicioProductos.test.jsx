@@ -115,6 +115,27 @@ describe("Servicio ↔ Productos — por servicio", () => {
   });
 });
 
+describe("Servicio ↔ Productos — nombres", () => {
+  it("no muestra los id de la base y deja el nombre entero", async () => {
+    const user = userEvent.setup({ delay: null });
+    await abrir();
+    await user.type(screen.getByLabelText("Buscar servicio"), "hospital");
+    await user.click(await screen.findByRole("button", { name: "Elegir" }));
+    await screen.findByLabelText("Filtrar insumos");
+
+    // Ni el id del servicio ni el de los insumos aparecen en pantalla.
+    const texto = document.body.textContent;
+    expect(texto).not.toMatch(/#\s*36\b/);
+    expect(texto).not.toMatch(/#\s*10\b/);
+    expect(screen.getByText("BOLSA NEGRA")).toBeInTheDocument();
+
+    // El nombre va en un contenedor que corta por palabra en vez de recortar.
+    const celda = screen.getByText("BOLSA NEGRA").closest("div");
+    expect(celda).toHaveClass("nombre-largo");
+    expect(celda).not.toHaveClass("truncate");
+  });
+});
+
 describe("Servicio ↔ Productos — por insumo", () => {
   it("elegido el insumo, muestra los servicios y cuáles lo llevan", async () => {
     const user = userEvent.setup({ delay: null });

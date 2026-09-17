@@ -979,3 +979,48 @@
 
 /* Los selects de la tabla no deben estirarse a todo el ancho */
 .admin-panel .t-row > div > select.input { width: 100%; min-width: 120px; }
+
+/* ======================================================
+   Nombres de servicios e insumos
+   Son largos ('ME-ESC INTERIOR - C.E.N.M.A. N 73 DR. ARTURO JAURETCHE…') y
+   con truncate se veia solo un pedazo. Acan bajan de renglon y se leen enteros.
+   ====================================================== */
+
+/* La columna del nombre: se lleva el espacio sobrante pero nunca baja de 200px.
+   Ojo con 'overflow-wrap: anywhere': achica el ancho minimo del flex item a una
+   letra y la columna se desarma partiendo las palabras al medio. */
+.admin-panel .celda-nombre {
+  flex: 4 1 240px;
+  min-width: min(200px, 100%);
+}
+
+.admin-panel .nombre-largo {
+  overflow-wrap: break-word;
+  line-height: 1.35;
+  font-weight: 500;
+}
+
+/* Con dos renglones de nombre, lo de al lado quedaba flotando en el medio. */
+.admin-panel .t-row:has(.nombre-largo),
+.admin-panel .list-row:has(.nombre-largo) {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  padding-top: 0.55rem;
+  padding-bottom: 0.55rem;
+}
+
+/* Los controles de la fila se alinean con el primer renglon del nombre. */
+.admin-panel .t-row:has(.nombre-largo) > *:not(.celda-nombre),
+.admin-panel .list-row:has(.nombre-largo) > *:not(.celda-nombre) {
+  padding-top: 0.1rem;
+}
+
+/* Resaltar la fila al pasar por encima: ayuda a seguir el renglon cuando el
+   nombre ocupa dos lineas y el control esta del otro lado. */
+.admin-panel .t-row:hover { background: #f8fafc; }
+.admin-panel .list-row:hover { background: #f1f5f9; }
+
+@media (prefers-color-scheme: dark) {
+  .admin-panel .t-row:hover { background: rgba(148, 163, 184, 0.12); }
+  .admin-panel .list-row:hover { background: rgba(148, 163, 184, 0.16); }
+}

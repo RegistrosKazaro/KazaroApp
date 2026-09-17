@@ -1020,7 +1020,7 @@ function AssignServicesSection() {
             <option value="">— Elegí —</option>
             {supervisors.map((s) => (
               <option key={s.id} value={s.id}>
-                {s.username} (#{s.id})
+                {s.username}
               </option>
             ))}
           </select>
@@ -1052,9 +1052,7 @@ function AssignServicesSection() {
               ) : (
                 services.map((s) => (
                   <div key={s.id} className="list-row">
-                    <div className="truncate">
-                      {s.name} <span className="muted">#{s.id}</span>
-                    </div>
+                    <div className="nombre-largo">{s.name}</div>
                     <div>
                       {s.is_assigned ? (
                         <span className="pill">Asignado</span>
@@ -1225,8 +1223,8 @@ function ClasificarServiciosSection() {
               <div className="state">Ningún servicio coincide con el filtro</div>
             ) : visibles.map((s) => (
               <div key={s.id} className="t-row">
-                <div style={{ flex: 5, minWidth: 0 }}>
-                  <div className="truncate">{s.name} <span className="muted">#{s.id}</span></div>
+                <div className="celda-nombre">
+                  <div className="nombre-largo">{s.name}</div>
                 </div>
                 <div style={{ flex: 3 }}>
                   <select
@@ -1363,7 +1361,7 @@ function ImportarClasificacion({ onAplicado }) {
                   <div key={i.nombre} className="t-row">
                     <div style={{ flex: 5, minWidth: 0 }}>
                       <div className="truncate">{i.nombre}</div>
-                      <div className="muted clasif-sug">se parece a: {i.sugerencia.name} <span className="muted">#{i.sugerencia.id}</span></div>
+                      <div className="muted clasif-sug">se parece a: {i.sugerencia.name}</div>
                     </div>
                     <div style={{ width: 130, textAlign: "right" }}>
                       <button
@@ -1584,7 +1582,7 @@ function AsignarPorServicio() {
           ) : (
             srvResults.map((s) => (
               <div key={s.id} className="list-row">
-                <div className="truncate">{s.name} <span className="muted">#{s.id}</span></div>
+                <div className="nombre-largo">{s.name}</div>
                 <button className="pill" onClick={() => { setService({ id: s.id, name: s.name }); setStep("manage"); }}>
                   Elegir
                 </button>
@@ -1602,7 +1600,7 @@ function AsignarPorServicio() {
     <>
       <div className="section-header">
         <div className="muted">
-          Servicio seleccionado: <strong>{service.name}</strong> (#{service.id})
+          Servicio seleccionado: <strong>{service.name}</strong>
         </div>
         <div className="actions-row">
           <button className="btn ghost" onClick={() => setStep("pick")}>Cambiar servicio</button>
@@ -1665,8 +1663,8 @@ function AsignarPorServicio() {
           <div className="state">Ningún insumo coincide con el filtro</div>
         ) : rows.map((p) => (
           <label key={p.id} className="t-row" style={{ cursor: "pointer" }}>
-            <div style={{ flex: 4, minWidth: 0 }}>
-              <div className="truncate">{p.name} <span className="muted">#{p.id}</span></div>
+            <div className="celda-nombre">
+              <div className="nombre-largo">{p.name}</div>
             </div>
             <div style={{ flex: 2 }}>{p.code ?? "—"}</div>
             <div style={{ flex: 2, textAlign: "right" }}>{p.price == null ? "—" : money(p.price)}</div>
@@ -1898,7 +1896,7 @@ function AsignarPorInsumo() {
           ) : productos.map((p) => (
             <div key={p.id} className="list-row">
               <div className="truncate">
-                {p.name} <span className="muted">#{p.id}{p.code ? ` · ${p.code}` : ""}</span>
+                {p.name}{p.code ? <span className="muted"> · {p.code}</span> : null}
               </div>
               <button className="pill" onClick={() => elegirProducto(p)} disabled={cargando}>Elegir</button>
             </div>
@@ -1912,7 +1910,7 @@ function AsignarPorInsumo() {
     <>
       <div className="section-header">
         <div className="muted">
-          Insumo seleccionado: <strong>{producto.name}</strong> (#{producto.id})
+          Insumo seleccionado: <strong>{producto.name}</strong>
         </div>
         <div className="actions-row">
           <button className="btn ghost" onClick={() => setProducto(null)}>Cambiar insumo</button>
@@ -1966,8 +1964,8 @@ function AsignarPorInsumo() {
           <div className="state">Ningún servicio coincide con el filtro</div>
         ) : visibles.map((s) => (
           <label key={s.id} className="t-row" style={{ cursor: "pointer" }}>
-            <div style={{ flex: 6, minWidth: 0 }}>
-              <div className="truncate">{s.name} <span className="muted">#{s.id}</span></div>
+            <div className="celda-nombre">
+              <div className="nombre-largo">{s.name}</div>
             </div>
             <div style={{ width: 120, textAlign: "right" }}>
               <input
@@ -2177,8 +2175,8 @@ function GruposInsumosSection() {
               <div className="state">Ningún insumo coincide con el filtro</div>
             ) : filas.map((p) => (
               <div key={p.id} className="t-row">
-                <div style={{ flex: 4, minWidth: 0 }}>
-                  <div className="truncate">{p.name} <span className="muted">#{p.id}</span></div>
+                <div className="celda-nombre">
+                  <div className="nombre-largo">{p.name}</div>
                 </div>
                 <div style={{ flex: 2 }}>{p.code ?? "—"}</div>
                 <div style={{ width: 110, textAlign: "center" }}>
@@ -2643,7 +2641,7 @@ function IncomingStockSection() {
           searchResults.map((p) => (
             <div key={p.id} className="list-row">
               <div className="truncate">
-                {p.name} <span className="muted">#{p.id}</span>
+                {p.name}
               </div>
               <button className="pill" onClick={() => setProduct(p)} aria-label={`Elegir ${p.name}`}>
                 Elegir
@@ -2657,7 +2655,7 @@ function IncomingStockSection() {
         <>
           <div className="section-header">
             <div className="muted">
-              Producto seleccionado: <strong>{product.name}</strong> (#{product.id})
+              Producto seleccionado: <strong>{product.name}</strong>
             </div>
           </div>
 
@@ -3483,14 +3481,12 @@ function CreateServiceSection() {
       ) : (
         <div className="table like" style={{ marginTop: 12 }}>
           <div className="t-head">
-            <div style={{ flex: 2 }}>ID</div>
             <div style={{ flex: 6 }}>Nombre</div>
             <div style={{ width: 140 }} />
           </div>
 
           {visibles.length === 0 ? (
             <div className="t-row">
-              <div style={{ flex: 1 }}>—</div>
               <div style={{ flex: 6 }}>
                 {q.trim() ? `Ningún servicio coincide con “${q.trim()}”` : "Sin servicios"}
               </div>
@@ -3498,10 +3494,7 @@ function CreateServiceSection() {
           ) : (
             visibles.map((s) => (
               <div key={String(s.id)} className="t-row">
-                <div style={{ flex: 2 }} className="mono">
-                  {s.id}
-                </div>
-                <div style={{ flex: 6 }}>{s.name}</div>
+                <div className="celda-nombre"><div className="nombre-largo">{s.name}</div></div>
 
                 <div style={{ width: 200, display: "flex", gap: 6, justifyContent: "flex-end" }}>
                   <button

@@ -203,9 +203,7 @@ export default function ServicesPage() {
       {!isAdmin && service?.id && (
         <div className="state" style={{ marginBottom: 10 }}>
           Servicio seleccionado:{" "}
-          <strong>
-            #{service.id} – {service.name}
-          </strong>
+          <strong>{service.name}</strong>
         </div>
       )}
 
