@@ -154,6 +154,41 @@ describe("Clasificar — elegir en cada servicio", () => {
   });
 });
 
+describe("Clasificar — accesibilidad", () => {
+  it("lo que falta clasificar se dice con texto, no sólo con color", async () => {
+    await abrir();
+    const fila = screen.getByText("CLUB TALLERES").closest(".t-row");
+    expect(within(fila).getByText("falta clasificar")).toBeInTheDocument();
+    // Los que ya tienen grupo no lo llevan.
+    const ok = screen.getByText("HOSPITAL EVA PERON").closest(".t-row");
+    expect(within(ok).queryByText("falta clasificar")).not.toBeInTheDocument();
+  });
+
+  it("el avance se anuncia como barra de progreso", async () => {
+    await abrir();
+    const barra = screen.getByRole("progressbar", { name: "Servicios con grupo asignado" });
+    expect(barra).toHaveAttribute("aria-valuenow", "2");
+    expect(barra).toHaveAttribute("aria-valuemax", "3");
+  });
+
+  it("el número de cada etiqueta dice qué cuenta", async () => {
+    await abrir();
+    const chip = within(panelGrupos()).getByRole("button", { name: /^MINISTERIO DE SALUD/ });
+    expect(chip.textContent).toContain("servicios:");
+  });
+
+  it("los errores se anuncian solos", async () => {
+    const user = userEvent.setup({ delay: null });
+    api.post.mockRejectedValue({ response: { data: { error: "Ese grupo ya existe" } } });
+    await abrir();
+    await user.type(within(panelGrupos()).getByLabelText("Nombre del grupo nuevo"), "PRIVADOS");
+    await user.click(within(panelGrupos()).getByRole("button", { name: "Agregar" }));
+
+    const alerta = await screen.findByRole("alert");
+    expect(within(alerta).getByText("Ese grupo ya existe")).toBeInTheDocument();
+  });
+});
+
 describe("Clasificar — en tanda", () => {
   it("pone el grupo elegido a todos los filtrados sin tocar la zona", async () => {
     const user = userEvent.setup({ delay: null });

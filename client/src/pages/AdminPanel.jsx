@@ -1215,22 +1215,28 @@ function ClasificarServiciosSection() {
       <div className="cl-encabezado">
         <div>
           <h3 id="cl-heading">Clasificar servicios</h3>
-          <p className="muted cl-bajada">
+          <p className="cl-bajada">
             Creá los grupos y las zonas, y después elegí de esas listas en cada servicio.
           </p>
         </div>
         {!cargando && servicios.length > 0 && (
-          <div className="cl-avance" title={`${clasificados} de ${servicios.length} con grupo`}>
-            <div className="cl-avance-barra"><span style={{ width: `${avance}%` }} /></div>
-            <div className="muted cl-avance-texto">
+          <div className="cl-avance">
+            <div
+              className="cl-avance-barra" role="progressbar"
+              aria-valuenow={clasificados} aria-valuemin={0} aria-valuemax={servicios.length}
+              aria-label="Servicios con grupo asignado"
+            >
+              <span style={{ width: `${avance}%` }} />
+            </div>
+            <div className="cl-avance-texto">
               <strong>{clasificados}</strong> de {servicios.length} con grupo · {avance}%
             </div>
           </div>
         )}
       </div>
 
-      {err && <div className="state cl-error">{err}</div>}
-      {aviso && <div className="state">{aviso}</div>}
+      <div role="alert">{err && <div className="state cl-error">{err}</div>}</div>
+      <div role="status" aria-live="polite">{aviso && <div className="state cl-ok">{aviso}</div>}</div>
 
       {cargando ? <div className="state">Cargando…</div> : (
         <>
@@ -1250,8 +1256,6 @@ function ClasificarServiciosSection() {
               onError={setErr}
             />
           </div>
-
-          <ImportarClasificacion onAplicado={cargar} />
 
           <div className="cl-barra-lista">
             <div className="toolbar sp-filtros">
@@ -1290,6 +1294,7 @@ function ClasificarServiciosSection() {
               <div key={s.id} className={`t-row${s.grupo ? "" : " cl-pendiente"}`}>
                 <div className="celda-nombre">
                   <div className="nombre-largo">{s.name}</div>
+                  {!s.grupo && <span className="cl-falta">falta clasificar</span>}
                 </div>
                 <div style={{ flex: 3 }}>
                   <select
@@ -1396,11 +1401,11 @@ function Catalogo({ tipo, titulo, items, vacio, placeholder, onCambio, onError }
   return (
     <div className="cl-catalogo">
       <div className="cl-catalogo-titulo">
-        {titulo} <span className="muted">({items.length})</span>
+        {titulo} <span className="cl-catalogo-cuenta">({items.length})</span>
       </div>
 
       {items.length === 0 ? (
-        <div className="muted cl-catalogo-vacio">{vacio}</div>
+        <div className="cl-catalogo-vacio">{vacio}</div>
       ) : (
         <ul className="cl-chips">
           {items.map((it) => (
@@ -1410,7 +1415,9 @@ function Catalogo({ tipo, titulo, items, vacio, placeholder, onCambio, onError }
                 disabled={trabajando} title="Tocá para cambiarle el nombre"
               >
                 {it.nombre}
-                <span className="cl-chip-cuenta">{it.usados}</span>
+                <span className="cl-chip-cuenta">
+                  <span className="sr-only">servicios:</span>{it.usados}
+                </span>
               </button>
               <button
                 type="button" className="cl-chip-x" onClick={() => borrar(it)}
@@ -1456,7 +1463,7 @@ function EnTanda({ cantidad, grupos, zonas, onAplicar, trabajando }) {
 
   return (
     <div className="en-tanda">
-      <span className="muted en-tanda-titulo">A los <strong>{cantidad}</strong> que se ven, ponerles</span>
+      <span className="en-tanda-titulo">A los <strong>{cantidad}</strong> que se ven, ponerles</span>
       <select className="input en-tanda-campo" value={campo} disabled={trabajando}
         onChange={(e) => { setCampo(e.target.value); setValor(""); }} aria-label="Qué asignar en tanda">
         <option value="grupo">el grupo</option>
@@ -1470,131 +1477,6 @@ function EnTanda({ cantidad, grupos, zonas, onAplicar, trabajando }) {
       <button className="btn" onClick={aplicar} disabled={trabajando || !valor}>
         {trabajando ? "Aplicando…" : "Aplicar"}
       </button>
-    </div>
-  );
-}
-
-/* Sube la planilla, muestra el previo y recién ahí aplica. */
-function ImportarClasificacion({ onAplicado }) {
-  const [archivo, setArchivo] = useState(null);
-  const [previo, setPrevio] = useState(null);
-  const [leyendo, setLeyendo] = useState(false);
-  const [aplicando, setAplicando] = useState(false);
-  const [msg, setMsg] = useState("");
-  const [confirmados, setConfirmados] = useState({});   // nombre del archivo -> servicioId elegido
-
-  const leer = async () => {
-    if (!archivo) return;
-    setLeyendo(true);
-    setMsg("");
-    setPrevio(null);
-    setConfirmados({});
-    try {
-      const fd = new FormData();
-      fd.append("file", archivo);
-      const { data } = await api.post("/admin/services/clasificacion/preview", fd, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      setPrevio(data);
-    } catch (e) {
-      setMsg(e?.response?.data?.error || "No se pudo leer el archivo");
-    } finally {
-      setLeyendo(false);
-    }
-  };
-
-  const aplicar = async () => {
-    if (!previo) return;
-    setAplicando(true);
-    setMsg("");
-    try {
-      const cambios = [];
-      for (const i of previo.items) {
-        if (i.estado === "listo") cambios.push({ servicioId: i.servicioId, grupo: i.grupo, zona: i.zona });
-        else if (i.estado === "sin_match" && confirmados[i.nombre]) {
-          cambios.push({ servicioId: confirmados[i.nombre], grupo: i.grupo, zona: i.zona });
-        }
-      }
-      if (!cambios.length) { setMsg("No hay nada para aplicar."); return; }
-      const { data } = await api.post("/admin/services/clasificacion/aplicar", { cambios });
-      setMsg(`Listo: se clasificaron ${data.aplicados} servicio${data.aplicados === 1 ? "" : "s"}.`);
-      setPrevio(null);
-      setArchivo(null);
-      onAplicado?.();
-    } catch (e) {
-      setMsg(e?.response?.data?.error || "No se pudo aplicar");
-    } finally {
-      setAplicando(false);
-    }
-  };
-
-  const sinMatch = previo?.items?.filter((i) => i.estado === "sin_match") || [];
-  const aConfirmar = sinMatch.filter((i) => i.sugerencia);
-  const confirmadosN = Object.keys(confirmados).length;
-
-  return (
-    <div className="clasif-import">
-      <div className="clasif-import-fila">
-        <input
-          type="file" accept=".xlsx,.xls" aria-label="Planilla de servicios"
-          onChange={(e) => { setArchivo(e.target.files?.[0] || null); setPrevio(null); setMsg(""); }}
-        />
-        <button className="btn" onClick={leer} disabled={!archivo || leyendo}>
-          {leyendo ? "Leyendo…" : "Ver qué cambiaría"}
-        </button>
-      </div>
-
-      {msg && <div className="state">{msg}</div>}
-
-      {previo && (
-        <div className="clasif-previo">
-          <div className="clasif-resumen">
-            <strong>{previo.total}</strong> servicios en la planilla ·{" "}
-            <strong>{previo.resumen.listo}</strong> para clasificar ·{" "}
-            {previo.resumen.igual > 0 && <>{previo.resumen.igual} ya estaban igual · </>}
-            <strong>{previo.resumen.sinMatch}</strong> sin encontrar
-            {previo.resumen.ambiguo > 0 && <> · {previo.resumen.ambiguo} con nombre repetido</>}
-          </div>
-          <div className="muted clasif-grupos">Grupos: {previo.grupos.join(" · ")}</div>
-
-          {aConfirmar.length > 0 && (
-            <>
-              <div className="muted clasif-aviso">
-                Estos no los encontré por nombre. Te muestro el más parecido, pero <strong>no los aplico si no los confirmás vos</strong>:
-              </div>
-              <div className="table like clasif-dudosos">
-                {aConfirmar.map((i) => (
-                  <div key={i.nombre} className="t-row">
-                    <div style={{ flex: 5, minWidth: 0 }}>
-                      <div className="truncate">{i.nombre}</div>
-                      <div className="muted clasif-sug">se parece a: {i.sugerencia.name}</div>
-                    </div>
-                    <div style={{ width: 130, textAlign: "right" }}>
-                      <button
-                        className={`pill ${confirmados[i.nombre] ? "" : "pill--ghost"}`}
-                        onClick={() => setConfirmados((c) => {
-                          const n = { ...c };
-                          if (n[i.nombre]) delete n[i.nombre]; else n[i.nombre] = i.sugerencia.id;
-                          return n;
-                        })}
-                      >
-                        {confirmados[i.nombre] ? "Confirmado" : "Es el mismo"}
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-
-          <div className="actions-row clasif-acciones">
-            <button className="btn primary" onClick={aplicar} disabled={aplicando}>
-              {aplicando ? "Aplicando…" : `Aplicar ${previo.resumen.listo + confirmadosN} servicios`}
-            </button>
-            <button className="btn ghost" onClick={() => setPrevio(null)} disabled={aplicando}>Cancelar</button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
