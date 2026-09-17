@@ -1801,20 +1801,114 @@ const claveNombre = (s) => sinAcentos(s).toUpperCase().replace(/[^A-Z0-9]+/g, " 
 const limpiarGrupo = (s) => String(s ?? "").replace(/\s*-\s*/g, " - ").replace(/\s+/g, " ").trim().toUpperCase();
 const limpiarZona = (s) => sinAcentos(s).replace(/\s+/g, " ").trim().toUpperCase();
 
+const TIPOS_CLASIF = { grupo: "grupo", zona: "zona" };
+const limpiarPorTipo = (tipo, v) => (tipo === "grupo" ? limpiarGrupo(v) : limpiarZona(v));
+
+function catalogoDe(tipo, empresaId) {
+  const campo = tipo === "grupo" ? "grupo" : "zona";
+  return db.prepare(`
+    SELECT c.nombre,
+           (SELECT COUNT(*) FROM Servicios s
+             WHERE s.empresa_id = c.empresa_id AND s.deleted_at IS NULL AND s.${campo} = c.nombre) AS usados
+    FROM clasificacion_catalogo c
+    WHERE c.tipo = ? AND c.empresa_id = ?
+    ORDER BY c.nombre COLLATE NOCASE
+  `).all(tipo, Number(empresaId));
+}
+
 router.get("/services/clasificacion", mustBeAdmin, (req, res) => {
   try {
     const empresaId = req.user?.empresaId ?? 1;
-    const rows = db.prepare(`
+    const servicios = db.prepare(`
       SELECT ${SRV_ID} AS id, ${SRV_NAME} AS name, grupo, zona
       FROM Servicios WHERE empresa_id = ? AND deleted_at IS NULL
       ORDER BY ${SRV_NAME} COLLATE NOCASE
     `).all(Number(empresaId));
 
-    const unicos = (campo) => [...new Set(rows.map((r) => r[campo]).filter(Boolean))].sort();
-    res.json({ ok: true, servicios: rows, grupos: unicos("grupo"), zonas: unicos("zona") });
+    res.json({
+      ok: true,
+      servicios,
+      grupos: catalogoDe("grupo", empresaId),
+      zonas: catalogoDe("zona", empresaId),
+    });
   } catch (e) {
     console.error("GET /admin/services/clasificacion error:", e?.message || e);
     res.status(500).json({ error: "No se pudo leer la clasificación" });
+  }
+});
+
+router.post("/clasificacion/:tipo", mustBeAdmin, (req, res) => {
+  try {
+    const tipo = TIPOS_CLASIF[String(req.params.tipo || "").toLowerCase()];
+    if (!tipo) return res.status(400).json({ error: "Tipo desconocido" });
+    const empresaId = req.user?.empresaId ?? 1;
+
+    const nombre = limpiarPorTipo(tipo, req.body?.nombre);
+    if (!nombre) return res.status(400).json({ error: `El nombre ${tipo === "grupo" ? "del grupo" : "de la zona"} no puede estar vacío` });
+
+    const ya = db.prepare(`SELECT 1 FROM clasificacion_catalogo WHERE tipo = ? AND nombre = ? AND empresa_id = ?`).get(tipo, nombre, Number(empresaId));
+    if (ya) return res.status(409).json({ error: `“${nombre}” ya existe` });
+
+    db.prepare(`INSERT INTO clasificacion_catalogo (tipo, nombre, empresa_id) VALUES (?, ?, ?)`).run(tipo, nombre, Number(empresaId));
+    res.status(201).json({ ok: true, nombre, [tipo === "grupo" ? "grupos" : "zonas"]: catalogoDe(tipo, empresaId) });
+  } catch (e) {
+    console.error("POST /admin/clasificacion error:", e?.message || e);
+    res.status(500).json({ error: "No se pudo crear" });
+  }
+});
+
+router.put("/clasificacion/:tipo/:nombre", mustBeAdmin, (req, res) => {
+  try {
+    const tipo = TIPOS_CLASIF[String(req.params.tipo || "").toLowerCase()];
+    if (!tipo) return res.status(400).json({ error: "Tipo desconocido" });
+    const empresaId = req.user?.empresaId ?? 1;
+    const campo = tipo === "grupo" ? "grupo" : "zona";
+
+    const viejo = limpiarPorTipo(tipo, decodeURIComponent(req.params.nombre));
+    const nuevo = limpiarPorTipo(tipo, req.body?.nombre);
+    if (!nuevo) return res.status(400).json({ error: "El nombre nuevo no puede estar vacío" });
+
+    const existe = db.prepare(`SELECT 1 FROM clasificacion_catalogo WHERE tipo = ? AND nombre = ? AND empresa_id = ?`).get(tipo, viejo, Number(empresaId));
+    if (!existe) return res.status(404).json({ error: "No existe" });
+    if (nuevo !== viejo && db.prepare(`SELECT 1 FROM clasificacion_catalogo WHERE tipo = ? AND nombre = ? AND empresa_id = ?`).get(tipo, nuevo, Number(empresaId))) {
+      return res.status(409).json({ error: `“${nuevo}” ya existe` });
+    }
+
+    // Renombrar arrastra a los servicios que lo estaban usando.
+    const tx = db.transaction(() => {
+      db.prepare(`UPDATE clasificacion_catalogo SET nombre = ? WHERE tipo = ? AND nombre = ? AND empresa_id = ?`).run(nuevo, tipo, viejo, Number(empresaId));
+      return db.prepare(`UPDATE Servicios SET ${campo} = ? WHERE ${campo} = ? AND empresa_id = ?`).run(nuevo, viejo, Number(empresaId)).changes;
+    });
+    const servicios = tx();
+
+    res.json({ ok: true, nombre: nuevo, servicios, [tipo === "grupo" ? "grupos" : "zonas"]: catalogoDe(tipo, empresaId) });
+  } catch (e) {
+    console.error("PUT /admin/clasificacion error:", e?.message || e);
+    res.status(500).json({ error: "No se pudo renombrar" });
+  }
+});
+
+router.delete("/clasificacion/:tipo/:nombre", mustBeAdmin, (req, res) => {
+  try {
+    const tipo = TIPOS_CLASIF[String(req.params.tipo || "").toLowerCase()];
+    if (!tipo) return res.status(400).json({ error: "Tipo desconocido" });
+    const empresaId = req.user?.empresaId ?? 1;
+    const campo = tipo === "grupo" ? "grupo" : "zona";
+    const nombre = limpiarPorTipo(tipo, decodeURIComponent(req.params.nombre));
+
+    // Los servicios que lo usaban quedan sin clasificar, no se borran.
+    const tx = db.transaction(() => {
+      const libres = db.prepare(`UPDATE Servicios SET ${campo} = NULL WHERE ${campo} = ? AND empresa_id = ?`).run(nombre, Number(empresaId)).changes;
+      const borrados = db.prepare(`DELETE FROM clasificacion_catalogo WHERE tipo = ? AND nombre = ? AND empresa_id = ?`).run(tipo, nombre, Number(empresaId)).changes;
+      return { libres, borrados };
+    });
+    const { libres, borrados } = tx();
+    if (!borrados) return res.status(404).json({ error: "No existe" });
+
+    res.json({ ok: true, servicios: libres, [tipo === "grupo" ? "grupos" : "zonas"]: catalogoDe(tipo, empresaId) });
+  } catch (e) {
+    console.error("DELETE /admin/clasificacion error:", e?.message || e);
+    res.status(500).json({ error: "No se pudo borrar" });
   }
 });
 
@@ -1827,8 +1921,17 @@ router.put("/services/:id/clasificacion", mustBeAdmin, (req, res) => {
     if (!tieneGrupo && !tieneZona) return res.status(400).json({ error: "Nada para actualizar" });
 
     const sets = [], params = [];
-    if (tieneGrupo) { sets.push("grupo = ?"); params.push(limpiarGrupo(req.body.grupo) || null); }
-    if (tieneZona) { sets.push("zona = ?"); params.push(limpiarZona(req.body.zona) || null); }
+    for (const [tipo, presente] of [["grupo", tieneGrupo], ["zona", tieneZona]]) {
+      if (!presente) continue;
+      const valor = limpiarPorTipo(tipo, req.body[tipo]) || null;
+      // Sólo se aceptan valores del catálogo: vacío limpia, cualquier otra cosa
+      // sería un grupo fantasma que no aparece en la lista para elegir.
+      if (valor && !db.prepare(`SELECT 1 FROM clasificacion_catalogo WHERE tipo = ? AND nombre = ? AND empresa_id = ?`).get(tipo, valor, Number(empresaId))) {
+        return res.status(400).json({ error: `“${valor}” no está en la lista de ${tipo === "grupo" ? "grupos" : "zonas"}. Creala primero.` });
+      }
+      sets.push(`${tipo} = ?`);
+      params.push(valor);
+    }
     params.push(String(req.params.id), Number(empresaId));
 
     const r = db.prepare(`UPDATE Servicios SET ${sets.join(", ")} WHERE CAST(${SRV_ID} AS TEXT) = CAST(? AS TEXT) AND empresa_id = ? AND deleted_at IS NULL`).run(...params);
@@ -1934,18 +2037,25 @@ router.post("/services/clasificacion/aplicar", mustBeAdmin, (req, res) => {
     const updGrupo = db.prepare(`UPDATE Servicios SET grupo = ? ${donde}`);
     const updZona = db.prepare(`UPDATE Servicios SET zona = ? ${donde}`);
 
+    // Lo que traiga el archivo (o la asignación en tanda) entra al catálogo:
+    // si no, quedaría puesto en el servicio pero no en la lista para elegir.
+    const alCatalogo = db.prepare(`INSERT OR IGNORE INTO clasificacion_catalogo (tipo, nombre, empresa_id) VALUES (?, ?, ?)`);
+
     let aplicados = 0, ignorados = 0;
     const tx = db.transaction(() => {
       for (const c of cambios) {
         const id = String(c?.servicioId ?? "");
         if (!validos.has(id)) { ignorados++; continue; }
+        const g0 = limpiarGrupo(c.grupo), z0 = limpiarZona(c.zona);
+        if (g0) alCatalogo.run("grupo", g0, Number(empresaId));
+        if (z0) alCatalogo.run("zona", z0, Number(empresaId));
         // El campo que no viene se deja como está: así se puede cambiar sólo
         // el grupo de muchos servicios sin borrarles la zona.
         const tieneG = Object.prototype.hasOwnProperty.call(c, "grupo");
         const tieneZ = Object.prototype.hasOwnProperty.call(c, "zona");
         if (!tieneG && !tieneZ) { ignorados++; continue; }
-        const g = limpiarGrupo(c.grupo) || null;
-        const z = limpiarZona(c.zona) || null;
+        const g = g0 || null;
+        const z = z0 || null;
         if (tieneG && tieneZ) aplicados += updAmbos.run(g, z, id, Number(empresaId)).changes;
         else if (tieneG) aplicados += updGrupo.run(g, id, Number(empresaId)).changes;
         else aplicados += updZona.run(z, id, Number(empresaId)).changes;

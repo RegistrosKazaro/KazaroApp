@@ -1025,28 +1025,187 @@
   .admin-panel .list-row:hover { background: rgba(148, 163, 184, 0.16); }
 }
 
-/* Asignar grupo o zona a todos los servicios filtrados de una */
+
+/* ======================================================
+   Clasificar servicios
+   ====================================================== */
+.admin-panel .cl-encabezado {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.admin-panel .cl-encabezado h3 { margin: 0 0 0.2rem; }
+
+.admin-panel .cl-bajada {
+  font-size: 0.86rem;
+  margin: 0;
+  max-width: 60ch;
+}
+
+/* Cuánto falta clasificar, de un vistazo */
+.admin-panel .cl-avance { min-width: 210px; }
+
+.admin-panel .cl-avance-barra {
+  height: 7px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.admin-panel .cl-avance-barra > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #38bdf8, #2563eb);
+  transition: width .3s ease;
+}
+
+.admin-panel .cl-avance-texto {
+  font-size: 0.78rem;
+  margin-top: 0.3rem;
+  text-align: right;
+}
+
+.admin-panel .cl-error { border-left: 3px solid #dc2626; }
+
+/* Los dos catálogos, uno al lado del otro */
+.admin-panel .cl-catalogos {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+@media (min-width: 860px) {
+  .admin-panel .cl-catalogos { grid-template-columns: 3fr 2fr; }
+}
+
+.admin-panel .cl-catalogo {
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 11px;
+  padding: 0.75rem 0.85rem;
+  background: var(--surface-2, rgba(148, 163, 184, 0.07));
+}
+
+.admin-panel .cl-catalogo-titulo {
+  font-weight: 650;
+  font-size: 0.92rem;
+  margin-bottom: 0.6rem;
+}
+
+.admin-panel .cl-catalogo-vacio {
+  font-size: 0.82rem;
+  padding: 0.5rem 0 0.7rem;
+}
+
+.admin-panel .cl-chips {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 0 0.7rem;
+  padding: 0;
+}
+
+.admin-panel .cl-chip {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.admin-panel .cl-chip-nombre {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0.28rem 0.3rem 0.28rem 0.7rem;
+  cursor: pointer;
+  color: inherit;
+}
+
+.admin-panel .cl-chip-nombre:hover { background: #eff6ff; }
+
+.admin-panel .cl-chip-cuenta {
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  background: #e2e8f0;
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  min-width: 1.5rem;
+  text-align: center;
+}
+
+.admin-panel .cl-chip-x {
+  border: 0;
+  border-left: 1px solid #e2e8f0;
+  background: none;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 0.5rem;
+  color: #94a3b8;
+}
+
+.admin-panel .cl-chip-x:hover { background: #fee2e2; color: #b91c1c; }
+
+.admin-panel .cl-catalogo-alta {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.admin-panel .cl-catalogo-alta > .input {
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Buscador + filtros + asignación en tanda, en un bloque */
+.admin-panel .cl-barra-lista { margin-bottom: 0.6rem; }
+.admin-panel .cl-barra-lista .toolbar { margin-bottom: 0.5rem; }
+
 .admin-panel .en-tanda {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem 0.75rem;
-  padding: 0.55rem 0.7rem;
-  margin-bottom: 0.7rem;
-  border: 1px dashed var(--border, #cbd5e1);
+  gap: 0.45rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px dashed #cbd5e1;
   border-radius: 9px;
 }
 
 .admin-panel .en-tanda-titulo { font-size: 0.84rem; }
 
-.admin-panel .en-tanda-par {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
+.admin-panel .en-tanda .input {
+  width: auto;
+  flex: 0 1 auto;
 }
 
-.admin-panel .en-tanda-par > .input {
-  width: auto;
-  flex: 0 1 190px;
-  min-width: 130px;
+.admin-panel .en-tanda-campo { min-width: 105px; }
+.admin-panel .en-tanda-valor { min-width: 170px; }
+
+/* Los que todavía no tienen grupo se marcan al costado */
+.admin-panel .t-row.cl-pendiente { box-shadow: inset 3px 0 0 #fbbf24; }
+
+.admin-panel .cl-paginas {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .admin-panel .cl-chip { background: rgba(15, 23, 42, 0.5); border-color: rgba(148, 163, 184, 0.35); }
+  .admin-panel .cl-chip-nombre:hover { background: rgba(59, 130, 246, 0.18); }
+  .admin-panel .cl-chip-cuenta { background: rgba(148, 163, 184, 0.25); }
+  .admin-panel .cl-chip-x { border-left-color: rgba(148, 163, 184, 0.25); }
+  .admin-panel .cl-avance-barra { background: rgba(148, 163, 184, 0.25); }
 }

@@ -2461,6 +2461,28 @@ export function ensureServiciosFicha() {
     if (!cols.includes("zona")) db.exec(`ALTER TABLE Servicios ADD COLUMN zona TEXT`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_servicios_grupo ON Servicios(grupo);`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_servicios_zona ON Servicios(zona);`);
+
+    // Los grupos y las zonas se crean y se administran; no son texto libre que
+    // cada uno escribe como quiere. El catálogo es la lista que se ofrece.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS clasificacion_catalogo (
+        tipo       TEXT NOT NULL,
+        nombre     TEXT NOT NULL,
+        empresa_id INTEGER NOT NULL,
+        PRIMARY KEY (tipo, nombre, empresa_id)
+      );
+    `);
+
+    // Lo que ya estaba cargado en los servicios entra al catálogo, para no
+    // perder lo importado antes de que existiera esta tabla.
+    db.exec(`
+      INSERT OR IGNORE INTO clasificacion_catalogo (tipo, nombre, empresa_id)
+      SELECT 'grupo', grupo, empresa_id FROM Servicios
+      WHERE grupo IS NOT NULL AND TRIM(grupo) <> '' AND empresa_id IS NOT NULL;
+      INSERT OR IGNORE INTO clasificacion_catalogo (tipo, nombre, empresa_id)
+      SELECT 'zona', zona, empresa_id FROM Servicios
+      WHERE zona IS NOT NULL AND TRIM(zona) <> '' AND empresa_id IS NOT NULL;
+    `);
   } catch (e) {
     console.error("[db] ensureServiciosFicha error:", e?.message || e);
   }
