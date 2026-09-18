@@ -395,6 +395,9 @@ router.get("/orders", mustWarehouse, (req, res) => {
       }
     }
 
+    // Para separar en pantalla los pedidos de uniformes de los de insumos.
+    const idsUniformes = getProductIdsCategoriasSeparadas();
+
     const cleanRows = rawOrders.map(row => {
       const id =
         getVal(row, ["pedidoid", "id", "idpedido", "pedido_id"]) ??
@@ -469,6 +472,10 @@ router.get("/orders", mustWarehouse, (req, res) => {
         isClosed,
         remito: remitoNumero,
         remitoDisplay: remitoNumero ? String(remitoNumero) : "-",
+        // Con que traiga un uniforme ya va a Uniformes: es la misma regla que
+        // decide a quién se manda el mail. En toda la historia hubo un solo
+        // pedido mezclado. La tarjeta del pendiente hereda el tipo del pedido.
+        tipo: todosLosItems.some((i) => idsUniformes.has(Number(i.productId))) ? "uniformes" : "insumos",
         items: itemsEntrega,
         // El editor necesita el pedido completo, aunque en pantalla se muestre
         // sólo la parte que se entrega.

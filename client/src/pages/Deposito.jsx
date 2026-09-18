@@ -26,6 +26,8 @@ function isoFirstOfYear() {
 }
 const fmt = formatNumber;
 const money = formatMoney;
+// Un pedido sin tipo (servidor viejo) se trata como de insumos.
+const tipoDe = (o) => (o?.tipo === "uniformes" ? "uniformes" : "insumos");
 
 function parseDateToMs(raw) {
   if (!raw) return NaN;
@@ -615,17 +617,34 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
   };
 
   // Servicios presentes en los pedidos cargados, para armar el desplegable.
+  // Uniformes e insumos van por separado: suelen prepararlos personas distintas
+  // y con otros tiempos. Se recuerda la última elegida en esta computadora.
+  const [tipoVista, setTipoVistaState] = useState(() => {
+    try { return localStorage.getItem("deposito.tipo") === "uniformes" ? "uniformes" : "insumos"; }
+    catch { return "insumos"; }
+  });
+  const setTipoVista = (t) => {
+    setTipoVistaState(t);
+    setServicioFilter("");
+    try { localStorage.setItem("deposito.tipo", t); } catch { /* sin almacenamiento */ }
+  };
+  const cuentaTipo = useMemo(() => ({
+    insumos: orders.filter((o) => tipoDe(o) === "insumos").length,
+    uniformes: orders.filter((o) => tipoDe(o) === "uniformes").length,
+  }), [orders]);
+  const delTipo = useMemo(() => orders.filter((o) => tipoDe(o) === tipoVista), [orders, tipoVista]);
+
   const serviciosDisponibles = useMemo(() => {
     const set = new Set();
-    for (const o of orders) {
+    for (const o of delTipo) {
       const n = String(o.servicioNombre || "").trim();
       if (n) set.add(n);
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b, "es"));
-  }, [orders]);
+  }, [delTipo]);
 
   const filtered = useMemo(() => {
-    let arr = orders.slice();
+    let arr = delTipo.slice();
     // normalizeText saca acentos, así "union" encuentra "Unión".
     const t = normalizeText(qDeb);
     if (t) {
@@ -662,7 +681,7 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
     return arr;
     // parseDbDateToMs/diaArDe son estables por render; no hace falta listarlas.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orders, qDeb, sort, servicioFilter, desde, hasta]);
+  }, [delTipo, qDeb, sort, servicioFilter, desde, hasta]);
 
   const remitoNum = (o) => o.remitoDisplay ?? o.remito ?? o.remitoNumber ?? o.remito_numero ?? "-";
 
@@ -822,6 +841,25 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
         )}
       </div>
 
+      {/* Uniformes por un lado, insumos por otro */}
+      {tab !== "devoluciones" && (
+        <div className="dep-tipo" role="group" aria-label="Tipo de pedido">
+          {[
+            { key: "insumos", label: "Insumos" },
+            { key: "uniformes", label: "Uniformes" },
+          ].map(({ key, label }) => (
+            <button key={key} type="button"
+              className={`dep-tipo-btn${tipoVista === key ? " is-active" : ""}`}
+              aria-pressed={tipoVista === key}
+              onClick={() => setTipoVista(key)}
+            >
+              {label}
+              <span className="dep-tipo-cuenta">{cuentaTipo[key]}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Tabs + filtros */}
       <div className="deposito-header-actions" style={{ gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
         {[
@@ -880,7 +918,7 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
           )}
           <div style={{ flex: 1 }} />
           <span className="muted" style={{ fontSize: "0.85rem" }}>
-            {filtered.length} de {orders.length} pedido{orders.length === 1 ? "" : "s"}
+            {filtered.length} de {delTipo.length} pedido{delTipo.length === 1 ? "" : "s"} de {tipoVista}
             {buscandoHistorial
               ? " · buscando en todo el historial"
               : " · se muestran los más recientes; para ver más viejos, buscá o elegí fechas"}

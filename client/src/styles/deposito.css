@@ -852,3 +852,52 @@
   font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
   letter-spacing: .04em; vertical-align: middle; cursor: help;
 }
+
+/* Uniformes por un lado, insumos por otro */
+.dep-tipo {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: #f1f5f9;
+}
+
+.dep-tipo-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 16px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #334155;
+  font: inherit;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+.dep-tipo-btn:hover { background: #e2e8f0; color: #0f172a; }
+
+.dep-tipo-btn.is-active {
+  background: #ffffff;
+  color: #1e3a8a;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .12);
+}
+
+.dep-tipo-cuenta {
+  min-width: 1.6rem;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #334155;
+  font-size: 0.78rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.dep-tipo-btn.is-active .dep-tipo-cuenta { background: #dbeafe; color: #1e3a8a; }
