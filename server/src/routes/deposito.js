@@ -19,6 +19,7 @@ import {
   restoreOrder,
   hardDeleteOrder,
   getProductIdsCategoriasSeparadas,
+  audit,
 } from "../db.js";
 import { sendMail } from "../utils/mailer.js";
 import { fmtAr, ahoraUtcSql } from "../utils/fechas.js";
@@ -826,6 +827,112 @@ router.put("/orders/:id/pendiente/:action", mustWarehouse, (req, res) => {
     if (!pendientes.length) return res.status(400).json({ error: "Este pedido no tiene pendientes" });
 
     const ahora = ahoraUtcSql();
+
+    /* ELIMINAR lo que quedó pendiente: el depósito decide que eso ya no se
+       entrega (pasó mucho tiempo, cambió el mes, se pide de nuevo). No es un
+       "retiro": esas unidades nunca salieron.
+
+       Se baja la cantidad de cada línea a lo que efectivamente se entregó y
+       se pone el pendiente en 0. Así lo entregado (Cantidad - pendiente) queda
+       IGUAL, y por lo tanto:
+         - el stock no se toca: sólo refleja lo entregado, y el retiro descuenta
+           Cantidad - pendiente (applyOrderStockDiscount);
+         - los informes no cambian: cuentan Cantidad - pendiente - devuelto;
+         - la foto del despacho no cambia: registra lo que salió.
+       Lo único que cambia es que el pedido deja de "deber" esas unidades, y el
+       Total pasa a ser el de lo entregado.
+
+       Una línea de la que no salió nada se borra: el editor del depósito no
+       admite cantidad 0, así que dejarla en 0 haría el pedido ineditable. */
+    if (action === "cancel" || action === "eliminar") {
+      const estado = String(ped.pendiente_status || "").toLowerCase();
+      // "Listo para retirar" ya registró el movimiento en Control de despachos
+      // (lo que se carga en Flexxus). Borrarlo acá dejaría ese movimiento por
+      // unidades que nunca salieron.
+      if (estado === "closed") {
+        return res.status(409).json({
+          error: "Este pendiente ya está listo para retirar y quedó registrado en Control de despachos. Si no se va a entregar, avisá para anular ese movimiento.",
+        });
+      }
+
+      const cab = db.prepare(`SELECT Status, retiro_at FROM Pedidos WHERE PedidoID = ?`).get(id);
+      const seDespacho = String(cab?.Status || "").toLowerCase() === "closed" || !!String(cab?.retiro_at || "").trim();
+      if (!seDespacho) {
+        return res.status(400).json({
+          error: "Este pedido todavía no se despachó: lo pendiente se corrige editando el pedido.",
+        });
+      }
+
+      // Opcional: eliminar sólo algunos insumos. Sin lista, se elimina todo.
+      const elegidos = Array.isArray(req.body?.productIds) && req.body.productIds.length
+        ? new Set(req.body.productIds.map((x) => Number(x)))
+        : null;
+
+      const lineas = db.prepare(
+        `SELECT PedidoItemID AS rid, ProductoID AS pid, Nombre AS nombre, Precio AS precio,
+                Cantidad AS cant, COALESCE(cantidad_pendiente,0) AS pend
+         FROM PedidoItems WHERE PedidoID = ?`
+      ).all(id);
+      const aTocar = lineas.filter((l) => l.pend > 0 && (!elegidos || elegidos.has(Number(l.pid))));
+      if (!aTocar.length) return res.status(400).json({ error: "No hay pendientes para eliminar en lo elegido" });
+
+      // No se puede dejar un pedido despachado sin nada: si no salió ninguna
+      // unidad, no es un pendiente, es un pedido que no se entregó.
+      const quedan = lineas.filter((l) => {
+        const t = aTocar.find((x) => x.rid === l.rid);
+        return (t ? l.cant - l.pend : l.cant) > 0;
+      });
+      if (!quedan.length) {
+        return res.status(400).json({
+          error: "Si se elimina todo lo pendiente el pedido queda vacío. En ese caso conviene borrar el pedido.",
+        });
+      }
+
+      const borrar = db.prepare(`DELETE FROM PedidoItems WHERE PedidoItemID = ?`);
+      const bajar = db.prepare(
+        `UPDATE PedidoItems SET Cantidad = ?, Subtotal = ?, cantidad_pendiente = 0 WHERE PedidoItemID = ?`
+      );
+
+      const tx = db.transaction(() => {
+        let unidades = 0;
+        for (const l of aTocar) {
+          const entregado = Number(l.cant) - Number(l.pend);
+          unidades += Number(l.pend);
+          if (entregado <= 0) borrar.run(l.rid);
+          else bajar.run(entregado, entregado * Number(l.precio || 0), l.rid);
+        }
+        db.prepare(
+          `UPDATE Pedidos SET Total = (SELECT COALESCE(SUM(Subtotal),0) FROM PedidoItems WHERE PedidoID = ?) WHERE PedidoID = ?`
+        ).run(id, id);
+
+        // Si no quedó nada pendiente, la tarjeta del pendiente desaparece.
+        const resto = db.prepare(
+          `SELECT COALESCE(SUM(cantidad_pendiente),0) AS n FROM PedidoItems WHERE PedidoID = ?`
+        ).get(id).n;
+        if (Number(resto) === 0) {
+          db.prepare(
+            `UPDATE Pedidos SET pendiente_status = NULL, pendiente_closedat = NULL, pendiente_retiro_at = NULL WHERE PedidoID = ?`
+          ).run(id);
+        }
+        return { unidades, restante: Number(resto) };
+      });
+      const r = tx();
+
+      // Queda registro de qué se dio de baja y quién: la línea ya no existe.
+      try {
+        const detalle = aTocar.map((l) => `${l.pend} x ${l.nombre}`).join(", ");
+        audit({
+          empresaId,
+          usuario: req.user?.username || req.user?.email || null,
+          accion: "delete",
+          entidad: "Pendiente",
+          entidadId: String(id),
+          detalle: `Pendiente eliminado (no se entrega): ${detalle}`,
+        });
+      } catch { /* el registro no debe frenar la baja */ }
+
+      return res.json({ ok: true, estado: r.restante ? "parcial" : "eliminado", unidades: r.unidades, lineas: aTocar.length });
+    }
 
     if (action === "prepare") {
       db.prepare(`UPDATE Pedidos SET pendiente_status='preparing', pendiente_closedat=NULL WHERE PedidoID=?`).run(id);

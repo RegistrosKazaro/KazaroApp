@@ -710,6 +710,30 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
     quitarDeLista(o);
   };
 
+  // Dar de baja lo que quedó pendiente: cuando pasa mucho tiempo (otro mes,
+  // se vuelve a pedir) ya no se va a entregar. Lo entregado no cambia, así
+  // que el stock y los informes tampoco.
+  const eliminarPendiente = async (o) => {
+    const items = Array.isArray(o.items) ? o.items : [];
+    const detalle = items.map((i) => `• ${i.cantidad} × ${i.nombre}`).join("\n");
+    const unidades = items.reduce((s, i) => s + Number(i.cantidad || 0), 0);
+    const ok = window.confirm(
+      `Borrar lo pendiente del pedido #${o.displayId}\n\n` +
+      `Esto ya no se va a enviar:\n${detalle}\n\n` +
+      `Total: ${unidades} unidad${unidades === 1 ? "" : "es"}. ` +
+      `Lo que ya se entregó no cambia, y el stock tampoco.\n\n¿Borrar?`
+    );
+    if (!ok) return;
+    try {
+      await api.put(rutaAccion(o, "cancel"), {}, { withCredentials: true });
+      setOkMsg(`Pendiente del pedido #${o.displayId} borrado (${unidades} unidad${unidades === 1 ? "" : "es"}).`);
+      setErr("");
+      quitarDeLista(o);
+    } catch (e) {
+      setErr(e?.response?.data?.error || "No se pudo eliminar el pendiente");
+    }
+  };
+
   const reopenOrder = async (o) => {
     try { await api.put(rutaAccion(o, "reopen"), {}, { withCredentials: true }); }
     catch (e) { setErr(e?.response?.data?.error || e.message || "Error"); return; }
@@ -940,6 +964,18 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                         {!o.esPendiente && tab !== "devoluciones" && (
                           <button type="button" className="pill pill--ghost" onClick={() => borrarPedido(o)}
                             title="Borrar este pedido (recuperable). Si ya descontó stock, se devuelve."
+                            style={{ borderColor: "#b91c1c", color: "#b91c1c" }}>
+                            Borrar
+                          </button>
+                        )}
+                        {/* En la tarjeta del pendiente, Borrar da de baja SÓLO lo
+                            que quedó sin enviar; el pedido original no se toca.
+                            No va en "Listo para retirar": ahí ya quedó registrado
+                            en Control de despachos. */}
+                        {o.esPendiente && (tab === "open" || tab === "preparing") && (
+                          <button type="button" className="pill pill--ghost" onClick={() => eliminarPendiente(o)}
+                            title="Borrar lo que quedó pendiente: no se va a enviar. Lo entregado y el stock no cambian."
+                            aria-label={`Borrar lo pendiente del pedido ${o.displayId}`}
                             style={{ borderColor: "#b91c1c", color: "#b91c1c" }}>
                             Borrar
                           </button>
