@@ -1015,13 +1015,37 @@ function construirPanel(req) {
     const porEstado = (e) => dev.find((d) => d.estado === e) || {};
     const aprobadas = porEstado("aprobada");
 
-    // Aviso de confianza: qué quedó afuera por no estar marcado como retirado.
-    const sinRetirar = db.prepare(`
-      SELECT COUNT(*) AS pedidos, COALESCE(SUM(p.Total),0) AS monto
+    // Aviso de confianza: lo que está listo para retirar pero NO entra en este
+    // informe porque nadie lo marcó como retirado. Tiene que coincidir con la
+    // solapa "Listos para retirar" del depósito:
+    //   - sólo lo que realmente falta: sin contabilizar. Antes contaba también
+    //     pedidos del flujo viejo que ya estaban contados (se contabilizaban al
+    //     crearse), y el aviso decía que faltaban cosas que no faltaban;
+    //   - del mismo lado que se está mirando (insumos o uniformes), con el
+    //     mismo criterio por ítem que el resto del informe;
+    //   - sin los servicios hijos de depósito, que tampoco entran.
+    // El monto es el de lo que se entrega (sin pendientes), al precio del pedido.
+    const catPedido = filtroItemsCategoria("i", modo === "uniformes");
+    const sinRetirarFilas = db.prepare(`
+      SELECT p.PedidoID AS id,
+             COALESCE((SELECT SUM((i.Cantidad - COALESCE(i.cantidad_pendiente,0)) * COALESCE(i.Precio,0))
+                       FROM PedidoItems i WHERE i.PedidoID = p.PedidoID ${catPedido.sql}), 0) AS monto
       FROM Pedidos p
       WHERE p.Fecha >= ? AND p.Fecha < ? AND p.deleted_at IS NULL AND p.empresa_id = ?
         AND LOWER(COALESCE(p.Status,'')) = 'closed'
-        AND (p.retiro_at IS NULL OR TRIM(p.retiro_at) = '')`).get(desdeUtc, hastaUtc, empresaId);
+        AND TRIM(COALESCE(p.retiro_at,'')) = ''
+        AND TRIM(COALESCE(p.contabilizado_at,'')) = ''
+        ${sqlExclusions}
+        AND EXISTS (SELECT 1 FROM PedidoItems i WHERE i.PedidoID = p.PedidoID ${catPedido.sql})
+      ORDER BY p.PedidoID`).all(
+      // En el orden en que aparecen los "?" en el texto: primero el subquery
+      // del monto (está en el SELECT), después el WHERE.
+      ...catPedido.params, desdeUtc, hastaUtc, empresaId, ...exParams, ...catPedido.params);
+    const sinRetirar = {
+      pedidos: sinRetirarFilas.length,
+      monto: sinRetirarFilas.reduce((s, r) => s + Number(r.monto || 0), 0),
+      numeros: sinRetirarFilas.map((r) => String(r.id).padStart(7, "0")),
+    };
 
     const num = (v) => Number(v || 0);
     return {
@@ -1049,7 +1073,7 @@ function construirPanel(req) {
         topInsumos: devTop.map((r) => ({ ...r, cantidad: num(r.cantidad), unidades: num(r.unidades), monto: num(r.monto) })),
         topServicios: devServicios.map((r) => ({ ...r, cantidad: num(r.cantidad), unidades: num(r.unidades) })),
       },
-      sinRetirar: { pedidos: num(sinRetirar?.pedidos), monto: num(sinRetirar?.monto) },
+      sinRetirar: { pedidos: num(sinRetirar.pedidos), monto: num(sinRetirar.monto), numeros: sinRetirar.numeros },
     };
   }
 }
@@ -1113,6 +1137,7 @@ router.get("/panel/excel", mustBeAdmin, (req, res) => {
       [],
       ["Pedidos sin marcar como retirados (NO entran)", d.sinRetirar.pedidos],
       ["Monto de esos pedidos", r2(d.sinRetirar.monto)],
+      ["Cuáles son", (d.sinRetirar.numeros || []).map((n) => `#${n}`).join(", ") || "—"],
     ], { anchos: [44, 26], pesos: [1] }), "Resumen");
 
     XLSX.utils.book_append_sheet(wb, hoja([

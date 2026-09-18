@@ -20,6 +20,7 @@ import {
   hardDeleteOrder,
   getProductIdsCategoriasSeparadas,
   audit,
+  INICIO_FLUJO_REVISION,
 } from "../db.js";
 import { sendMail } from "../utils/mailer.js";
 import { fmtAr, ahoraUtcSql } from "../utils/fechas.js";
@@ -269,6 +270,35 @@ router.get("/orders", mustWarehouse, (req, res) => {
       rawOrders = db
         .prepare(`SELECT rowid AS __rowid, * FROM Pedidos ${empresaWhere} ORDER BY Fecha DESC LIMIT 100`)
         .all();
+
+      // Todo lo que todavía espera una acción del depósito entra SIEMPRE,
+      // aunque tenga semanas. Con sólo "los últimos 100", un pedido listo para
+      // retirar se caía de la lista a los pocos días, nadie lo marcaba como
+      // retirado y nunca entraba en los informes (en sept. 2026 había 9 así,
+      // más 14 esperando en "Por confirmar" desde agosto).
+      //
+      // Se excluyen los pedidos del flujo viejo: hasta el 31/07/2026 el pedido
+      // se contabilizaba al crearse, así que muchos quedaron "abiertos" para
+      // siempre aunque ya están contados como entregados. No son trabajo
+      // pendiente y mostrarlos llenaría la lista con cientos de pedidos.
+      const conj = empresaWhere ? "AND" : "WHERE";
+      const yaTraidos = new Set(rawOrders.map((r) => r.__rowid));
+      const accionables = db.prepare(`
+        SELECT rowid AS __rowid, * FROM Pedidos ${empresaWhere}
+          ${conj} (
+            LOWER(COALESCE(Status,'')) IN ('revision_deposito','open','preparing')
+            OR (LOWER(COALESCE(Status,'')) = 'closed' AND TRIM(COALESCE(retiro_at,'')) = '')
+          )
+          AND NOT (
+            TRIM(COALESCE(contabilizado_at,'')) <> ''
+            AND REPLACE(SUBSTR(Fecha,1,19),'T',' ') < @corte
+          )
+      `).all({ corte: INICIO_FLUJO_REVISION });
+      for (const r of accionables) {
+        if (yaTraidos.has(r.__rowid)) continue;
+        rawOrders.push(r);
+        yaTraidos.add(r.__rowid);
+      }
       // Lo que quedó pendiente de entregar puede esperar semanas a que entre
       // stock: su tarjeta no puede desaparecer sólo porque el pedido original
       // quedó fuera de los últimos 100.

@@ -382,8 +382,17 @@ export default function Informes() {
 
           {data.sinRetirar?.pedidos > 0 && (
             <div className="inf-aviso">
-              <strong>Faltan {formatNumber(data.sinRetirar.pedidos)} pedidos por marcar como retirados</strong> ({formatMoney(data.sinRetirar.monto)}).
-              No entran en estos números: un pedido se cuenta recién cuando se retira. Están en Depósito → “Listos para retirar”.
+              <strong>
+                {data.sinRetirar.pedidos === 1
+                  ? "Falta 1 pedido por marcar como retirado"
+                  : `Faltan ${formatNumber(data.sinRetirar.pedidos)} pedidos por marcar como retirados`}
+              </strong> ({formatMoney(data.sinRetirar.monto)}).
+              No entran en estos números: un pedido se cuenta recién cuando se retira.
+              {data.sinRetirar.numeros?.length > 0 && (
+                <> Son: <span className="inf-aviso-nros">{data.sinRetirar.numeros.map((n) => `#${n}`).join(", ")}</span>.</>
+              )}
+              {" "}Están en Depósito → “Listos para retirar”
+              {modo === "uniformes" ? ", del lado de Uniformes." : ", del lado de Insumos."}
             </div>
           )}
 

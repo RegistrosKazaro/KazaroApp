@@ -40,7 +40,7 @@ const RESPUESTA = {
     topInsumos: [{ id: "10", nombre: "BOLSA NEGRA", cantidad: 2, unidades: 7, monto: 150 }],
     topServicios: [{ nombre: "MIN. EDUC - ZONA UNION", cantidad: 2, unidades: 7 }],
   },
-  sinRetirar: { pedidos: 4, monto: 5000 },
+  sinRetirar: { pedidos: 4, monto: 5000, numeros: ["0001028", "0001029", "0001053", "0001171"] },
 };
 
 beforeEach(() => {
@@ -73,6 +73,10 @@ describe("Informes", () => {
   it("avisa de los pedidos sin marcar como retirados, que no entran", async () => {
     abrir();
     expect(await screen.findByText(/Faltan 4 pedidos por marcar como retirados/)).toBeInTheDocument();
+    // Dice cuáles son, para ir a buscarlos al depósito, y de qué lado.
+    const aviso = document.querySelector(".inf-aviso");
+    expect(aviso.textContent).toContain("#0001028, #0001029, #0001053, #0001171");
+    expect(aviso.textContent).toContain("del lado de Insumos");
   });
 
   it("ordena por monto y, al cambiar a cantidad, reordena", async () => {

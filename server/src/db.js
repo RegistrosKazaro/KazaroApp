@@ -1647,6 +1647,14 @@ export function getServiceById(serviceId) {
   }
 }
 
+// Desde este día el pedido de supervisor pasa por la revisión del depósito y
+// recién se contabiliza al retirarse. Antes se contabilizaba al crearse, así
+// que los pedidos viejos quedaron "abiertos" o "listos" para siempre aunque
+// ya estaban contados como entregados. Verificado en producción: el último
+// pedido contabilizado al crearse es el #622 (30/07/2026) y el primero sin
+// contabilizar es el #632 (01/08/2026).
+export const INICIO_FLUJO_REVISION = "2026-08-01 00:00:00";
+
 // Categorías que se manejan aparte del circuito normal de insumos: tienen su
 // propio informe y NO consumen el presupuesto del servicio.
 export const CATEGORIAS_SEPARADAS = ["Uniformes"];
