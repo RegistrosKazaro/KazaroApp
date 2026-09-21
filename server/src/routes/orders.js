@@ -209,6 +209,10 @@ router.post("/", requireAuth, async (req, res) => {
         userEmail: usuario?.email || null,
         empresaId,
         empresaNombre,
+        // Para poder auditar pedido por pedido si salió el mail. Sin esto el
+        // registro los guardaba todos como "general #0".
+        entityType: "pedido_nuevo",
+        entityId: String(pedidoId),
       };
 
       if (tieneUniformes) {
