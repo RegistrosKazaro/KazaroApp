@@ -64,6 +64,26 @@ export default function ReturnModal({ order, onClose, onDone }) {
       : { ...s, [it.productId]: n }));
   };
 
+  // Lo que se está tipeando, por insumo. Antes cada tecla pasaba por
+  // setCantidad: al borrar el número quedaba 0, y 0 desmarca el insumo, así
+  // que el campo desaparecía y había que subir con el "+" de a uno. Ahora el
+  // campo puede quedar vacío mientras se escribe y recién se aplica con un
+  // número válido.
+  const [borradores, setBorradores] = useState({});
+  const escribirCantidad = (it, texto) => {
+    const digitos = String(texto).replace(/\D/g, "");
+    const n = Number(digitos);
+    // Más de lo que se puede devolver no se deja escribir: se muestra el tope.
+    const limpio = digitos && n > it.disponible ? String(it.disponible) : digitos;
+    setBorradores((b) => ({ ...b, [it.productId]: limpio }));
+    if (limpio !== "" && Number(limpio) >= 1) setCantidad(it, Number(limpio));
+  };
+  // Al salir del campo: si quedó vacío o en 0, vuelve la cantidad que tenía.
+  // Para no devolver ese insumo está el tilde.
+  const cerrarCantidad = (it) => {
+    setBorradores((b) => { const x = { ...b }; delete x[it.productId]; return x; });
+  };
+
   const elegidos = Object.entries(sel).filter(([, c]) => Number(c) > 0);
   const totalUnidades = elegidos.reduce((a, [, c]) => a + Number(c), 0);
   const motivoFinal = motivo === "Otro" ? motivoOtro.trim() : motivo;
@@ -147,9 +167,11 @@ export default function ReturnModal({ order, onClose, onDone }) {
                                       <div className="rm-cant">
                                         <button type="button" aria-label="Restar"
                                           onClick={() => setCantidad(it, cantidadDe(it.productId) - 1)}>−</button>
-                                        <input type="number" min="0" max={it.disponible}
-                                          value={cantidadDe(it.productId)}
-                                          onChange={(e) => setCantidad(it, e.target.value)}
+                                        <input type="text" inputMode="numeric" pattern="[0-9]*"
+                                          value={borradores[it.productId] ?? cantidadDe(it.productId)}
+                                          onChange={(e) => escribirCantidad(it, e.target.value)}
+                                          onBlur={() => cerrarCantidad(it)}
+                                          onFocus={(e) => e.target.select()}
                                           aria-label={`Cantidad a devolver de ${it.name}`} />
                                         <button type="button" aria-label="Sumar"
                                           onClick={() => setCantidad(it, cantidadDe(it.productId) + 1)}>+</button>

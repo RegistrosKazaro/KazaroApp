@@ -6,6 +6,7 @@ import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
 import ReturnModal from "../components/ReturnModal";
 import { formatMoney } from "../utils/format";
+import { msDeFechaDb, formatoFechaHoraAr, diasDesdeFechaDb } from "../utils/fechas";
 
 const API_BASE_URL = (import.meta?.env && import.meta.env.VITE_API_URL) || "http://localhost:4000";
 
@@ -15,27 +16,10 @@ const API_BASE_URL = (import.meta?.env && import.meta.env.VITE_API_URL) || "http
 // before initialization") y la pantalla quedaba en blanco.
 const pad7 = (n) => String(n ?? "").padStart(7, "0");
 
-function parseDbDate(raw) {
-  if (!raw) return NaN;
-  try { return new Date(String(raw).replace(" ", "T") + "-03:00").getTime(); }
-  catch { return NaN; }
-}
-
-function formatFecha(raw) {
-  const t = parseDbDate(raw);
-  if (Number.isNaN(t)) return raw || "";
-  return new Date(t).toLocaleString("es-AR", {
-    timeZone: "America/Argentina/Buenos_Aires",
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit",
-  });
-}
-
-function diasDesde(raw) {
-  const t = parseDbDate(raw);
-  if (Number.isNaN(t)) return 0;
-  return (Date.now() - t) / (1000 * 60 * 60 * 24);
-}
+// La base guarda UTC. Antes esto le agregaba "-03:00" a la fecha, o sea la
+// leía como hora argentina, y cada pedido se veía con 3 horas de más.
+const formatFecha = formatoFechaHoraAr;
+const diasDesde = (raw) => diasDesdeFechaDb(raw);
 
 const money = formatMoney;
 
@@ -122,8 +106,8 @@ export default function MisPedidos() {
       const corte = new Date();
       corte.setMonth(corte.getMonth() - meses);
       base = base.filter(o => {
-        const f = new Date(String(o.fecha || "").replace(" ", "T"));
-        return Number.isNaN(f.getTime()) ? true : f >= corte;
+        const f = msDeFechaDb(o.fecha);
+        return Number.isNaN(f) ? true : f >= corte.getTime();
       });
     }
 

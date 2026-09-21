@@ -66,7 +66,7 @@ describe("ReturnModal", () => {
     render(<ReturnModal order={pedido} onClose={() => {}} onDone={() => {}} />);
     await screen.findByText("Guantes de nitrilo");
     await marcar(user, "Guantes de nitrilo", 99);
-    expect(screen.getByLabelText("Cantidad a devolver de Guantes de nitrilo")).toHaveValue(5);
+    expect(screen.getByLabelText("Cantidad a devolver de Guantes de nitrilo")).toHaveValue("5");
   });
 
   it("envía varios insumos en una sola devolución", async () => {
@@ -96,6 +96,72 @@ describe("ReturnModal", () => {
     await screen.findByText("Guantes de nitrilo");
     await user.click(screen.getByRole("checkbox", { name: /Guantes de nitrilo/i }));
     await user.click(screen.getAllByRole("button", { name: "todo" })[0]);
-    expect(screen.getByLabelText("Cantidad a devolver de Guantes de nitrilo")).toHaveValue(5);
+    expect(screen.getByLabelText("Cantidad a devolver de Guantes de nitrilo")).toHaveValue("5");
+  });
+});
+
+describe("ReturnModal — escribir la cantidad", () => {
+  const campo = () => screen.getByLabelText("Cantidad a devolver de Guantes de nitrilo");
+  const abrirYMarcar = async (user) => {
+    render(<ReturnModal order={pedido} onClose={() => {}} onDone={() => {}} />);
+    await screen.findByText("Guantes de nitrilo");
+    await user.click(screen.getByRole("checkbox", { name: /Guantes de nitrilo/i }));
+  };
+
+  it("se puede borrar el número entero sin que se desmarque el insumo", async () => {
+    const user = userEvent.setup({ delay: null });
+    await abrirYMarcar(user);
+    await user.clear(campo());
+    expect(campo()).toHaveValue("");
+    expect(screen.getByRole("checkbox", { name: /Guantes de nitrilo/i })).toBeChecked();
+  });
+
+  it("se escribe la cantidad de una, sin ir de a uno con el +", async () => {
+    const user = userEvent.setup({ delay: null });
+    await abrirYMarcar(user);
+    await user.clear(campo());
+    await user.type(campo(), "4");
+    await user.click(screen.getByRole("button", { name: "Sobrante" }));
+    await user.click(screen.getByRole("button", { name: /Enviar devolución/i }));
+    await waitFor(() => expect(api.post).toHaveBeenCalled());
+    expect(api.post.mock.calls[0][1].items).toEqual([
+      expect.objectContaining({ productoId: 5, cantidad: 4 }),
+    ]);
+  });
+
+  it("si lo dejás vacío y salís, vuelve la cantidad que tenía", async () => {
+    const user = userEvent.setup({ delay: null });
+    await abrirYMarcar(user);
+    await user.clear(campo());
+    await user.tab();
+    expect(campo()).toHaveValue("1");
+    expect(screen.getByRole("checkbox", { name: /Guantes de nitrilo/i })).toBeChecked();
+  });
+
+  it("no deja escribir más de lo que se puede devolver", async () => {
+    const user = userEvent.setup({ delay: null });
+    await abrirYMarcar(user);
+    await user.clear(campo());
+    await user.type(campo(), "99");
+    expect(campo()).toHaveValue("5");
+  });
+
+  it("ignora letras", async () => {
+    const user = userEvent.setup({ delay: null });
+    await abrirYMarcar(user);
+    await user.clear(campo());
+    await user.type(campo(), "3a");
+    expect(campo()).toHaveValue("3");
+  });
+
+  it("el + y el - siguen andando después de escribir", async () => {
+    const user = userEvent.setup({ delay: null });
+    await abrirYMarcar(user);
+    await user.clear(campo());
+    await user.type(campo(), "3");
+    await user.click(screen.getAllByRole("button", { name: "Sumar" })[0]);
+    expect(campo()).toHaveValue("4");
+    await user.click(screen.getAllByRole("button", { name: "Restar" })[0]);
+    expect(campo()).toHaveValue("3");
   });
 });
