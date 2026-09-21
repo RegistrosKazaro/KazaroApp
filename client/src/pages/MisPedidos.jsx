@@ -9,6 +9,12 @@ import { formatMoney } from "../utils/format";
 
 const API_BASE_URL = (import.meta?.env && import.meta.env.VITE_API_URL) || "http://localhost:4000";
 
+// Afuera del componente a propósito: el filtro del buscador (un useMemo que
+// corre ARRIBA en el componente) la usa. Declarada como const más abajo, al
+// escribir un número se la llamaba antes de existir ("Cannot access 'pad7'
+// before initialization") y la pantalla quedaba en blanco.
+const pad7 = (n) => String(n ?? "").padStart(7, "0");
+
 function parseDbDate(raw) {
   if (!raw) return NaN;
   try { return new Date(String(raw).replace(" ", "T") + "-03:00").getTime(); }
@@ -175,8 +181,6 @@ export default function MisPedidos() {
     setPdfErr("");
     if (pdfUrl) { URL.revokeObjectURL(pdfUrl); setPdfUrl(null); }
   };
-
-  const pad7 = (n) => String(n ?? "").padStart(7, "0");
 
   return (
     <div style={{ maxWidth: 900, margin: "0 auto", padding: "1.25rem 1rem" }}>

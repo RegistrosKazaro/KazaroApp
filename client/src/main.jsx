@@ -7,6 +7,7 @@ import AuthProvider from "./context/AuthProvider.jsx";
 import EmpresaProvider from "./context/EmpresaProvider.jsx";
 import EmpresaThemeSync from "./context/EmpresaThemeSync.jsx";
 import CartProvider from "./context/CartProvider.jsx";
+import ErrorBoundary from "./components/ErrorBoundary.jsx";
 
 import "./styles/global.css";
 import { ensureCsrf } from "./api/client";
@@ -29,7 +30,9 @@ createRoot(document.getElementById("root")).render(
         <CartProvider>
           <Boot>
             <EmpresaThemeSync />
-            <App />
+            <ErrorBoundary>
+              <App />
+            </ErrorBoundary>
           </Boot>
         </CartProvider>
       </AuthProvider>
