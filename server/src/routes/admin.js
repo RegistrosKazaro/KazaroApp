@@ -175,11 +175,17 @@ router.get("/products", mustBeAdmin, (req, res) => {
    Export / Import Excel
    ========================= */
 
-router.get("/products/export", mustBeAdmin, (_req, res) => {
+router.get("/products/export", mustBeAdmin, (req, res) => {
   try {
     const sch = prodSchemaOrThrow();
     const { products, categories } = sch.tables;
     const { prodId, prodName, prodPrice, prodStock, prodCode, prodCat, prodCatName } = sch.cols;
+
+    // Sólo los productos de la empresa del admin, igual que el listado.
+    // Antes no filtraba y el Excel de Kazaro traía también los de Pazar.
+    const empresaId  = Number(req.user?.empresaId ?? 1);
+    const prodCols   = db.prepare(`PRAGMA table_info(${products})`).all().map(c => c.name.toLowerCase());
+    const eWhere     = prodCols.includes("empresa_id") ? `WHERE p.empresa_id = ${empresaId}` : "";
 
     let sql = `
       SELECT p.${prodId} AS id,
@@ -201,16 +207,19 @@ router.get("/products/export", mustBeAdmin, (_req, res) => {
               FROM ${products} p
               LEFT JOIN ${categories} c
                 ON CAST(c.${catIdCol} AS TEXT) = CAST(p.${prodCat} AS TEXT)
+              ${eWhere}
               ORDER BY p.${prodName} COLLATE NOCASE
               LIMIT 5000`;
     } else if (prodCatName) {
       sql += `, p.${prodCatName} AS categoryName
               FROM ${products} p
+              ${eWhere}
               ORDER BY p.${prodName} COLLATE NOCASE
               LIMIT 5000`;
     } else {
       sql += `, NULL AS categoryName
               FROM ${products} p
+              ${eWhere}
               ORDER BY p.${prodName} COLLATE NOCASE
               LIMIT 5000`;
     }
