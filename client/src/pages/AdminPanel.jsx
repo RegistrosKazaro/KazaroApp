@@ -2087,36 +2087,100 @@ function AsignarPorInsumo() {
   );
 }
 
-/* Se define una sola vez: qué insumo es de limpieza y cuál descartable.
-   Después cada servicio sólo dice si lleva uno, el otro, los dos o ninguno. */
 /* Rubros de insumos (sólo Kazaro).
    Cada insumo va en UN rubro o queda "sin clasificar". Cada rubro tiene su
    criterio escrito a la vista, para que dos personas clasifiquen igual. Los
-   insumos sin rubro traen una sugerencia que no cuenta hasta aceptarla. */
-function FichaRubro({ rubro, activo, onFiltrar, onGuardado, onError }) {
-  const [editando, setEditando] = useState(false);
-  const [nombre, setNombre] = useState(rubro.nombre);
-  const [criterio, setCriterio] = useState(rubro.criterio || "");
-  const [porServicio, setPorServicio] = useState(!!rubro.porServicio);
+   insumos sin rubro traen una sugerencia que no cuenta hasta aceptarla.
+
+   Diseño lista–detalle: a la izquierda los rubros como carpetas con su
+   cantidad; a la derecha el rubro elegido, su criterio y sus insumos. */
+const COLORES_RUBRO = ["#2563eb", "#0d9488", "#d97706", "#7c3aed", "#64748b", "#db2777", "#16a34a", "#0891b2"];
+const colorDeRubro = (rubros, id) => {
+  const i = rubros.findIndex((r) => r.id === id);
+  return i < 0 ? "#cbd5e1" : COLORES_RUBRO[i % COLORES_RUBRO.length];
+};
+
+function FormRubro({ inicial, titulo, textoBoton, onEnviar, onCancelar }) {
+  const [nombre, setNombre] = useState(inicial?.nombre || "");
+  const [criterio, setCriterio] = useState(inicial?.criterio || "");
+  const [porServicio, setPorServicio] = useState(inicial ? !!inicial.porServicio : true);
   const [trabajando, setTrabajando] = useState(false);
 
-  const abrir = () => {
-    setNombre(rubro.nombre); setCriterio(rubro.criterio || ""); setPorServicio(!!rubro.porServicio);
-    setEditando(true);
+  const enviar = async (e) => {
+    e.preventDefault();
+    setTrabajando(true);
+    const ok = await onEnviar({ nombre: nombre.trim(), criterio: criterio.trim(), porServicio });
+    if (!ok) setTrabajando(false);
   };
 
-  const guardar = async () => {
-    setTrabajando(true);
-    try {
-      await api.put(`/admin/rubros/${rubro.id}`, { nombre: nombre.trim(), criterio: criterio.trim(), porServicio });
-      setEditando(false);
-      onGuardado();
-    } catch (e) {
-      onError(e?.response?.data?.error || "No se pudo guardar el rubro");
-    } finally {
-      setTrabajando(false);
-    }
-  };
+  return (
+    <form className="rb-form" onSubmit={enviar}>
+      <div className="rb-form-titulo">{titulo}</div>
+      <label className="rb-campo">
+        <span>Nombre</span>
+        <input className="input" value={nombre} maxLength={40} autoFocus onChange={(e) => setNombre(e.target.value)} />
+      </label>
+      <label className="rb-campo">
+        <span>Criterio: qué entra en este rubro</span>
+        <textarea className="input" rows={3} maxLength={400} value={criterio} onChange={(e) => setCriterio(e.target.value)}
+          placeholder="Ej.: lo que se repone para quien usa el lugar y se gasta con el uso…" />
+      </label>
+      <label className="rb-check">
+        <input type="checkbox" checked={porServicio} onChange={(e) => setPorServicio(e.target.checked)} />
+        Cada servicio elige si lo lleva
+      </label>
+      <div className="rb-form-acciones">
+        <button type="submit" className="btn primary" disabled={trabajando || !nombre.trim()}>
+          {trabajando ? "Guardando…" : textoBoton}
+        </button>
+        <button type="button" className="btn ghost" onClick={onCancelar} disabled={trabajando}>Cancelar</button>
+      </div>
+    </form>
+  );
+}
+
+/* Cabecera del panel derecho: qué se está viendo y, si es un rubro, su
+   criterio y las acciones para editarlo o borrarlo. */
+function CabeceraRubro({ vista, rubro, color, cuenta, onEditado, onBorrado, onError }) {
+  const [editando, setEditando] = useState(false);
+  useEffect(() => { setEditando(false); }, [vista]);
+
+  if (!rubro) {
+    const textos = {
+      sin: ["Sin clasificar", "Elegí el rubro de cada insumo. Las sugerencias no cuentan hasta que las aceptes."],
+      sugeridos: ["Con sugerencia", "Insumos sin rubro para los que hay una propuesta. Revisalas y aceptá las que estén bien."],
+      todos: ["Todos los insumos", "Todos los insumos de Kazaro, con el rubro que tiene cada uno."],
+    };
+    const [t, d] = textos[vista] || textos.todos;
+    return (
+      <div className="rb-cabecera">
+        <div className="rb-cabecera-titulo"><span>{t}</span><span className="rb-cabecera-cuenta">{cuenta}</span></div>
+        <p className="rb-cabecera-texto">{d}</p>
+      </div>
+    );
+  }
+
+  if (editando) {
+    return (
+      <div className="rb-cabecera">
+        <FormRubro
+          inicial={rubro} titulo={`Editar “${rubro.nombre}”`} textoBoton="Guardar"
+          onCancelar={() => setEditando(false)}
+          onEnviar={async (datos) => {
+            try {
+              await api.put(`/admin/rubros/${rubro.id}`, datos);
+              setEditando(false);
+              onEditado();
+              return true;
+            } catch (e) {
+              onError(e?.response?.data?.error || "No se pudo guardar el rubro");
+              return false;
+            }
+          }}
+        />
+      </div>
+    );
+  }
 
   const borrar = async () => {
     const partes = [];
@@ -2126,110 +2190,41 @@ function FichaRubro({ rubro, activo, onFiltrar, onGuardado, onError }) {
       ? `“${rubro.nombre}”: ${partes.join(" y ")}. Lo que ya pueden pedir los servicios no se quita. ¿Borrar igual?`
       : `¿Borrar el rubro “${rubro.nombre}”?`;
     if (!window.confirm(aviso)) return;
-    setTrabajando(true);
     try {
       await api.delete(`/admin/rubros/${rubro.id}`);
-      onGuardado();
+      onBorrado();
     } catch (e) {
       onError(e?.response?.data?.error || "No se pudo borrar el rubro");
-      setTrabajando(false);
     }
   };
 
-  if (editando) {
-    return (
-      <li className="rb-ficha is-editando">
-        <label className="rb-campo">
-          <span>Nombre</span>
-          <input className="input" value={nombre} maxLength={40} onChange={(e) => setNombre(e.target.value)} />
-        </label>
-        <label className="rb-campo">
-          <span>Criterio: qué entra en este rubro</span>
-          <textarea className="input" rows={3} maxLength={400} value={criterio} onChange={(e) => setCriterio(e.target.value)} />
-        </label>
-        <label className="rb-check">
-          <input type="checkbox" checked={porServicio} onChange={(e) => setPorServicio(e.target.checked)} />
-          Cada servicio elige si lo lleva
-        </label>
-        <div className="rb-ficha-acciones">
-          <button type="button" className="btn primary" onClick={guardar} disabled={trabajando || !nombre.trim()}>
-            {trabajando ? "Guardando…" : "Guardar"}
-          </button>
-          <button type="button" className="btn ghost" onClick={() => setEditando(false)} disabled={trabajando}>Cancelar</button>
+  return (
+    <div className="rb-cabecera">
+      <div className="rb-cabecera-fila">
+        <div className="rb-cabecera-titulo">
+          <span className="rb-punto rb-punto--grande" style={{ background: color }} aria-hidden="true" />
+          <span>{rubro.nombre}</span>
+          {!rubro.porServicio && <span className="rb-etiqueta">fuera de la regla</span>}
         </div>
-      </li>
-    );
-  }
-
-  return (
-    <li className={`rb-ficha${activo ? " is-activo" : ""}`}>
-      <div className="rb-ficha-cabeza">
-        <span className="rb-ficha-nombre">{rubro.nombre}</span>
-        {!rubro.porServicio && <span className="rb-etiqueta">fuera de la regla</span>}
+        <div className="rb-cabecera-acciones">
+          <button type="button" className="rb-accion" onClick={() => setEditando(true)} aria-label={`Editar ${rubro.nombre}`}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z" /></svg>
+            Editar
+          </button>
+          <button type="button" className="rb-accion rb-accion--peligro" onClick={borrar} aria-label={`Borrar ${rubro.nombre}`}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13" /></svg>
+            Borrar
+          </button>
+        </div>
       </div>
-      <p className="rb-ficha-criterio">{rubro.criterio || "Sin criterio escrito todavía."}</p>
-      <div className="rb-ficha-pie">
-        <button type="button" className="rb-link" onClick={onFiltrar} aria-pressed={activo}>
-          {rubro.productos} insumo{rubro.productos === 1 ? "" : "s"}
-          {rubro.porServicio ? ` · ${rubro.servicios} servicio${rubro.servicios === 1 ? "" : "s"}` : ""}
-        </button>
-        <span className="rb-ficha-botones">
-          <button type="button" className="rb-link" onClick={abrir} aria-label={`Editar ${rubro.nombre}`}>Editar</button>
-          <button type="button" className="rb-link rb-link--peligro" onClick={borrar} disabled={trabajando} aria-label={`Borrar ${rubro.nombre}`}>Borrar</button>
-        </span>
+      <p className="rb-criterio">{rubro.criterio || "Todavía no tiene criterio escrito. Tocá Editar para agregarlo."}</p>
+      <div className="rb-cabecera-meta">
+        {rubro.productos} insumo{rubro.productos === 1 ? "" : "s"}
+        {rubro.porServicio
+          ? ` · lo llevan ${rubro.servicios} servicio${rubro.servicios === 1 ? "" : "s"}`
+          : " · no depende del servicio: se asigna como hasta ahora"}
       </div>
-    </li>
-  );
-}
-
-function NuevoRubro({ onCreado, onError }) {
-  const [abierto, setAbierto] = useState(false);
-  const [nombre, setNombre] = useState("");
-  const [criterio, setCriterio] = useState("");
-  const [porServicio, setPorServicio] = useState(true);
-  const [trabajando, setTrabajando] = useState(false);
-
-  const crear = async () => {
-    setTrabajando(true);
-    try {
-      await api.post("/admin/rubros", { nombre: nombre.trim(), criterio: criterio.trim(), porServicio });
-      setNombre(""); setCriterio(""); setPorServicio(true); setAbierto(false);
-      onCreado();
-    } catch (e) {
-      onError(e?.response?.data?.error || "No se pudo crear el rubro");
-    } finally {
-      setTrabajando(false);
-    }
-  };
-
-  if (!abierto) {
-    return (
-      <li className="rb-ficha rb-ficha--nueva">
-        <button type="button" className="rb-nueva" onClick={() => setAbierto(true)}>+ Nuevo rubro</button>
-      </li>
-    );
-  }
-  return (
-    <li className="rb-ficha is-editando">
-      <label className="rb-campo">
-        <span>Nombre</span>
-        <input className="input" value={nombre} maxLength={40} autoFocus onChange={(e) => setNombre(e.target.value)} />
-      </label>
-      <label className="rb-campo">
-        <span>Criterio: qué entra en este rubro</span>
-        <textarea className="input" rows={3} maxLength={400} value={criterio} onChange={(e) => setCriterio(e.target.value)} />
-      </label>
-      <label className="rb-check">
-        <input type="checkbox" checked={porServicio} onChange={(e) => setPorServicio(e.target.checked)} />
-        Cada servicio elige si lo lleva
-      </label>
-      <div className="rb-ficha-acciones">
-        <button type="button" className="btn primary" onClick={crear} disabled={trabajando || !nombre.trim()}>
-          {trabajando ? "Creando…" : "Crear rubro"}
-        </button>
-        <button type="button" className="btn ghost" onClick={() => setAbierto(false)} disabled={trabajando}>Cancelar</button>
-      </div>
-    </li>
+    </div>
   );
 }
 
@@ -2245,6 +2240,7 @@ function GruposInsumosSection() {
   const [q, setQ] = useState("");
   const qDeb = useDebounced(q, 250);
   const [filtro, setFiltro] = useState("sin");       // sin | sugeridos | todos | r<ID>
+  const [creando, setCreando] = useState(false);
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
   const [msg, setMsg] = useState("");
@@ -2281,9 +2277,18 @@ function GruposInsumosSection() {
     return p && (p.rubroId ?? null) !== rubroDe(p);
   });
 
-  const sinClasificar = productos.filter((p) => rubroDe(p) == null);
-  const conSugerencia = sinClasificar.filter((p) => p.sugeridoId != null);
-  const clasificados = productos.length - sinClasificar.length;
+  // Cantidades de la columna izquierda, ya con los cambios sin guardar.
+  const cuentas = useMemo(() => {
+    const c = { sin: 0, sugeridos: 0, todos: productos.length };
+    for (const p of productos) {
+      const r = rubroDe(p);
+      if (r == null) { c.sin++; if (p.sugeridoId != null) c.sugeridos++; }
+      else c[`r${r}`] = (c[`r${r}`] || 0) + 1;
+    }
+    return c;
+  }, [productos, rubroDe]);
+
+  const clasificados = productos.length - cuentas.sin;
   const pct = productos.length ? Math.round((clasificados * 100) / productos.length) : 0;
 
   const filas = useMemo(() => {
@@ -2299,7 +2304,7 @@ function GruposInsumosSection() {
   }, [productos, qDeb, filtro, rubroDe]);
 
   // Con 400 insumos la página se hacía eterna: se muestran de a tandas.
-  useEffect(() => { setMostrar(RUBROS_POR_TANDA); }, [qDeb, filtro]);
+  useEffect(() => { setMostrar(RUBROS_POR_TANDA); setElegidos(new Set()); }, [qDeb, filtro]);
   const visibles = filas.slice(0, mostrar);
 
   const poner = (lista, rubroId) => {
@@ -2340,6 +2345,7 @@ function GruposInsumosSection() {
     if (destino === "") return;
     poner(productos.filter((p) => elegidos.has(String(p.id))), destino === "sin" ? null : Number(destino));
     setElegidos(new Set());
+    setDestino("");
   };
 
   const guardar = async () => {
@@ -2361,6 +2367,8 @@ function GruposInsumosSection() {
 
   const descartar = () => { setCambios({}); setMsg(""); };
 
+  const elegirVista = (v) => { setFiltro(v); setCreando(false); setErr(""); };
+
   if (!disponible) {
     return (
       <section className="srv-card" aria-labelledby="gi-heading">
@@ -2370,142 +2378,196 @@ function GruposInsumosSection() {
     );
   }
 
+  const rubroActual = filtro.startsWith("r") ? rubros.find((r) => r.id === Number(filtro.slice(1))) : null;
+
+  const itemNav = ({ vista, texto, cuenta, color, sub, extra }) => (
+    <li key={vista}>
+      <button type="button" className={`rb-nav-item${filtro === vista && !creando ? " is-activo" : ""}${sub ? " rb-nav-item--sub" : ""}`}
+        onClick={() => elegirVista(vista)} aria-current={filtro === vista && !creando ? "true" : undefined}>
+        {color && <span className="rb-punto" style={{ background: color }} aria-hidden="true" />}
+        <span className="rb-nav-texto">{texto}{extra}</span>
+        <span className="rb-nav-cuenta">{cuenta}</span>
+      </button>
+    </li>
+  );
+
   return (
     <section className="srv-card rb" aria-labelledby="gi-heading">
-      <h3 id="gi-heading">Rubros de insumos</h3>
-      <p className="muted gi-intro">
-        Cada insumo va en un solo rubro. Después, en cada servicio se elige qué rubros lleva y su lista se arma sola.
-        Leé el criterio de cada rubro antes de clasificar: así todos lo hacen igual.
-      </p>
-
-      {cargando ? <div className="state">Cargando…</div> : (
-        <>
-          {err && <div className="rb-error" role="alert">{err}</div>}
-
-          <ul className="rb-fichas" aria-label="Rubros">
-            {rubros.map((r) => (
-              <FichaRubro
-                key={`${r.id}-${r.nombre}-${r.criterio}-${r.porServicio}`} rubro={r}
-                activo={filtro === `r${r.id}`}
-                onFiltrar={() => setFiltro(filtro === `r${r.id}` ? "todos" : `r${r.id}`)}
-                onGuardado={() => { setMsg(""); cargar(); }} onError={setErr}
-              />
-            ))}
-            <NuevoRubro onCreado={cargar} onError={setErr} />
-          </ul>
-
+      <header className="rb-top">
+        <div>
+          <h3 id="gi-heading">Rubros de insumos</h3>
+          <p className="rb-bajada">Cada insumo va en un solo rubro. Cada servicio elige qué rubros lleva y su lista se arma sola.</p>
+        </div>
+        {!cargando && (
           <div className="rb-avance" aria-label="Avance de la clasificación">
-            <div className="rb-avance-texto">
-              {clasificados} de {productos.length} insumos clasificados
-              {sinClasificar.length > 0 && <> · faltan {sinClasificar.length}</>}
-            </div>
+            <div className="rb-avance-texto">{clasificados} de {productos.length} insumos clasificados</div>
             <div className="rb-barra" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Clasificados">
               <span style={{ width: `${pct}%` }} />
             </div>
           </div>
+        )}
+      </header>
 
-          <div className="toolbar sp-filtros">
-            <input className="input" value={q} onChange={(e) => setQ(e.target.value)}
-              placeholder="Buscar insumo (nombre o código)…" aria-label="Buscar insumo" />
-            <select className="input" value={filtro} onChange={(e) => setFiltro(e.target.value)} aria-label="Mostrar">
-              <option value="sin">Sin clasificar ({sinClasificar.length})</option>
-              <option value="sugeridos">Con sugerencia ({conSugerencia.length})</option>
-              <option value="todos">Todos ({productos.length})</option>
-              {rubros.map((r) => <option key={r.id} value={`r${r.id}`}>{r.nombre}</option>)}
-            </select>
-          </div>
+      {cargando ? <div className="state">Cargando…</div> : (
+        <div className="rb-layout">
+          <nav className="rb-nav" aria-label="Rubros">
+            <ul>
+              {itemNav({ vista: "sin", texto: "Sin clasificar", cuenta: cuentas.sin })}
+              {cuentas.sugeridos > 0 && itemNav({ vista: "sugeridos", texto: "Con sugerencia", cuenta: cuentas.sugeridos, sub: true })}
+              {itemNav({ vista: "todos", texto: "Todos", cuenta: cuentas.todos })}
+            </ul>
+            <div className="rb-nav-rotulo">Rubros</div>
+            <ul>
+              {rubros.map((r) => itemNav({
+                vista: `r${r.id}`, texto: r.nombre, cuenta: cuentas[`r${r.id}`] || 0,
+                color: colorDeRubro(rubros, r.id),
+                extra: !r.porServicio ? <span className="rb-nav-nota">fuera de la regla</span> : null,
+              }))}
+            </ul>
+            <button type="button" className={`rb-nav-nuevo${creando ? " is-activo" : ""}`} onClick={() => { setCreando(true); setErr(""); }}>
+              + Nuevo rubro
+            </button>
+          </nav>
 
-          <div className="rb-masivo">
-            {sugeribles.length > 0 && (
-              <button type="button" className="btn ghost" onClick={() => aceptarSugerencias(sugeribles)}>
-                Aceptar las sugerencias que se ven ({sugeribles.length})
-              </button>
-            )}
-            <span className="rb-masivo-grupo">
-              <select className="input" value={destino} onChange={(e) => setDestino(e.target.value)}
-                aria-label="Rubro para los elegidos" disabled={!elegidos.size}>
-                <option value="">Pasar los elegidos a…</option>
-                {rubros.map((r) => <option key={r.id} value={r.id}>{r.nombre}</option>)}
-                <option value="sin">Sin clasificar</option>
-              </select>
-              <button type="button" className="btn ghost" onClick={aplicarAElegidos} disabled={!elegidos.size || destino === ""}>
-                Aplicar{elegidos.size ? ` a ${elegidos.size}` : ""}
-              </button>
-            </span>
-          </div>
+          <div className="rb-panel">
+            {err && <div className="rb-error" role="alert">{err}</div>}
 
-          <div className={`rb-guardar${pendientes.length ? " is-pendiente" : ""}`} aria-live="polite">
-            {pendientes.length ? (
-              <>
-                <span>{pendientes.length} cambio{pendientes.length === 1 ? "" : "s"} sin guardar</span>
-                <button type="button" className="btn primary" onClick={guardar} disabled={guardando}>
-                  {guardando ? "Guardando…" : "Guardar cambios"}
-                </button>
-                <button type="button" className="btn ghost" onClick={descartar} disabled={guardando}>Descartar</button>
-              </>
+            {creando ? (
+              <div className="rb-cabecera">
+                <FormRubro
+                  titulo="Nuevo rubro" textoBoton="Crear rubro"
+                  onCancelar={() => setCreando(false)}
+                  onEnviar={async (datos) => {
+                    try {
+                      const { data } = await api.post("/admin/rubros", datos);
+                      setCreando(false);
+                      await cargar();
+                      if (data?.id) setFiltro(`r${data.id}`);
+                      return true;
+                    } catch (e) {
+                      setErr(e?.response?.data?.error || "No se pudo crear el rubro");
+                      return false;
+                    }
+                  }}
+                />
+              </div>
             ) : (
-              <span className="muted">{msg || "Al guardar se actualiza lo que puede pedir cada servicio que ya tiene la regla."}</span>
+              <CabeceraRubro
+                vista={filtro} rubro={rubroActual} color={rubroActual ? colorDeRubro(rubros, rubroActual.id) : null}
+                cuenta={cuentas[filtro] ?? 0}
+                onEditado={() => { setMsg(""); cargar(); }}
+                onBorrado={() => { setFiltro("sin"); setMsg(""); cargar(); }}
+                onError={setErr}
+              />
+            )}
+
+            <div className="rb-herramientas">
+              <input className="input rb-buscar" type="search" value={q} onChange={(e) => setQ(e.target.value)}
+                placeholder="Buscar por nombre o código…" aria-label="Buscar insumo" />
+              {sugeribles.length > 0 && (
+                <button type="button" className="btn ghost" onClick={() => aceptarSugerencias(sugeribles)}>
+                  Aceptar las sugerencias que se ven ({sugeribles.length})
+                </button>
+              )}
+            </div>
+
+            {elegidos.size > 0 && (
+              <div className="rb-seleccion">
+                <span>{elegidos.size} elegido{elegidos.size === 1 ? "" : "s"}</span>
+                <select className="input" value={destino} onChange={(e) => setDestino(e.target.value)} aria-label="Rubro para los elegidos">
+                  <option value="">Pasar a…</option>
+                  {rubros.map((r) => <option key={r.id} value={r.id}>{r.nombre}</option>)}
+                  <option value="sin">Sin clasificar</option>
+                </select>
+                <button type="button" className="btn primary" onClick={aplicarAElegidos} disabled={destino === ""}>
+                  Aplicar a {elegidos.size}
+                </button>
+                <button type="button" className="rb-accion" onClick={() => setElegidos(new Set())}>Quitar selección</button>
+              </div>
+            )}
+
+            {(pendientes.length > 0 || msg) && (
+              <div className={`rb-guardar${pendientes.length ? " is-pendiente" : " is-ok"}`} aria-live="polite">
+                {pendientes.length ? (
+                  <>
+                    <span>{pendientes.length} cambio{pendientes.length === 1 ? "" : "s"} sin guardar</span>
+                    <span className="rb-guardar-botones">
+                      <button type="button" className="btn ghost" onClick={descartar} disabled={guardando}>Descartar</button>
+                      <button type="button" className="btn primary" onClick={guardar} disabled={guardando}>
+                        {guardando ? "Guardando…" : "Guardar cambios"}
+                      </button>
+                    </span>
+                  </>
+                ) : <span>{msg}</span>}
+              </div>
+            )}
+
+            <div className="rb-lista" role="table" aria-label="Insumos">
+              <div className="rb-lista-cabeza" role="row">
+                <span className="rb-col-check" role="columnheader">
+                  <input type="checkbox" checked={todosVisiblesElegidos} onChange={alternarVisibles}
+                    disabled={!visibles.length} aria-label="Elegir todos los que se ven" />
+                </span>
+                <span className="rb-col-nombre" role="columnheader">Insumo</span>
+                <span className="rb-col-rubro" role="columnheader">Rubro</span>
+              </div>
+
+              {filas.length === 0 ? (
+                <div className="rb-vacio">
+                  {qDeb ? "Ningún insumo coincide con la búsqueda."
+                    : filtro === "sin" ? "No queda nada sin clasificar."
+                      : rubroActual ? "Este rubro todavía no tiene insumos. Asignáselos desde “Sin clasificar”."
+                        : "No hay insumos para mostrar."}
+                </div>
+              ) : visibles.map((p) => {
+                const r = rubroDe(p);
+                const cambiado = String(p.id) in cambios && (p.rubroId ?? null) !== r;
+                const sugerencia = r == null && p.sugeridoId != null ? p.sugeridoId : null;
+                return (
+                  <div key={p.id} role="row" className={`rb-fila${cambiado ? " is-cambiado" : ""}${elegidos.has(String(p.id)) ? " is-elegido" : ""}`}>
+                    <span className="rb-col-check" role="cell">
+                      <input type="checkbox" checked={elegidos.has(String(p.id))} onChange={() => alternarElegido(p.id)}
+                        aria-label={`Elegir ${p.name}`} />
+                    </span>
+                    <span className="rb-col-nombre" role="cell">
+                      <span className="rb-nombre">{p.name}</span>
+                      <span className="rb-sub">
+                        {p.code ? `Cód. ${p.code}` : "Sin código"}{p.categoryName ? ` · ${p.categoryName}` : ""}
+                        {!p.activo && " · inactivo"}
+                      </span>
+                    </span>
+                    <span className="rb-col-rubro" role="cell">
+                      <span className="rb-select">
+                        <span className="rb-punto" style={{ background: r == null ? "transparent" : colorDeRubro(rubros, r) }} aria-hidden="true" />
+                        <select value={r == null ? "" : r}
+                          onChange={(e) => poner([p], e.target.value === "" ? null : Number(e.target.value))}
+                          aria-label={`Rubro de ${p.name}`}>
+                          <option value="">Sin clasificar</option>
+                          {rubros.map((x) => <option key={x.id} value={x.id}>{x.nombre}</option>)}
+                        </select>
+                      </span>
+                      {sugerencia != null && (
+                        <button type="button" className="rb-sugerencia" onClick={() => poner([p], sugerencia)}
+                          aria-label={`Aceptar ${nombreRubro.get(sugerencia)} para ${p.name}`}>
+                          Sugerido: {nombreRubro.get(sugerencia)} <span aria-hidden="true">· aceptar</span>
+                        </button>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {filas.length > visibles.length && (
+              <div className="rb-mas">
+                <span>Mostrando {visibles.length} de {filas.length}</span>
+                <button type="button" className="btn ghost" onClick={() => setMostrar((m) => m + RUBROS_POR_TANDA)}>
+                  Mostrar {Math.min(RUBROS_POR_TANDA, filas.length - visibles.length)} más
+                </button>
+              </div>
             )}
           </div>
-
-          <div className="table like rb-tabla">
-            <div className="t-head">
-              <div className="rb-col-check">
-                <input type="checkbox" checked={todosVisiblesElegidos} onChange={alternarVisibles}
-                  disabled={!visibles.length} aria-label="Elegir todos los que se ven" />
-              </div>
-              <div style={{ flex: 4 }}>Insumo</div>
-              <div className="rb-col-rubro">Rubro</div>
-            </div>
-
-            {filas.length === 0 ? (
-              <div className="state">
-                {filtro === "sin" && !qDeb ? "No queda nada sin clasificar." : "Ningún insumo coincide con el filtro"}
-              </div>
-            ) : visibles.map((p) => {
-              const r = rubroDe(p);
-              const cambiado = String(p.id) in cambios && (p.rubroId ?? null) !== r;
-              const sugerencia = r == null && p.sugeridoId != null ? p.sugeridoId : null;
-              return (
-                <div key={p.id} className={`t-row${cambiado ? " rb-cambiado" : ""}`}>
-                  <div className="rb-col-check">
-                    <input type="checkbox" checked={elegidos.has(String(p.id))} onChange={() => alternarElegido(p.id)}
-                      aria-label={`Elegir ${p.name}`} />
-                  </div>
-                  <div className="celda-nombre">
-                    <div className="nombre-largo">{p.name}</div>
-                    <div className="rb-sub">
-                      {p.code ? `Cód. ${p.code}` : "Sin código"}{p.categoryName ? ` · ${p.categoryName}` : ""}
-                      {!p.activo && " · inactivo"}
-                    </div>
-                  </div>
-                  <div className="rb-col-rubro">
-                    <select className="input" value={r == null ? "" : r}
-                      onChange={(e) => poner([p], e.target.value === "" ? null : Number(e.target.value))}
-                      aria-label={`Rubro de ${p.name}`}>
-                      <option value="">Sin clasificar</option>
-                      {rubros.map((x) => <option key={x.id} value={x.id}>{x.nombre}</option>)}
-                    </select>
-                    {sugerencia != null && (
-                      <button type="button" className="rb-sugerencia" onClick={() => poner([p], sugerencia)}
-                        aria-label={`Aceptar ${nombreRubro.get(sugerencia)} para ${p.name}`}>
-                        Sugerido: {nombreRubro.get(sugerencia)} · aceptar
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {filas.length > visibles.length && (
-            <div className="rb-mas">
-              <span className="muted">Mostrando {visibles.length} de {filas.length}</span>
-              <button type="button" className="btn ghost" onClick={() => setMostrar((m) => m + RUBROS_POR_TANDA)}>
-                Mostrar {Math.min(RUBROS_POR_TANDA, filas.length - visibles.length)} más
-              </button>
-            </div>
-          )}
-        </>
+        </div>
       )}
     </section>
   );

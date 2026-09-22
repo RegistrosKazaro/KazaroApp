@@ -956,146 +956,287 @@
 .admin-panel .regla-rubro.is-on::before { content: "✓ "; }
 .admin-panel .regla-rubro:disabled { opacity: 0.6; cursor: default; }
 
-/* Rubros de insumos. Letra chica y sin negritas, a pedido: se lee todo el día. */
-.admin-panel .rb-fichas {
-  list-style: none;
-  margin: 0 0 1rem;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-  gap: 0.6rem;
+/* Rubros de insumos: lista–detalle. Letra chica y sin negritas, a pedido.
+   Colores medidos para contraste AA sobre blanco. */
+.admin-panel .rb { padding-bottom: 1.2rem; }
+
+.admin-panel .rb-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 1rem 2rem;
+  flex-wrap: wrap;
+  padding-bottom: 1rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid #e2e8f0;
 }
-.admin-panel .rb-ficha {
-  border: 1px solid #cbd5e1;
-  border-radius: 10px;
-  padding: 0.6rem 0.75rem;
-  background: #fff;
-  color: #1e293b;
+.admin-panel .rb-top h3 { margin: 0 0 0.25rem; }
+.admin-panel .rb-bajada { margin: 0; font-size: 0.85rem; color: #475569; max-width: 60ch; }
+
+.admin-panel .rb-avance { min-width: 220px; flex: 0 1 280px; }
+.admin-panel .rb-avance-texto { font-size: 0.8rem; color: #475569; margin-bottom: 0.35rem; text-align: right; }
+.admin-panel .rb-barra { height: 6px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
+.admin-panel .rb-barra > span { display: block; height: 100%; background: #16a34a; border-radius: 999px; transition: width 0.3s; }
+
+.admin-panel .rb-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+/* Columna izquierda: los rubros como carpetas */
+.admin-panel .rb-nav {
+  position: sticky;
+  top: 0.75rem;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-  min-width: 0;
+  gap: 0.15rem;
 }
-.admin-panel .rb-ficha.is-activo { border-color: #1e40af; box-shadow: 0 0 0 1px #1e40af; }
-.admin-panel .rb-ficha--nueva { border-style: dashed; justify-content: center; align-items: center; }
-.admin-panel .rb-ficha-cabeza { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
-.admin-panel .rb-ficha-nombre { font-size: 0.92rem; font-weight: 500; }
+.admin-panel .rb-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.admin-panel .rb-nav-rotulo {
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+  margin: 0.9rem 0 0.3rem 0.6rem;
+}
+.admin-panel .rb-nav-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font: inherit;
+  font-size: 0.86rem;
+  text-align: left;
+  color: #1e293b;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+  cursor: pointer;
+}
+.admin-panel .rb-nav-item:hover { background: #f1f5f9; }
+.admin-panel .rb-nav-item.is-activo { background: #eff6ff; color: #1e3a8a; box-shadow: inset 3px 0 0 #2563eb; }
+.admin-panel .rb-nav-item--sub { padding-left: 1.4rem; font-size: 0.8rem; color: #475569; }
+.admin-panel .rb-nav-texto { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.admin-panel .rb-nav-nota { font-size: 0.7rem; color: #64748b; }
+.admin-panel .rb-nav-cuenta {
+  font-size: 0.75rem;
+  color: #475569;
+  background: #f1f5f9;
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  min-width: 1.8rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.admin-panel .rb-nav-item.is-activo .rb-nav-cuenta { background: #dbeafe; color: #1e3a8a; }
+.admin-panel .rb-nav-nuevo {
+  margin-top: 0.6rem;
+  font: inherit;
+  font-size: 0.84rem;
+  color: #1d4ed8;
+  background: transparent;
+  border: 1px dashed #93c5fd;
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+  cursor: pointer;
+  text-align: left;
+}
+.admin-panel .rb-nav-nuevo:hover, .admin-panel .rb-nav-nuevo.is-activo { background: #eff6ff; }
+
+.admin-panel .rb-punto { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.admin-panel .rb-punto--grande { width: 12px; height: 12px; }
+
+/* Panel derecho */
+.admin-panel .rb-panel { min-width: 0; }
+
+.admin-panel .rb-cabecera {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 0.9rem 1rem;
+  margin-bottom: 0.9rem;
+  background: #f8fafc;
+}
+.admin-panel .rb-cabecera-fila { display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.admin-panel .rb-cabecera-titulo { display: flex; align-items: center; gap: 0.5rem; font-size: 1rem; font-weight: 500; color: #0f172a; }
+.admin-panel .rb-cabecera-cuenta { font-size: 0.8rem; font-weight: 400; color: #475569; background: #e2e8f0; border-radius: 999px; padding: 0.05rem 0.5rem; }
+.admin-panel .rb-cabecera-texto { margin: 0.35rem 0 0; font-size: 0.84rem; color: #475569; }
+.admin-panel .rb-criterio {
+  margin: 0.6rem 0 0;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  color: #334155;
+  max-width: 75ch;
+}
+.admin-panel .rb-cabecera-meta { margin-top: 0.5rem; font-size: 0.78rem; color: #64748b; }
+.admin-panel .rb-cabecera-acciones { display: flex; gap: 0.25rem; }
 .admin-panel .rb-etiqueta {
   font-size: 0.72rem;
-  padding: 0.05rem 0.45rem;
+  font-weight: 400;
+  padding: 0.05rem 0.5rem;
   border-radius: 999px;
   background: #e2e8f0;
   color: #334155;
 }
-.admin-panel .rb-ficha-criterio {
-  margin: 0;
-  font-size: 0.8rem;
-  line-height: 1.4;
-  color: #475569;
-  overflow-wrap: break-word;
-}
-.admin-panel .rb-ficha-pie {
-  margin-top: auto;
-  display: flex;
-  justify-content: space-between;
+
+.admin-panel .rb-accion {
+  display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-.admin-panel .rb-ficha-botones { display: flex; gap: 0.6rem; }
-.admin-panel .rb-link {
+  gap: 0.3rem;
   font: inherit;
   font-size: 0.8rem;
-  background: none;
-  border: 0;
-  padding: 0.15rem 0;
-  color: #1e40af;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  color: #334155;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 0.3rem 0.55rem;
   cursor: pointer;
 }
-.admin-panel .rb-link--peligro { color: #b91c1c; }
-.admin-panel .rb-link:disabled { opacity: 0.6; cursor: default; }
-.admin-panel .rb-nueva {
-  font: inherit;
-  font-size: 0.88rem;
-  background: none;
-  border: 0;
-  color: #1e40af;
-  cursor: pointer;
-  padding: 0.8rem;
+.admin-panel .rb-accion svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.admin-panel .rb-accion:hover { background: #fff; border-color: #cbd5e1; }
+.admin-panel .rb-accion--peligro { color: #b91c1c; }
+.admin-panel .rb-accion--peligro:hover { background: #fef2f2; border-color: #fecaca; }
+
+/* Formulario de rubro (crear / editar) */
+.admin-panel .rb-form { display: flex; flex-direction: column; gap: 0.6rem; max-width: 560px; }
+.admin-panel .rb-form-titulo { font-size: 0.95rem; font-weight: 500; color: #0f172a; }
+.admin-panel .rb-campo { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.8rem; color: #334155; }
+.admin-panel .rb-campo textarea { resize: vertical; font: inherit; font-size: 0.86rem; }
+.admin-panel .rb-check { display: flex; align-items: center; gap: 0.45rem; font-size: 0.82rem; color: #1e293b; }
+.admin-panel .rb-form-acciones { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+
+/* Herramientas sobre la lista */
+.admin-panel .rb-herramientas { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.6rem; }
+.admin-panel .rb-buscar { flex: 1 1 260px; width: auto; height: 38px; background: #fff; }
+.admin-panel .rb-seleccion select.input { height: 34px; background: #fff; }
+
+.admin-panel .rb-seleccion {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 0.84rem;
+  color: #1e3a8a;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  padding: 0.45rem 0.6rem;
+  margin-bottom: 0.6rem;
 }
-.admin-panel .rb-campo { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.8rem; color: #334155; }
-.admin-panel .rb-campo textarea { resize: vertical; font: inherit; font-size: 0.85rem; }
-.admin-panel .rb-check { display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: #1e293b; }
-.admin-panel .rb-ficha-acciones { display: flex; gap: 0.4rem; flex-wrap: wrap; }
-
-.admin-panel .rb-avance { margin: 0 0 0.8rem; }
-.admin-panel .rb-avance-texto { font-size: 0.85rem; color: #334155; margin-bottom: 0.3rem; }
-.admin-panel .rb-barra { height: 8px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
-.admin-panel .rb-barra > span { display: block; height: 100%; background: #15803d; }
-
-.admin-panel .rb-masivo { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.5rem 0; }
-.admin-panel .rb-masivo-grupo { display: flex; gap: 0.4rem; align-items: center; margin-left: auto; }
-.admin-panel .rb-masivo select { width: auto; min-width: 210px; }
-.admin-panel .rb-mas { display: flex; align-items: center; justify-content: center; gap: 0.7rem; margin-top: 0.7rem; font-size: 0.85rem; }
+.admin-panel .rb-seleccion select { width: auto; min-width: 180px; }
 
 .admin-panel .rb-guardar {
   display: flex;
   flex-wrap: wrap;
+  justify-content: space-between;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.85rem;
+  font-size: 0.84rem;
   padding: 0.5rem 0.7rem;
-  border-radius: 8px;
+  border-radius: 10px;
   margin: 0 0 0.6rem;
-  background: #f1f5f9;
-  color: #334155;
   position: sticky;
-  top: 0;
-  z-index: 2;
+  top: 0.5rem;
+  z-index: 3;
 }
-.admin-panel .rb-guardar.is-pendiente { background: #fef3c7; color: #78350f; }
+.admin-panel .rb-guardar.is-pendiente { background: #fffbeb; color: #78350f; border: 1px solid #fcd34d; box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08); }
+.admin-panel .rb-guardar.is-ok { background: #f0fdf4; color: #14532d; border: 1px solid #bbf7d0; }
+.admin-panel .rb-guardar-botones { display: flex; gap: 0.4rem; }
 .admin-panel .rb-error {
-  font-size: 0.85rem;
+  font-size: 0.84rem;
   padding: 0.5rem 0.7rem;
-  border-radius: 8px;
+  border-radius: 10px;
   margin-bottom: 0.6rem;
-  background: #fee2e2;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
   color: #7f1d1d;
 }
 
-.admin-panel .rb-tabla .rb-col-check { width: 34px; flex: none; display: flex; justify-content: center; }
-.admin-panel .rb-tabla .rb-col-rubro { width: 230px; flex: none; display: flex; flex-direction: column; gap: 0.25rem; }
-/* En la tabla el selector va compacto: son cientos de filas. */
-.admin-panel .rb-tabla .rb-col-rubro select {
-  width: 100%;
-  min-height: 0;
-  height: auto;
-  padding: 0.3rem 0.5rem;
-  font-size: 0.85rem;
+/* La lista de insumos */
+.admin-panel .rb-lista { border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; background: #fff; }
+.admin-panel .rb-lista-cabeza, .admin-panel .rb-fila {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 240px;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem 0.5rem 0.25rem;
 }
-.admin-panel .rb-tabla .t-row { padding-top: 0.45rem; padding-bottom: 0.45rem; align-items: center; }
-.admin-panel .rb-sub { font-size: 0.76rem; color: #475569; margin-top: 0.1rem; }
-.admin-panel .rb-cambiado { background: #fffbeb; }
-.admin-panel .rb-sugerencia {
+.admin-panel .rb-lista-cabeza {
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #475569;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+}
+.admin-panel .rb-fila { border-bottom: 1px solid #f1f5f9; }
+.admin-panel .rb-fila:last-child { border-bottom: 0; }
+.admin-panel .rb-fila:hover { background: #f8fafc; }
+.admin-panel .rb-fila.is-elegido { background: #eff6ff; }
+.admin-panel .rb-fila.is-cambiado { box-shadow: inset 3px 0 0 #f59e0b; background: #fffbeb; }
+.admin-panel .rb-col-check { display: flex; justify-content: center; }
+.admin-panel .rb-col-check input { width: 16px; height: 16px; }
+.admin-panel .rb-col-nombre { min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.admin-panel .rb-nombre { font-size: 0.86rem; color: #0f172a; overflow-wrap: break-word; }
+.admin-panel .rb-sub { font-size: 0.74rem; color: #64748b; }
+.admin-panel .rb-col-rubro { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+
+.admin-panel .rb-select {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 0 0.5rem;
+  background: #fff;
+}
+.admin-panel .rb-select:focus-within { border-color: #2563eb; box-shadow: 0 0 0 2px #bfdbfe; }
+.admin-panel .rb-select select {
+  flex: 1;
+  min-width: 0;
   font: inherit;
-  font-size: 0.76rem;
-  text-align: left;
-  background: #eff6ff;
-  color: #1e3a8a;
-  border: 1px dashed #93c5fd;
-  border-radius: 6px;
-  padding: 0.2rem 0.45rem;
+  font-size: 0.84rem;
+  color: #0f172a;
+  border: 0;
+  background: transparent;
+  padding: 0.35rem 0;
+  outline: none;
   cursor: pointer;
 }
+.admin-panel .rb-sugerencia {
+  align-self: flex-start;
+  font: inherit;
+  font-size: 0.74rem;
+  color: #1e3a8a;
+  background: #eff6ff;
+  border: 1px dashed #93c5fd;
+  border-radius: 999px;
+  padding: 0.12rem 0.55rem;
+  cursor: pointer;
+}
+.admin-panel .rb-sugerencia:hover { background: #dbeafe; border-style: solid; }
+.admin-panel .rb-vacio { padding: 2rem 1rem; text-align: center; font-size: 0.86rem; color: #475569; }
+.admin-panel .rb-mas { display: flex; align-items: center; justify-content: center; gap: 0.7rem; margin-top: 0.8rem; font-size: 0.82rem; color: #475569; }
 
-@media (max-width: 640px) {
-  .admin-panel .rb-masivo-grupo { margin-left: 0; flex-wrap: wrap; }
-  .admin-panel .rb-masivo select { min-width: 0; flex: 1; }
-  .admin-panel .rb-tabla .t-row { flex-wrap: wrap; }
-  .admin-panel .rb-tabla .rb-col-rubro { width: 100%; padding-left: 34px; }
-  .admin-panel .rb-tabla .t-head .rb-col-rubro { display: none; }
+@media (max-width: 860px) {
+  .admin-panel .rb-layout { grid-template-columns: minmax(0, 1fr); }
+  .admin-panel .rb-nav { position: static; flex-direction: row; flex-wrap: wrap; gap: 0.3rem; }
+  .admin-panel .rb-nav ul { flex-direction: row; flex-wrap: wrap; gap: 0.3rem; }
+  .admin-panel .rb-nav-rotulo { display: none; }
+  .admin-panel .rb-nav-item { width: auto; border: 1px solid #e2e8f0; border-radius: 999px; padding: 0.3rem 0.65rem; }
+  .admin-panel .rb-nav-item.is-activo { box-shadow: none; border-color: #2563eb; }
+  .admin-panel .rb-nav-item--sub { padding-left: 0.65rem; }
+  .admin-panel .rb-nav-nota { display: none; }
+  .admin-panel .rb-nav-nuevo { margin-top: 0; border-radius: 999px; padding: 0.3rem 0.75rem; }
+  .admin-panel .rb-avance-texto { text-align: left; }
+}
+@media (max-width: 600px) {
+  .admin-panel .rb-herramientas .btn { white-space: normal; flex: 1 1 100%; }
+  .admin-panel .rb-lista-cabeza { display: none; }
+  .admin-panel .rb-fila { grid-template-columns: 34px minmax(0, 1fr); }
+  .admin-panel .rb-fila .rb-col-rubro { grid-column: 2; }
 }
 
 .admin-panel .gi-intro {

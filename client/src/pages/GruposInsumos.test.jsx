@@ -48,12 +48,32 @@ const abrirRubros = async () => {
 };
 
 describe("Rubros de insumos", () => {
-  it("muestra cada rubro con su criterio y el avance", async () => {
+  it("lista los rubros con su cantidad y el avance", async () => {
     await abrirRubros();
-    const fichas = screen.getByRole("list", { name: "Rubros" });
-    expect(within(fichas).getByText("Lo que usa el operario para limpiar")).toBeInTheDocument();
-    expect(within(fichas).getByText("fuera de la regla")).toBeInTheDocument();
+    const nav = screen.getByRole("navigation", { name: "Rubros" });
+    expect(within(nav).getByRole("button", { name: /Sin clasificar\s*3/ })).toHaveAttribute("aria-current", "true");
+    expect(within(nav).getByRole("button", { name: /Limpieza\s*1/ })).toBeInTheDocument();
+    expect(within(nav).getByText("fuera de la regla")).toBeInTheDocument();
     expect(screen.getByText(/1 de 4 insumos clasificados/)).toBeInTheDocument();
+  });
+
+  it("al elegir un rubro muestra su criterio y sólo sus insumos", async () => {
+    const user = userEvent.setup({ delay: null });
+    await abrirRubros();
+    await user.click(within(screen.getByRole("navigation", { name: "Rubros" })).getByRole("button", { name: /Limpieza/ }));
+    expect(screen.getByText("Lo que usa el operario para limpiar")).toBeInTheDocument();
+    expect(screen.getByText(/lo llevan 2 servicios/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Rubro de LAVANDINA")).toHaveValue("1");
+    expect(screen.queryByLabelText("Rubro de EMBUDO")).not.toBeInTheDocument();
+  });
+
+  it("la cantidad del rubro cambia en vivo antes de guardar", async () => {
+    const user = userEvent.setup({ delay: null });
+    await abrirRubros();
+    await user.selectOptions(screen.getByLabelText("Rubro de EMBUDO"), "1");
+    const nav = screen.getByRole("navigation", { name: "Rubros" });
+    expect(within(nav).getByRole("button", { name: /Limpieza\s*2/ })).toBeInTheDocument();
+    expect(within(nav).getByRole("button", { name: /Sin clasificar\s*2/ })).toBeInTheDocument();
   });
 
   it("arranca mostrando sólo lo que falta clasificar", async () => {
@@ -131,6 +151,7 @@ describe("Rubros de insumos", () => {
     const user = userEvent.setup({ delay: null });
     const confirmar = vi.spyOn(window, "confirm").mockReturnValue(false);
     await abrirRubros();
+    await user.click(within(screen.getByRole("navigation", { name: "Rubros" })).getByRole("button", { name: /Limpieza/ }));
     await user.click(screen.getByRole("button", { name: "Borrar Limpieza" }));
     expect(confirmar.mock.calls[0][0]).toMatch(/1 insumo van a quedar sin clasificar y 2 servicios lo tienen elegido/);
     expect(api.delete).not.toHaveBeenCalled();
