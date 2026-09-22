@@ -2497,11 +2497,31 @@ export function ensureServiciosFicha() {
 }
 ensureServiciosFicha();
 
-export const GRUPOS_INSUMOS = ["limpieza", "descartables"];
 // La regla es sólo de Kazaro; en Pazar los servicios siguen como estaban.
 export const EMPRESA_CON_GRUPOS = 1;
 
-export function ensureGruposInsumos() {
+/* Rubros de insumos.
+
+   Antes había dos grupos fijos en el código (limpieza / descartables) con un
+   tilde cada uno, así que un insumo podía estar en los dos o en ninguno, y
+   "ninguno" no distinguía "todavía no lo miré" de "no va". Ahora:
+     - los rubros son una lista que administra el usuario, cada uno con su
+       criterio escrito;
+     - cada insumo va en UN rubro o queda "sin clasificar" (visible y contable);
+     - los rubros con por_servicio = 0 (Uniformes y EPP) ordenan pero no entran
+       en la regla: esos insumos se siguen asignando como hoy.
+
+   Las tablas viejas (insumo_grupos, Servicios.lleva_*) no se borran: quedan
+   como respaldo de lo que había antes de migrar. */
+const RUBROS_INICIALES = [
+  ["Limpieza", 1, "Lo que usa el operario para limpiar: químicos (detergente, cloro, desengrasante, ceras, perfumina) y elementos (escobas, secadores, mopas, baldes, paños, esponjas)."],
+  ["Descartables", 1, "Lo que se repone para quien usa el lugar y se gasta con el uso: papeles, jabón de manos, alcohol en gel o 70%, repuestos aromatizadores, insecticidas, filtros urinales, bolsas de residuo."],
+  ["Dispenser", 1, "Equipamiento que queda instalado en el lugar: dispensers, cestos y contenedores de residuos."],
+  ["Extras", 1, "Lo que sólo usan algunos servicios: discos de máquina, pileta, control de plagas, espacios verdes, mantenimiento."],
+  ["Uniformes y EPP", 0, "Ropa, calzado y elementos de protección personal. No depende de lo que lleva el servicio: se siguen asignando como hasta ahora."],
+];
+
+export function ensureRubrosInsumos() {
   try {
     db.exec(`
       CREATE TABLE IF NOT EXISTS insumo_grupos (
@@ -2509,124 +2529,225 @@ export function ensureGruposInsumos() {
         grupo      TEXT NOT NULL,
         PRIMARY KEY (product_id, grupo)
       );
-      CREATE INDEX IF NOT EXISTS idx_insumo_grupos_grupo ON insumo_grupos(grupo);
-
       CREATE TABLE IF NOT EXISTS servicio_excepciones (
         service_id TEXT NOT NULL,
         product_id TEXT NOT NULL,
         tipo       TEXT NOT NULL,
         PRIMARY KEY (service_id, product_id)
       );
+      CREATE TABLE IF NOT EXISTS insumo_rubros (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        empresa_id   INTEGER NOT NULL,
+        nombre       TEXT NOT NULL,
+        criterio     TEXT,
+        por_servicio INTEGER NOT NULL DEFAULT 1,
+        orden        INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_insumo_rubros_nombre ON insumo_rubros(empresa_id, nombre COLLATE NOCASE);
+      CREATE TABLE IF NOT EXISTS producto_rubro (
+        product_id TEXT PRIMARY KEY,
+        rubro_id   INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_producto_rubro_rubro ON producto_rubro(rubro_id);
+      CREATE TABLE IF NOT EXISTS servicio_rubros (
+        service_id TEXT NOT NULL,
+        rubro_id   INTEGER NOT NULL,
+        PRIMARY KEY (service_id, rubro_id)
+      );
     `);
 
-    // Marcas por servicio. NULL = todavía no se definió: esos servicios no se
-    // tocan al recalcular, para no dejar a nadie sin poder pedir.
     const cols = tinfo("Servicios").map((c) => c.name);
     if (!cols.includes("lleva_limpieza")) db.exec(`ALTER TABLE Servicios ADD COLUMN lleva_limpieza INTEGER`);
     if (!cols.includes("lleva_descartables")) db.exec(`ALTER TABLE Servicios ADD COLUMN lleva_descartables INTEGER`);
+    // NULL = todavía no se definió qué lleva: ese servicio no se toca nunca al
+    // recalcular, para no dejar a nadie sin poder pedir. 1 = definido (aunque
+    // sea "ninguno").
+    if (!cols.includes("rubros_definidos")) db.exec(`ALTER TABLE Servicios ADD COLUMN rubros_definidos INTEGER`);
+
+    // Primera vez: rubros iniciales y migración de los dos grupos viejos.
+    const hay = db.prepare(`SELECT COUNT(*) AS n FROM insumo_rubros WHERE empresa_id = ?`).get(EMPRESA_CON_GRUPOS).n;
+    if (!hay) {
+      db.transaction(() => {
+        const ins = db.prepare(`INSERT INTO insumo_rubros (empresa_id, nombre, criterio, por_servicio, orden) VALUES (?, ?, ?, ?, ?)`);
+        const ids = {};
+        RUBROS_INICIALES.forEach(([nombre, porServicio, criterio], i) => {
+          ids[nombre] = ins.run(EMPRESA_CON_GRUPOS, nombre, criterio, porServicio, i + 1).lastInsertRowid;
+        });
+        const viejoANuevo = { limpieza: ids.Limpieza, descartables: ids.Descartables };
+
+        // Un insumo que estaba en los dos grupos (hoy no hay ninguno) queda en
+        // Limpieza: es el que ya tenía más servicios.
+        const insProd = db.prepare(`INSERT OR IGNORE INTO producto_rubro (product_id, rubro_id) VALUES (?, ?)`);
+        for (const g of ["limpieza", "descartables"]) {
+          for (const r of db.prepare(`SELECT product_id FROM insumo_grupos WHERE grupo = ?`).all(g)) {
+            insProd.run(String(r.product_id), viejoANuevo[g]);
+          }
+        }
+
+        const insSrv = db.prepare(`INSERT OR IGNORE INTO servicio_rubros (service_id, rubro_id) VALUES (?, ?)`);
+        const marcados = db.prepare(`
+          SELECT ServiciosID AS id, lleva_limpieza AS l, lleva_descartables AS d FROM Servicios
+          WHERE empresa_id = ? AND (lleva_limpieza IS NOT NULL OR lleva_descartables IS NOT NULL)
+        `).all(EMPRESA_CON_GRUPOS);
+        const definir = db.prepare(`UPDATE Servicios SET rubros_definidos = 1 WHERE ServiciosID = ?`);
+        for (const s of marcados) {
+          const sid = String(Math.trunc(Number(s.id)));
+          if (s.l) insSrv.run(sid, ids.Limpieza);
+          if (s.d) insSrv.run(sid, ids.Descartables);
+          definir.run(s.id);
+        }
+      })();
+    }
   } catch (e) {
-    console.error("[db] ensureGruposInsumos error:", e?.message || e);
+    console.error("[db] ensureRubrosInsumos error:", e?.message || e);
   }
 }
-ensureGruposInsumos();
+ensureRubrosInsumos();
 
-/** Insumos de cada grupo: { limpieza: Set, descartables: Set } */
-export function leerGruposInsumos() {
-  ensureGruposInsumos();
-  const salida = Object.fromEntries(GRUPOS_INSUMOS.map((g) => [g, new Set()]));
-  for (const r of db.prepare(`SELECT product_id, grupo FROM insumo_grupos`).all()) {
-    if (salida[r.grupo]) salida[r.grupo].add(String(r.product_id));
-  }
-  return salida;
+// El id del servicio siempre como entero en texto: en Pazar hay ServiciosID
+// guardados como REAL (904.0) y CAST AS TEXT daría "904.0".
+const sidTexto = (id) => String(Math.trunc(Number(id)));
+
+export function listarRubros(empresaId = EMPRESA_CON_GRUPOS) {
+  ensureRubrosInsumos();
+  return db.prepare(`
+    SELECT r.id, r.nombre, r.criterio, r.por_servicio AS porServicio, r.orden,
+           (SELECT COUNT(*) FROM producto_rubro pr WHERE pr.rubro_id = r.id) AS productos,
+           (SELECT COUNT(*) FROM servicio_rubros sr
+              JOIN Servicios s ON CAST(s.ServiciosID AS INTEGER) = CAST(sr.service_id AS INTEGER)
+             WHERE sr.rubro_id = r.id AND s.deleted_at IS NULL) AS servicios
+    FROM insumo_rubros r WHERE r.empresa_id = ?
+    ORDER BY r.orden, r.nombre COLLATE NOCASE
+  `).all(empresaId);
 }
 
-/** Reemplaza de una los insumos de un grupo. */
-export function guardarGrupoInsumos(grupo, productIds) {
-  ensureGruposInsumos();
-  if (!GRUPOS_INSUMOS.includes(grupo)) throw new Error(`Grupo desconocido: ${grupo}`);
-
-  const deseados = [...new Set((productIds || []).map(String))];
-  const del = db.prepare(`DELETE FROM insumo_grupos WHERE grupo = ?`);
-  const ins = db.prepare(`INSERT OR IGNORE INTO insumo_grupos (product_id, grupo) VALUES (?, ?)`);
-
-  const tx = db.transaction(() => {
-    del.run(grupo);
-    for (const pid of deseados) ins.run(pid, grupo);
-  });
-  tx();
-  return deseados.length;
+export function rubroDeLaEmpresa(rubroId, empresaId = EMPRESA_CON_GRUPOS) {
+  return db.prepare(`SELECT * FROM insumo_rubros WHERE id = ? AND empresa_id = ?`).get(Number(rubroId), empresaId) || null;
 }
 
-/** Qué insumos le corresponden a un servicio según la regla, ya con excepciones. */
-export function insumosQueCorresponden(servicioId, marcas, grupos = null) {
-  const g = grupos || leerGruposInsumos();
-  const set = new Set();
-  if (marcas?.lleva_limpieza) for (const id of g.limpieza) set.add(id);
-  if (marcas?.lleva_descartables) for (const id of g.descartables) set.add(id);
+/** product_id -> rubro_id, sólo de lo confirmado. */
+export function leerRubrosDeProductos() {
+  ensureRubrosInsumos();
+  return new Map(db.prepare(`SELECT product_id, rubro_id FROM producto_rubro`).all().map((r) => [String(r.product_id), Number(r.rubro_id)]));
+}
 
-  for (const e of db.prepare(`SELECT product_id, tipo FROM servicio_excepciones WHERE CAST(service_id AS TEXT) = CAST(? AS TEXT)`).all(String(servicioId))) {
-    if (e.tipo === "suma") set.add(String(e.product_id));
-    else set.delete(String(e.product_id));
+/** Cambia el rubro de varios insumos. rubroId null = sin clasificar. */
+export function asignarRubroAProductos(asignaciones) {
+  ensureRubrosInsumos();
+  const up = db.prepare(`INSERT INTO producto_rubro (product_id, rubro_id) VALUES (?, ?)
+    ON CONFLICT(product_id) DO UPDATE SET rubro_id = excluded.rubro_id`);
+  const del = db.prepare(`DELETE FROM producto_rubro WHERE product_id = ?`);
+  let cambios = 0;
+  db.transaction(() => {
+    for (const a of asignaciones) {
+      const pid = String(a.productId);
+      cambios += a.rubroId == null ? del.run(pid).changes : up.run(pid, Number(a.rubroId)).changes;
+    }
+  })();
+  return cambios;
+}
+
+/**
+ * Qué hace la regla con un servicio:
+ *   deseados    → lo que le corresponde (rubros del servicio + excepciones)
+ *   gestionados → los insumos que la regla administra (confirmados en un rubro
+ *                 por servicio). Lo que NO está acá (uniformes, EPP, sin
+ *                 clasificar) no se agrega ni se quita: queda como está.
+ */
+function reglaDelServicio(servicioId, ctx) {
+  const sid = sidTexto(servicioId);
+  const suyos = new Set(
+    db.prepare(`SELECT rubro_id FROM servicio_rubros WHERE service_id = ?`).all(sid).map((r) => Number(r.rubro_id))
+  );
+  const deseados = new Set();
+  for (const [pid, rid] of ctx.productos) {
+    if (ctx.porServicio.has(rid) && suyos.has(rid)) deseados.add(pid);
   }
-  return set;
+  const quita = new Set();
+  for (const e of db.prepare(`SELECT product_id, tipo FROM servicio_excepciones WHERE service_id = ?`).all(sid)) {
+    if (e.tipo === "suma") deseados.add(String(e.product_id));
+    else { deseados.delete(String(e.product_id)); quita.add(String(e.product_id)); }
+  }
+  return { deseados, quita };
+}
+
+function contextoRegla() {
+  const porServicio = new Set(
+    db.prepare(`SELECT id FROM insumo_rubros WHERE empresa_id = ? AND por_servicio = 1`).all(EMPRESA_CON_GRUPOS).map((r) => Number(r.id))
+  );
+  const productos = leerRubrosDeProductos();
+  const gestionados = new Set([...productos].filter(([, rid]) => porServicio.has(rid)).map(([pid]) => pid));
+  return { porServicio, productos, gestionados };
 }
 
 /**
  * Recalcula service_products de un servicio a partir de su regla.
- * Si el servicio no tiene marcas definidas no se toca nada: devuelve null.
+ * Si el servicio no tiene la regla definida no se toca nada: devuelve null.
  */
-export function recalcularInsumosDeServicio(servicioId, grupos = null) {
-  ensureGruposInsumos();
+export function recalcularInsumosDeServicio(servicioId, ctx = null) {
+  ensureRubrosInsumos();
   ensureServiceProductsPivot();
   const det = detectSPCols();
   if (!det) return null;
 
-  const srv = db.prepare(`SELECT lleva_limpieza, lleva_descartables, empresa_id FROM Servicios WHERE CAST(ServiciosID AS INTEGER) = CAST(? AS INTEGER)`).get(servicioId);
+  const srv = db.prepare(`SELECT rubros_definidos, empresa_id FROM Servicios WHERE CAST(ServiciosID AS INTEGER) = CAST(? AS INTEGER)`).get(sidTexto(servicioId));
   if (!srv) return null;
   if (Number(srv.empresa_id) !== EMPRESA_CON_GRUPOS) return null;
-  if (srv.lleva_limpieza == null && srv.lleva_descartables == null) return null;
+  if (srv.rubros_definidos == null) return null;
 
-  const deseados = insumosQueCorresponden(servicioId, srv, grupos);
+  const c = ctx || contextoRegla();
+  const { deseados, quita } = reglaDelServicio(servicioId, c);
+  const sid = sidTexto(servicioId);
   const actuales = new Set(
-    db.prepare(`SELECT ${det.prod} AS pid FROM service_products WHERE CAST(${det.srv} AS TEXT) = CAST(? AS TEXT)`)
-      .all(String(servicioId)).map((r) => String(r.pid))
+    db.prepare(`SELECT ${det.prod} AS pid FROM service_products WHERE CAST(${det.srv} AS INTEGER) = CAST(? AS INTEGER)`)
+      .all(sid).map((r) => String(r.pid))
   );
 
   const ins = db.prepare(`INSERT OR IGNORE INTO service_products (${det.srv}, ${det.prod}) VALUES (?, ?)`);
-  const del = db.prepare(`DELETE FROM service_products WHERE CAST(${det.srv} AS TEXT) = CAST(? AS TEXT) AND CAST(${det.prod} AS TEXT) = CAST(? AS TEXT)`);
+  const del = db.prepare(`DELETE FROM service_products WHERE CAST(${det.srv} AS INTEGER) = CAST(? AS INTEGER) AND CAST(${det.prod} AS TEXT) = CAST(? AS TEXT)`);
   const vis = db.prepare(`INSERT OR IGNORE INTO ProductRoleVisibility (product_id, role) VALUES (?, 'supervisor')`);
 
-  const tx = db.transaction(() => {
+  return db.transaction(() => {
     let agregados = 0, quitados = 0;
-    for (const pid of deseados) if (!actuales.has(pid)) { agregados += ins.run(String(servicioId), pid).changes; vis.run(pid); }
-    for (const pid of actuales) if (!deseados.has(pid)) quitados += del.run(String(servicioId), pid).changes;
+    for (const pid of deseados) if (!actuales.has(pid)) { agregados += ins.run(sid, pid).changes; vis.run(pid); }
+    for (const pid of actuales) {
+      const loManejaLaRegla = c.gestionados.has(pid) || quita.has(pid);
+      if (loManejaLaRegla && !deseados.has(pid)) quitados += del.run(sid, pid).changes;
+    }
     return { agregados, quitados };
-  });
-
-  return tx();
+  })();
 }
 
-/** Marca un servicio y deja sus insumos al día. */
-export function marcarServicio(servicioId, { limpieza, descartables }) {
-  ensureGruposInsumos();
-  const aBit = (v) => (v == null ? null : v ? 1 : 0);
-  db.prepare(`UPDATE Servicios SET lleva_limpieza = ?, lleva_descartables = ? WHERE CAST(ServiciosID AS INTEGER) = CAST(? AS INTEGER) AND empresa_id = ?`)
-    .run(aBit(limpieza), aBit(descartables), servicioId, EMPRESA_CON_GRUPOS);
-  return recalcularInsumosDeServicio(servicioId);
+/** Qué rubros lleva un servicio. rubroIds null = volver a "sin definir". */
+export function definirRubrosDeServicio(servicioId, rubroIds) {
+  ensureRubrosInsumos();
+  const sid = sidTexto(servicioId);
+  db.transaction(() => {
+    db.prepare(`DELETE FROM servicio_rubros WHERE service_id = ?`).run(sid);
+    if (rubroIds == null) {
+      db.prepare(`UPDATE Servicios SET rubros_definidos = NULL WHERE CAST(ServiciosID AS INTEGER) = CAST(? AS INTEGER) AND empresa_id = ?`).run(sid, EMPRESA_CON_GRUPOS);
+      return;
+    }
+    const ins = db.prepare(`INSERT OR IGNORE INTO servicio_rubros (service_id, rubro_id) VALUES (?, ?)`);
+    for (const r of rubroIds) ins.run(sid, Number(r));
+    db.prepare(`UPDATE Servicios SET rubros_definidos = 1 WHERE CAST(ServiciosID AS INTEGER) = CAST(? AS INTEGER) AND empresa_id = ?`).run(sid, EMPRESA_CON_GRUPOS);
+  })();
+  // "Sin definir" deja la lista como está: no se recalcula.
+  return rubroIds == null ? { agregados: 0, quitados: 0 } : recalcularInsumosDeServicio(sid);
 }
 
-/** Recalcula todos los servicios ya marcados. Se usa al cambiar un grupo. */
+/** Recalcula todos los servicios definidos. Se usa al cambiar un rubro. */
 export function recalcularTodosLosServicios() {
-  const grupos = leerGruposInsumos();
+  ensureRubrosInsumos();
+  const ctx = contextoRegla();
   const filas = db.prepare(`
     SELECT ServiciosID AS id FROM Servicios
-    WHERE empresa_id = ? AND deleted_at IS NULL
-      AND (lleva_limpieza IS NOT NULL OR lleva_descartables IS NOT NULL)
+    WHERE empresa_id = ? AND deleted_at IS NULL AND rubros_definidos IS NOT NULL
   `).all(EMPRESA_CON_GRUPOS);
 
   let servicios = 0, agregados = 0, quitados = 0;
   for (const f of filas) {
-    const r = recalcularInsumosDeServicio(f.id, grupos);
+    const r = recalcularInsumosDeServicio(f.id, ctx);
     if (!r) continue;
     servicios++; agregados += r.agregados; quitados += r.quitados;
   }

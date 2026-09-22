@@ -29,17 +29,19 @@ import {
   normalizarLegajo,
   normalizarDni,
   desasignarServicio,
-  GRUPOS_INSUMOS,
   EMPRESA_CON_GRUPOS,
-  leerGruposInsumos,
-  guardarGrupoInsumos,
-  marcarServicio,
+  listarRubros,
+  rubroDeLaEmpresa,
+  leerRubrosDeProductos,
+  asignarRubroAProductos,
+  definirRubrosDeServicio,
   recalcularTodosLosServicios,
 } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendMail, pauseMail, resumeMail, getMailPauseState } from "../utils/mailer.js";
 import { toISO, fmtAr, diaAr } from "../utils/fechas.js";
 import { sinAcentosSql, normalizarBusqueda } from "../utils/busqueda.js";
+import { sugerirRubro } from "../utils/rubrosSugeridos.js";
 import empresaRouter from "./admin_empresa_addon.js";
 
 const router = Router();
@@ -2001,98 +2003,195 @@ router.post("/services/clasificacion/aplicar", mustBeAdmin, (req, res) => {
 });
 
 /* ------------------------------------------------------
-   Grupos de insumos: en vez de cargar insumo por insumo,
-   cada servicio de Kazaro dice si lleva limpieza y/o
-   descartables, y sus insumos se arman solos.
+   Rubros de insumos: en vez de cargar insumo por insumo,
+   cada insumo va en un rubro y cada servicio de Kazaro
+   dice qué rubros lleva; sus insumos se arman solos.
    ------------------------------------------------------ */
 
 function soloKazaro(req, res) {
   if (Number(req.user?.empresaId ?? 1) !== EMPRESA_CON_GRUPOS) {
-    res.status(403).json({ error: "Los grupos de insumos son sólo de Kazaro" });
+    res.status(403).json({ error: "Los rubros de insumos son sólo de Kazaro" });
     return false;
   }
   return true;
 }
 
-// Qué insumos forman cada grupo. Se define una vez.
-router.get("/insumo-grupos", mustBeAdmin, (req, res) => {
+// Los rubros con sus insumos. Los que no tienen rubro traen una sugerencia,
+// que no cuenta para nada hasta que se confirma.
+router.get("/rubros", mustBeAdmin, (req, res) => {
   try {
     if (!soloKazaro(req, res)) return;
-    const grupos = leerGruposInsumos();
-    res.json({
-      ok: true,
-      grupos: Object.fromEntries(GRUPOS_INSUMOS.map((g) => [g, [...grupos[g]]])),
+    const rubros = listarRubros();
+    const idPorNombre = new Map(rubros.map((r) => [r.nombre.toLowerCase(), r.id]));
+    const existentes = new Set(rubros.map((r) => r.id));
+    const asignados = leerRubrosDeProductos();
+
+    const productos = db.prepare(`
+      SELECT p.ProductID AS id, p.ProductName AS name, p.Code AS code,
+             p.CategoriaID AS categoryId, c.CategoriaNombre AS categoryName,
+             COALESCE(p.is_active, 1) AS activo
+      FROM Productos p
+      LEFT JOIN Categorias c ON c.CategoriaID = p.CategoriaID
+      WHERE p.empresa_id = ?
+      ORDER BY p.ProductName COLLATE NOCASE
+    `).all(EMPRESA_CON_GRUPOS).map((p) => {
+      const actual = asignados.get(String(p.id));
+      const rubroId = existentes.has(actual) ? actual : null;
+      const sugerido = rubroId == null ? sugerirRubro(p.name, p.categoryName) : null;
+      return {
+        ...p,
+        rubroId,
+        sugeridoId: sugerido ? idPorNombre.get(sugerido.toLowerCase()) ?? null : null,
+      };
     });
+
+    res.json({ ok: true, rubros, productos });
   } catch (e) {
-    console.error("GET /admin/insumo-grupos error:", e?.message || e);
-    res.status(500).json({ error: "No se pudieron leer los grupos" });
+    console.error("GET /admin/rubros error:", e?.message || e);
+    res.status(500).json({ error: "No se pudieron leer los rubros" });
   }
 });
 
-router.put("/insumo-grupos/:grupo", mustBeAdmin, (req, res) => {
+const limpiarNombreRubro = (v) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, 40);
+const limpiarCriterio = (v) => String(v ?? "").trim().slice(0, 400);
+
+router.post("/rubros", mustBeAdmin, (req, res) => {
   try {
     if (!soloKazaro(req, res)) return;
-    const grupo = String(req.params.grupo || "").trim().toLowerCase();
-    if (!GRUPOS_INSUMOS.includes(grupo)) return res.status(400).json({ error: "Grupo desconocido" });
+    const nombre = limpiarNombreRubro(req.body?.nombre);
+    if (!nombre) return res.status(400).json({ error: "Poné un nombre para el rubro" });
+    const orden = db.prepare(`SELECT COALESCE(MAX(orden), 0) + 1 AS o FROM insumo_rubros WHERE empresa_id = ?`).get(EMPRESA_CON_GRUPOS).o;
+    const info = db.prepare(`INSERT INTO insumo_rubros (empresa_id, nombre, criterio, por_servicio, orden) VALUES (?, ?, ?, ?, ?)`)
+      .run(EMPRESA_CON_GRUPOS, nombre, limpiarCriterio(req.body?.criterio), req.body?.porServicio === false ? 0 : 1, orden);
+    audit({ empresaId: EMPRESA_CON_GRUPOS, usuario: req.user?.username || null, accion: "create", entidad: "Rubro", entidadId: String(info.lastInsertRowid), detalle: nombre });
+    res.status(201).json({ ok: true, id: Number(info.lastInsertRowid) });
+  } catch (e) {
+    if (/UNIQUE/i.test(e?.message || "")) return res.status(409).json({ error: "Ya existe un rubro con ese nombre" });
+    console.error("POST /admin/rubros error:", e?.message || e);
+    res.status(500).json({ error: "No se pudo crear el rubro" });
+  }
+});
 
-    // Sólo insumos de la empresa: un id de otra empresa se descarta en silencio.
-    const pedidos = Array.isArray(req.body?.productIds) ? req.body.productIds.map(String) : [];
+router.put("/rubros/:id", mustBeAdmin, (req, res) => {
+  try {
+    if (!soloKazaro(req, res)) return;
+    const rubro = rubroDeLaEmpresa(req.params.id);
+    if (!rubro) return res.status(404).json({ error: "Rubro no encontrado" });
+
+    const nombre = req.body?.nombre !== undefined ? limpiarNombreRubro(req.body.nombre) : rubro.nombre;
+    if (!nombre) return res.status(400).json({ error: "El rubro necesita un nombre" });
+    const criterio = req.body?.criterio !== undefined ? limpiarCriterio(req.body.criterio) : rubro.criterio;
+    const porServicio = req.body?.porServicio !== undefined ? (req.body.porServicio ? 1 : 0) : rubro.por_servicio;
+
+    db.prepare(`UPDATE insumo_rubros SET nombre = ?, criterio = ?, por_servicio = ? WHERE id = ?`)
+      .run(nombre, criterio, porServicio, rubro.id);
+    // Si cambia si entra o no en la regla, cambia lo que ve cada servicio.
+    const recalculo = porServicio !== rubro.por_servicio ? recalcularTodosLosServicios() : null;
+    audit({ empresaId: EMPRESA_CON_GRUPOS, usuario: req.user?.username || null, accion: "update", entidad: "Rubro", entidadId: String(rubro.id), detalle: `${rubro.nombre} → ${nombre}${porServicio ? "" : " (fuera de la regla)"}` });
+    res.json({ ok: true, recalculo });
+  } catch (e) {
+    if (/UNIQUE/i.test(e?.message || "")) return res.status(409).json({ error: "Ya existe un rubro con ese nombre" });
+    console.error("PUT /admin/rubros error:", e?.message || e);
+    res.status(500).json({ error: "No se pudo guardar el rubro" });
+  }
+});
+
+// Borrar un rubro deja sus insumos "sin clasificar". Lo que ya tenían los
+// servicios no se quita: sin rubro, la regla deja de manejar ese insumo.
+router.delete("/rubros/:id", mustBeAdmin, (req, res) => {
+  try {
+    if (!soloKazaro(req, res)) return;
+    const rubro = rubroDeLaEmpresa(req.params.id);
+    if (!rubro) return res.status(404).json({ error: "Rubro no encontrado" });
+    const liberados = db.transaction(() => {
+      const n = db.prepare(`DELETE FROM producto_rubro WHERE rubro_id = ?`).run(rubro.id).changes;
+      db.prepare(`DELETE FROM servicio_rubros WHERE rubro_id = ?`).run(rubro.id);
+      db.prepare(`DELETE FROM insumo_rubros WHERE id = ?`).run(rubro.id);
+      return n;
+    })();
+    const recalculo = recalcularTodosLosServicios();
+    audit({ empresaId: EMPRESA_CON_GRUPOS, usuario: req.user?.username || null, accion: "delete", entidad: "Rubro", entidadId: String(rubro.id), detalle: `${rubro.nombre}: ${liberados} insumos quedaron sin clasificar` });
+    res.json({ ok: true, liberados, recalculo });
+  } catch (e) {
+    console.error("DELETE /admin/rubros error:", e?.message || e);
+    res.status(500).json({ error: "No se pudo borrar el rubro" });
+  }
+});
+
+// Cambia el rubro de uno o varios insumos. rubroId null = sin clasificar.
+router.put("/rubros-productos", mustBeAdmin, (req, res) => {
+  try {
+    if (!soloKazaro(req, res)) return;
+    const pedidas = Array.isArray(req.body?.asignaciones) ? req.body.asignaciones : [];
+    if (!pedidas.length) return res.status(400).json({ error: "No hay cambios para guardar" });
+
+    // Sólo insumos y rubros de la empresa: lo de otra empresa se descarta.
     const validos = new Set(
       db.prepare(`SELECT ProductID AS id FROM Productos WHERE empresa_id = ?`).all(EMPRESA_CON_GRUPOS).map((r) => String(r.id))
     );
-    const limpios = pedidos.filter((id) => validos.has(id));
+    const rubros = new Set(listarRubros().map((r) => r.id));
+    const limpias = [];
+    for (const a of pedidas) {
+      const productId = String(a?.productId ?? "");
+      const rubroId = a?.rubroId == null || a.rubroId === "" ? null : Number(a.rubroId);
+      if (!validos.has(productId)) continue;
+      if (rubroId != null && !rubros.has(rubroId)) continue;
+      limpias.push({ productId, rubroId });
+    }
 
-    guardarGrupoInsumos(grupo, limpios);
-    // Cambiar el grupo cambia lo que ve cada servicio marcado: hay que rehacerlos.
+    asignarRubroAProductos(limpias);
     const recalculo = recalcularTodosLosServicios();
-
-    res.json({ ok: true, grupo, insumos: limpios.length, ignorados: pedidos.length - limpios.length, recalculo });
+    res.json({ ok: true, guardados: limpias.length, ignorados: pedidas.length - limpias.length, recalculo });
   } catch (e) {
-    console.error("PUT /admin/insumo-grupos error:", e?.message || e);
-    res.status(500).json({ error: "No se pudo guardar el grupo" });
+    console.error("PUT /admin/rubros-productos error:", e?.message || e);
+    res.status(500).json({ error: "No se pudieron guardar los rubros" });
   }
 });
 
-// La regla de un servicio.
-router.get("/servicio-grupos/:serviceId", mustBeAdmin, (req, res) => {
+// Qué rubros lleva un servicio.
+router.get("/servicio-rubros/:serviceId", mustBeAdmin, (req, res) => {
   try {
     if (!soloKazaro(req, res)) return;
     const row = db.prepare(`
-      SELECT ServiciosID AS id, ${SRV_NAME} AS name, lleva_limpieza, lleva_descartables
+      SELECT ServiciosID AS id, ${SRV_NAME} AS name, rubros_definidos
       FROM Servicios WHERE CAST(ServiciosID AS INTEGER) = CAST(? AS INTEGER) AND empresa_id = ? AND deleted_at IS NULL
     `).get(req.params.serviceId, EMPRESA_CON_GRUPOS);
     if (!row) return res.status(404).json({ error: "Servicio no encontrado" });
 
-    const excepciones = db.prepare(`SELECT product_id AS productId, tipo FROM servicio_excepciones WHERE CAST(service_id AS TEXT) = CAST(? AS TEXT)`)
-      .all(String(row.id));
+    const sid = String(Math.trunc(Number(row.id)));
+    const elegidos = db.prepare(`SELECT rubro_id FROM servicio_rubros WHERE service_id = ?`).all(sid).map((r) => Number(r.rubro_id));
+    const excepciones = db.prepare(`SELECT product_id AS productId, tipo FROM servicio_excepciones WHERE service_id = ?`).all(sid);
 
     res.json({
       ok: true,
       servicio: { id: row.id, name: row.name },
-      limpieza: row.lleva_limpieza == null ? null : !!row.lleva_limpieza,
-      descartables: row.lleva_descartables == null ? null : !!row.lleva_descartables,
+      definido: row.rubros_definidos != null,
+      rubros: elegidos,
+      disponibles: listarRubros().filter((r) => r.porServicio),
       excepciones,
     });
   } catch (e) {
-    console.error("GET /admin/servicio-grupos error:", e?.message || e);
+    console.error("GET /admin/servicio-rubros error:", e?.message || e);
     res.status(500).json({ error: "No se pudo leer la regla del servicio" });
   }
 });
 
-router.put("/servicio-grupos/:serviceId", mustBeAdmin, (req, res) => {
+router.put("/servicio-rubros/:serviceId", mustBeAdmin, (req, res) => {
   try {
     if (!soloKazaro(req, res)) return;
     const existe = db.prepare(`SELECT 1 FROM Servicios WHERE CAST(ServiciosID AS INTEGER) = CAST(? AS INTEGER) AND empresa_id = ? AND deleted_at IS NULL`)
       .get(req.params.serviceId, EMPRESA_CON_GRUPOS);
     if (!existe) return res.status(404).json({ error: "Servicio no encontrado" });
 
-    const limpieza = req.body?.limpieza ?? null;
-    const descartables = req.body?.descartables ?? null;
-    const cambio = marcarServicio(req.params.serviceId, { limpieza, descartables });
-
+    let rubros = null;
+    if (Array.isArray(req.body?.rubros)) {
+      const validos = new Set(listarRubros().filter((r) => r.porServicio).map((r) => r.id));
+      rubros = [...new Set(req.body.rubros.map(Number))].filter((id) => validos.has(id));
+    }
+    const cambio = definirRubrosDeServicio(req.params.serviceId, rubros);
     res.json({ ok: true, ...(cambio || { agregados: 0, quitados: 0 }) });
   } catch (e) {
-    console.error("PUT /admin/servicio-grupos error:", e?.message || e);
+    console.error("PUT /admin/servicio-rubros error:", e?.message || e);
     res.status(500).json({ error: "No se pudo guardar la regla del servicio" });
   }
 });
