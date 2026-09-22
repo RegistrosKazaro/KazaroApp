@@ -25,13 +25,16 @@ export const getAllowedOrigins = () => {
 const createCorsOptionsDelegate = () => {
   const allowedOrigins = getAllowedOrigins();
   const methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"];
+  // Sin esto el navegador no puede leer el nombre del archivo que manda el
+  // servidor al descargar un Excel, y el front tiene que inventarlo.
+  const exposedHeaders = ["Content-Disposition"];
 
   return (req, callback) => {
     const requestOrigin = normalizeOrigin(req.header("Origin"));
 
     // Si no hay origen (peticiones server-to-server o herramientas locales), permitimos
     if (!requestOrigin) {
-      callback(null, { origin: true, credentials: false, methods });
+      callback(null, { origin: true, credentials: false, methods, exposedHeaders });
       return;
     }
 
@@ -44,7 +47,7 @@ const createCorsOptionsDelegate = () => {
       return;
     }
 
-    callback(null, { origin: true, credentials: true, methods });
+    callback(null, { origin: true, credentials: true, methods, exposedHeaders });
   };
 };
 

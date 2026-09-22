@@ -295,13 +295,16 @@ export default function Informes() {
   const exportarExcel = async () => {
     setBajando(true);
     try {
-      const { data: blob } = await api.get("/reports/panel/excel", {
+      const res = await api.get("/reports/panel/excel", {
         params: { desde: rango.desde, hasta: rango.hasta, modo }, responseType: "blob",
       });
-      const url = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(res.data);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `informe_${modo}_${rango.desde}_a_${rango.hasta}.xlsx`;
+      // El nombre lo pone el servidor y lleva la empresa: dos informes del
+      // mismo período se llamaban igual y se mezclaban en Descargas.
+      const delServidor = /filename="?([^";]+)"?/i.exec(res.headers?.["content-disposition"] || "")?.[1];
+      a.download = delServidor || `informe_${data?.empresa?.slug || "empresa"}_${modo}_${rango.desde}_a_${rango.hasta}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
     } catch {
@@ -315,7 +318,7 @@ export default function Informes() {
     <div className="informes">
       <header className="inf-head">
         <div>
-          <h2>Informes</h2>
+          <h2>Informes{data?.empresa?.nombre ? ` — ${data.empresa.nombre}` : ""}</h2>
           <p className="inf-sub">
             {fechaCorta(rango.desde)} al {fechaCorta(rango.hasta)} ·{" "}
             {modo === "uniformes" ? "uniformes" : "insumos"} · pedidos ya retirados

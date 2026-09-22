@@ -42,6 +42,16 @@ function _pickCol(info, candidates) {
 function getEmpresaId(req) {
   return req.user?.empresaId ?? 1;
 }
+
+// Nombre de la empresa, para que el informe diga de quién es. Dos informes del
+// mismo período se llamaban igual y era imposible distinguirlos en Descargas.
+function nombreEmpresa(empresaId) {
+  try {
+    const r = db.prepare(`SELECT nombre, slug FROM Empresas WHERE EmpresaID = ?`).get(Number(empresaId));
+    if (r?.nombre) return { nombre: String(r.nombre), slug: String(r.slug || r.nombre).toLowerCase() };
+  } catch { /* si no existe la tabla, se usa el id */ }
+  return { nombre: `Empresa ${empresaId}`, slug: `empresa${empresaId}` };
+}
 // Filtro SQL por empresa para la tabla dada (si la columna existe)
 // Total del pedido NETO de devoluciones aprobadas. Se usa en lugar de p.Total
 // para que un pedido con devolución no infle los montos de los informes. La
@@ -1051,6 +1061,7 @@ function construirPanel(req) {
     return {
       ok: true,
       periodo: { desde, hasta },
+      empresa: { id: empresaId, ...nombreEmpresa(empresaId) },
       modo,
       kpis: {
         monto: num(kpi.monto), unidades: num(kpi.unidades), pedidos: num(kpi.pedidos),
@@ -1116,8 +1127,9 @@ router.get("/panel/excel", mustBeAdmin, (req, res) => {
     const r2 = (n) => Math.round(Number(n || 0) * 100) / 100;
 
     XLSX.utils.book_append_sheet(wb, hoja([
-      ["Informe de pedidos"],
+      [`Informe de pedidos — ${d.empresa.nombre}`],
       [],
+      ["Empresa", d.empresa.nombre],
       ["Período", `${d.periodo.desde} a ${d.periodo.hasta}`],
       ["Muestra", d.modo === "uniformes" ? "Uniformes" : "Insumos (sin uniformes)"],
       ["Incluye", "Pedidos ya retirados, netos de devoluciones aprobadas y de lo que quedó pendiente"],
@@ -1183,7 +1195,7 @@ router.get("/panel/excel", mustBeAdmin, (req, res) => {
     ], { anchos: [52, 14, 11, 16], pesos: [3] }), "Devoluciones");
 
     const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-    const nombre = `informe_${d.modo}_${d.periodo.desde}_a_${d.periodo.hasta}.xlsx`;
+    const nombre = `informe_${d.empresa.slug}_${d.modo}_${d.periodo.desde}_a_${d.periodo.hasta}.xlsx`;
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", `attachment; filename="${nombre}"`);
     res.send(buf);
