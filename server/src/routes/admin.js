@@ -1800,6 +1800,82 @@ router.put("/sp/by-product/:productId", mustBeAdmin, (req, res) => {
   }
 });
 
+/* Cargar todos los insumos en todos los servicios de una sola vez.
+
+   En Pazar todos los servicios piden del mismo catálogo, así que asignar
+   insumo por insumo no aporta nada. En Kazaro NO se ofrece: ahí la lista de
+   cada servicio sale de los rubros y el próximo recálculo pisaría esta carga
+   (ver recalcularInsumosDeServicio en db.js). */
+function alcanceAsignarTodo(empresaId) {
+  const { srv, prod } = detectSPCols();
+  const servicios = serviciosDeLaEmpresa(empresaId);
+  const insumos = db.prepare(
+    `SELECT ProductID AS id FROM Productos WHERE empresa_id = ? AND COALESCE(is_active, 1) = 1`
+  ).all(empresaId);
+
+  // Por join y no por listas de ids: una lista larga rompe el tope de
+  // parámetros de SQLite cuando la empresa crece.
+  const yaAsignados = db.prepare(`
+    SELECT COUNT(*) AS n
+    FROM service_products sp
+    JOIN Servicios s ON CAST(s.${SRV_ID} AS INTEGER) = CAST(sp.${srv} AS INTEGER)
+     AND s.empresa_id = @empresa AND s.deleted_at IS NULL
+    JOIN Productos p ON CAST(p.ProductID AS TEXT) = CAST(sp.${prod} AS TEXT)
+     AND p.empresa_id = @empresa AND COALESCE(p.is_active, 1) = 1
+  `).get({ empresa: Number(empresaId) }).n;
+
+  const total = servicios.length * insumos.length;
+  return { srv, prod, servicios, insumos, total, yaAsignados, faltan: total - yaAsignados };
+}
+
+router.get("/sp/asignar-todo", mustBeAdmin, (req, res) => {
+  try {
+    const empresaId = Number(req.user?.empresaId ?? 1);
+    if (empresaId === EMPRESA_CON_GRUPOS) {
+      return res.json({ ok: true, disponible: false, motivo: "En Kazaro los insumos de cada servicio salen de los rubros." });
+    }
+    const a = alcanceAsignarTodo(empresaId);
+    res.json({ ok: true, disponible: true, servicios: a.servicios.length, insumos: a.insumos.length, faltan: a.faltan, yaAsignados: a.yaAsignados });
+  } catch (e) {
+    console.error("GET /admin/sp/asignar-todo error:", e?.message || e);
+    res.status(500).json({ error: "No se pudo calcular el alcance" });
+  }
+});
+
+router.post("/sp/asignar-todo", mustBeAdmin, (req, res) => {
+  try {
+    const empresaId = Number(req.user?.empresaId ?? 1);
+    if (empresaId === EMPRESA_CON_GRUPOS) {
+      return res.status(409).json({ error: "En Kazaro la lista de cada servicio sale de los rubros: usá la regla, no esta carga." });
+    }
+    const { srv, prod, servicios, insumos, faltan } = alcanceAsignarTodo(empresaId);
+    if (!servicios.length) return res.status(400).json({ error: "No hay servicios cargados" });
+    if (!insumos.length) return res.status(400).json({ error: "No hay insumos activos" });
+
+    const ins = db.prepare(`INSERT OR IGNORE INTO service_products (${srv}, ${prod}) VALUES (?, ?)`);
+    const vis = db.prepare(`INSERT OR IGNORE INTO ProductRoleVisibility (product_id, role) VALUES (?, 'supervisor')`);
+    const agregados = db.transaction(() => {
+      let n = 0;
+      for (const p of insumos) {
+        vis.run(String(p.id));
+        for (const s of servicios) n += ins.run(String(Math.trunc(Number(s.id))), String(p.id)).changes;
+      }
+      return n;
+    })();
+
+    audit({
+      empresaId, usuario: req.user?.username || req.user?.email || null,
+      accion: "update", entidad: "service_products", entidadId: "todos",
+      detalle: `Todos los insumos a todos los servicios: ${insumos.length} insumos × ${servicios.length} servicios, ${agregados} nuevos`,
+    });
+
+    res.json({ ok: true, servicios: servicios.length, insumos: insumos.length, agregados, faltabanAntes: faltan });
+  } catch (e) {
+    console.error("POST /admin/sp/asignar-todo error:", e?.message || e);
+    res.status(500).json({ error: "No se pudieron asignar los insumos" });
+  }
+});
+
 /* ------------------------------------------------------
    Clasificación de servicios: grupo (rubro) y zona.
    Se cargan desde la planilla que el área ya mantenía y

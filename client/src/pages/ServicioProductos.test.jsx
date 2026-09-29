@@ -185,3 +185,47 @@ describe("Servicio ↔ Productos — por insumo", () => {
     expect(api.put.mock.calls[0][1].serviceIds.map(String).sort()).toEqual(["36", "37"]);
   });
 });
+
+describe("Pazar: todos los insumos a todos los servicios", () => {
+  const conAtajo = (datos) => {
+    const antes = api.get.getMockImplementation();
+    api.get.mockImplementation((url, cfg) => {
+      if (url === "/admin/sp/asignar-todo") return Promise.resolve({ data: datos });
+      return antes(url, cfg);
+    });
+  };
+
+  it("en Kazaro el botón no aparece", async () => {
+    conAtajo({ ok: true, disponible: false, motivo: "En Kazaro los insumos salen de los rubros." });
+    await abrir();
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith("/admin/sp/asignar-todo"));
+    expect(screen.queryByRole("button", { name: /Agregar todos los insumos/ })).not.toBeInTheDocument();
+  });
+
+  it("muestra el alcance y pide confirmación antes de cargar", async () => {
+    const user = userEvent.setup({ delay: null });
+    conAtajo({ ok: true, disponible: true, servicios: 80, insumos: 140, faltan: 11000, yaAsignados: 200 });
+    const confirmar = vi.spyOn(window, "confirm").mockReturnValue(false);
+    await abrir();
+    expect(await screen.findByText(/140 insumos activos · 80 servicios · faltan 11\.000 asignaciones/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Agregar todos los insumos a todos los servicios/ }));
+    expect(confirmar.mock.calls[0][0]).toMatch(/11\.000 asignaciones/);
+    expect(api.post).not.toHaveBeenCalled();     // dijo que no: no se toca nada
+    confirmar.mockRestore();
+  });
+
+  it("al confirmar carga y avisa cuántas se agregaron", async () => {
+    const user = userEvent.setup({ delay: null });
+    conAtajo({ ok: true, disponible: true, servicios: 80, insumos: 140, faltan: 11000, yaAsignados: 200 });
+    const confirmar = vi.spyOn(window, "confirm").mockReturnValue(true);
+    api.post.mockResolvedValue({ data: { ok: true, servicios: 80, insumos: 140, agregados: 11000 } });
+    await abrir();
+    await screen.findByRole("button", { name: /Agregar todos los insumos/ });
+
+    await user.click(screen.getByRole("button", { name: /Agregar todos los insumos/ }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/admin/sp/asignar-todo"));
+    expect(await screen.findByText(/se agregaron 11\.000 asignaciones/)).toBeInTheDocument();
+    confirmar.mockRestore();
+  });
+});

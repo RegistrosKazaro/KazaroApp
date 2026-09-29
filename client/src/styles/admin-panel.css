@@ -956,6 +956,31 @@
 .admin-panel .regla-rubro.is-on::before { content: "✓ "; }
 .admin-panel .regla-rubro:disabled { opacity: 0.6; cursor: default; }
 
+/* Atajo de Pazar: todos los insumos en todos los servicios */
+.admin-panel .sp-todo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.7rem 0.9rem;
+  margin-bottom: 0.9rem;
+  border: 1px solid #bfdbfe;
+  border-radius: 12px;
+  background: #eff6ff;
+}
+.admin-panel .sp-todo-texto { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.88rem; color: #1e3a8a; }
+.admin-panel .sp-todo-texto .muted { font-size: 0.78rem; }
+.admin-panel .sp-todo-ok,
+.admin-panel .sp-todo-error {
+  flex: 1 1 100%;
+  font-size: 0.82rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+}
+.admin-panel .sp-todo-ok { background: #f0fdf4; color: #14532d; border: 1px solid #bbf7d0; }
+.admin-panel .sp-todo-error { background: #fef2f2; color: #7f1d1d; border: 1px solid #fecaca; }
+
 /* Rubros de insumos: lista–detalle. Letra chica y sin negritas, a pedido.
    Colores medidos para contraste AA sobre blanco. */
 .admin-panel .rb { padding-bottom: 1.2rem; }

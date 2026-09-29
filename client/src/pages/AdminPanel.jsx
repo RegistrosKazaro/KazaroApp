@@ -1481,6 +1481,67 @@ function EnTanda({ cantidad, grupos, zonas, onAplicar, trabajando }) {
   );
 }
 
+/* Cargar todo de una: en Pazar todos los servicios piden del mismo catálogo.
+   En Kazaro el servidor no lo ofrece (ahí manda la regla de rubros) y el
+   bloque no aparece. */
+function AsignarTodoAtajo() {
+  const [alcance, setAlcance] = useState(null);
+  const [trabajando, setTrabajando] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+
+  const cargar = useCallback(async () => {
+    try {
+      const { data } = await api.get("/admin/sp/asignar-todo");
+      setAlcance(data?.disponible ? data : null);
+    } catch {
+      setAlcance(null);
+    }
+  }, []);
+
+  useEffect(() => { cargar(); }, [cargar]);
+
+  if (!alcance) return null;
+
+  const { servicios, insumos, faltan } = alcance;
+
+  const aplicar = async () => {
+    const aviso = faltan
+      ? `Se van a cargar ${faltan.toLocaleString("es-AR")} asignaciones: los ${insumos} insumos activos en los ${servicios} servicios. ¿Seguimos?`
+      : `Los ${insumos} insumos ya están en los ${servicios} servicios. ¿Querés revisar igual?`;
+    if (!window.confirm(aviso)) return;
+    setTrabajando(true); setMsg(""); setErr("");
+    try {
+      const { data } = await api.post("/admin/sp/asignar-todo");
+      const n = Number(data?.agregados ?? 0);
+      setMsg(n
+        ? `Listo: se agregaron ${n.toLocaleString("es-AR")} asignaciones. Los ${data.insumos} insumos quedaron en los ${data.servicios} servicios.`
+        : "No hizo falta agregar nada: todos los insumos ya estaban en todos los servicios.");
+      await cargar();
+    } catch (e) {
+      setErr(e?.response?.data?.error || "No se pudieron asignar los insumos");
+    } finally {
+      setTrabajando(false);
+    }
+  };
+
+  return (
+    <div className="sp-todo">
+      <div className="sp-todo-texto">
+        <span>Todos los servicios piden lo mismo</span>
+        <span className="muted">
+          {insumos} insumos activos · {servicios} servicios
+          {faltan > 0 ? ` · faltan ${faltan.toLocaleString("es-AR")} asignaciones` : " · ya está todo cargado"}
+        </span>
+      </div>
+      <button type="button" className="btn primary" onClick={aplicar} disabled={trabajando}>
+        {trabajando ? "Cargando…" : "Agregar todos los insumos a todos los servicios"}
+      </button>
+      {(msg || err) && <div className={err ? "sp-todo-error" : "sp-todo-ok"} role="status">{err || msg}</div>}
+    </div>
+  );
+}
+
 function ServiceProductsSection() {
   // Dos formas de cargar lo mismo: eligiendo el servicio (lo de siempre) o
   // eligiendo el insumo y marcando a qué servicios va, que es mucho más rápido
@@ -1490,6 +1551,8 @@ function ServiceProductsSection() {
   return (
     <section className="srv-card" aria-labelledby="sp-heading">
       <h3 id="sp-heading">Servicio ↔ Productos</h3>
+
+      <AsignarTodoAtajo />
 
       <div className="sp-tabs" role="tablist" aria-label="Forma de asignar">
         <button
