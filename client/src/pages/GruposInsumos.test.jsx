@@ -195,7 +195,27 @@ describe("Regla del servicio", () => {
     const [url, body] = api.put.mock.calls[0];
     expect(url).toBe("/admin/servicio-rubros/36");
     expect(body.rubros.sort()).toEqual([1, 2]);
-    expect(await screen.findByText(/2 insumos agregados y 0 quitados/)).toBeInTheDocument();
+    expect(body.quitarSobrantes).toBe(false);          // aplicar completa, no achica
+    expect(await screen.findByText(/2 insumos agregados/)).toBeInTheDocument();
+  });
+
+  it("aplicar avisa que no se quitó nada", async () => {
+    const user = userEvent.setup({ delay: null });
+    api.put.mockResolvedValue({ data: { ok: true, agregados: 5, quitados: 0 } });
+    await abrirServicio(user);
+    await user.click(screen.getByRole("button", { name: "Limpieza" }));
+    await user.click(screen.getByRole("button", { name: "Aplicar" }));
+    expect(await screen.findByText(/5 insumos agregados\. No se quitó nada de lo que ya tenía\./)).toBeInTheDocument();
+  });
+
+  it("si se pide limpiar, lo manda y lo informa", async () => {
+    const user = userEvent.setup({ delay: null });
+    api.put.mockResolvedValue({ data: { ok: true, agregados: 3, quitados: 7 } });
+    await abrirServicio(user);
+    await user.click(screen.getByRole("checkbox", { name: /quitarle los insumos que no correspondan/i }));
+    await user.click(screen.getByRole("button", { name: /Aplicar/ }));
+    expect(api.put.mock.calls[0][1].quitarSobrantes).toBe(true);
+    expect(await screen.findByText(/3 insumos agregados y 7 quitados/)).toBeInTheDocument();
   });
 
   it("si ya tiene regla, sus rubros aparecen prendidos", async () => {

@@ -1842,6 +1842,8 @@ function ReglaDelServicio({ servicio, onAplicada }) {
   const [guardando, setGuardando] = useState(false);
   const [msg, setMsg] = useState("");
   const [disponible, setDisponible] = useState(true);
+  // Apagado a propósito: aplicar completa la lista, no la achica.
+  const [quitarSobrantes, setQuitarSobrantes] = useState(false);
 
   useEffect(() => {
     let vivo = true;
@@ -1879,13 +1881,14 @@ function ReglaDelServicio({ servicio, onAplicada }) {
     setMsg("");
     try {
       const rubros = [...marcados];
-      const { data } = await api.put(`/admin/servicio-rubros/${servicio.id}`, { rubros });
+      const { data } = await api.put(`/admin/servicio-rubros/${servicio.id}`, { rubros, quitarSobrantes });
       setDefinido(true);
       setGuardados(rubros);
       const ag = Number(data?.agregados ?? 0);
       const qu = Number(data?.quitados ?? 0);
       setMsg(ag || qu
-        ? `Listo: ${ag} insumo${ag === 1 ? "" : "s"} agregado${ag === 1 ? "" : "s"} y ${qu} quitado${qu === 1 ? "" : "s"}.`
+        ? `Listo: ${ag} insumo${ag === 1 ? "" : "s"} agregado${ag === 1 ? "" : "s"}`
+          + (qu ? ` y ${qu} quitado${qu === 1 ? "" : "s"}.` : ". No se quitó nada de lo que ya tenía.")
         : "Listo. La lista ya estaba así.");
       onAplicada?.();
     } catch (e) {
@@ -1912,14 +1915,21 @@ function ReglaDelServicio({ servicio, onAplicada }) {
             {r.nombre}
           </button>
         ))}
-        <button type="button" className="btn primary" onClick={aplicar} disabled={guardando || !cambio}>
+        <button type="button" className="btn primary" onClick={aplicar} disabled={guardando || (!cambio && !quitarSobrantes)}>
           {guardando ? "Aplicando…" : marcados.size ? "Aplicar" : "Aplicar: ninguno"}
         </button>
       </div>
+      <label className="regla-limpiar">
+        <input type="checkbox" checked={quitarSobrantes} disabled={guardando}
+          onChange={(e) => { setQuitarSobrantes(e.target.checked); setMsg(""); }} />
+        Además, quitarle los insumos que no correspondan a estos rubros
+      </label>
       <div className="muted regla-nota">
         {msg || (!definido
           ? "Mientras no apliques, la lista de abajo queda como está."
-          : "La lista de abajo se arma sola con estos rubros. Uniformes, EPP y lo que no tiene rubro no se tocan.")}
+          : quitarSobrantes
+            ? "Aplicar va a completar la lista y además sacar lo que no corresponda a estos rubros."
+            : "Aplicar completa la lista con los rubros elegidos y no le saca nada de lo que ya tenía.")}
       </div>
     </div>
   );

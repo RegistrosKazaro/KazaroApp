@@ -932,6 +932,15 @@
   gap: 0.45rem;
 }
 
+.admin-panel .regla-limpiar {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.55rem;
+  font-size: 0.82rem;
+  color: #334155;
+}
+
 .admin-panel .regla-nota {
   font-size: 0.8rem;
   margin-top: 0.5rem;

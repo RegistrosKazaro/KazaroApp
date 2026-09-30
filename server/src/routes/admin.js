@@ -2272,7 +2272,10 @@ router.put("/servicio-rubros/:serviceId", mustBeAdmin, (req, res) => {
       const validos = new Set(listarRubros().filter((r) => r.porServicio).map((r) => r.id));
       rubros = [...new Set(req.body.rubros.map(Number))].filter((id) => validos.has(id));
     }
-    const cambio = definirRubrosDeServicio(req.params.serviceId, rubros);
+    // Por defecto sólo completa: no le saca a un servicio lo que ya tenía.
+    const cambio = definirRubrosDeServicio(req.params.serviceId, rubros, {
+      quitarSobrantes: req.body?.quitarSobrantes === true,
+    });
     res.json({ ok: true, ...(cambio || { agregados: 0, quitados: 0 }) });
   } catch (e) {
     console.error("PUT /admin/servicio-rubros error:", e?.message || e);

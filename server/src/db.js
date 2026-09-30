@@ -2705,8 +2705,14 @@ function contextoRegla() {
 /**
  * Recalcula service_products de un servicio a partir de su regla.
  * Si el servicio no tiene la regla definida no se toca nada: devuelve null.
+ *
+ * Por defecto SOLO AGREGA: completa con lo que falta del rubro elegido y no
+ * le saca a un servicio lo que ya tenia cargado. Fue un pedido explicito del
+ * usuario: los servicios vienen con anos de carga manual y quitar algo sin
+ * que lo pidan es peor que dejar uno de mas. Para limpiar lo que no
+ * corresponde hay que pedirlo con quitarSobrantes.
  */
-export function recalcularInsumosDeServicio(servicioId, ctx = null) {
+export function recalcularInsumosDeServicio(servicioId, ctx = null, { quitarSobrantes = false } = {}) {
   ensureRubrosInsumos();
   ensureServiceProductsPivot();
   const det = detectSPCols();
@@ -2733,15 +2739,19 @@ export function recalcularInsumosDeServicio(servicioId, ctx = null) {
     let agregados = 0, quitados = 0;
     for (const pid of deseados) if (!actuales.has(pid)) { agregados += ins.run(sid, pid).changes; vis.run(pid); }
     for (const pid of actuales) {
-      const loManejaLaRegla = c.gestionados.has(pid) || quita.has(pid);
-      if (loManejaLaRegla && !deseados.has(pid)) quitados += del.run(sid, pid).changes;
+      if (deseados.has(pid)) continue;
+      // La excepcion "quita" es una orden puntual del usuario para ese
+      // servicio: esa si se respeta siempre.
+      const pedidoAMano = quita.has(pid);
+      const sobra = c.gestionados.has(pid) && quitarSobrantes;
+      if (pedidoAMano || sobra) quitados += del.run(sid, pid).changes;
     }
     return { agregados, quitados };
   })();
 }
 
 /** Qué rubros lleva un servicio. rubroIds null = volver a "sin definir". */
-export function definirRubrosDeServicio(servicioId, rubroIds) {
+export function definirRubrosDeServicio(servicioId, rubroIds, { quitarSobrantes = false } = {}) {
   ensureRubrosInsumos();
   const sid = sidTexto(servicioId);
   db.transaction(() => {
@@ -2755,7 +2765,7 @@ export function definirRubrosDeServicio(servicioId, rubroIds) {
     db.prepare(`UPDATE Servicios SET rubros_definidos = 1 WHERE CAST(ServiciosID AS INTEGER) = CAST(? AS INTEGER) AND empresa_id = ?`).run(sid, EMPRESA_CON_GRUPOS);
   })();
   // "Sin definir" deja la lista como está: no se recalcula.
-  return rubroIds == null ? { agregados: 0, quitados: 0 } : recalcularInsumosDeServicio(sid);
+  return rubroIds == null ? { agregados: 0, quitados: 0 } : recalcularInsumosDeServicio(sid, null, { quitarSobrantes });
 }
 
 /** Recalcula todos los servicios definidos. Se usa al cambiar un rubro. */
