@@ -681,6 +681,14 @@ router.delete("/products/:id", mustBeAdmin, (req, res) => {
 
     const info = db.prepare(`DELETE FROM ${T} WHERE CAST(${C_ID} AS TEXT) = CAST(? AS TEXT)`).run(id);
     if (!info.changes) return res.status(404).json({ error: "Producto no encontrado" });
+    // Su rubro no se va solo (producto_rubro no tiene clave foránea) y un rubro
+    // apuntando a un insumo borrado hacía fallar la regla de todos los servicios.
+    try {
+      db.prepare(`DELETE FROM producto_rubro WHERE CAST(product_id AS TEXT) = CAST(? AS TEXT)`).run(String(id));
+      db.prepare(`DELETE FROM servicio_excepciones WHERE CAST(product_id AS TEXT) = CAST(? AS TEXT)`).run(String(id));
+    } catch (e) {
+      console.warn("[products delete] no se pudo limpiar el rubro del insumo:", e?.message || e);
+    }
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "No se pudo eliminar" });

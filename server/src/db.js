@@ -2564,6 +2564,13 @@ export function ensureRubrosInsumos() {
     // sea "ninguno").
     if (!cols.includes("rubros_definidos")) db.exec(`ALTER TABLE Servicios ADD COLUMN rubros_definidos INTEGER`);
 
+    // Un insumo borrado del catálogo dejaba su rubro colgado y rompía la
+    // regla entera: se limpia al arrancar.
+    db.exec(`
+      DELETE FROM producto_rubro
+      WHERE NOT EXISTS (SELECT 1 FROM Productos p WHERE CAST(p.ProductID AS TEXT) = CAST(producto_rubro.product_id AS TEXT));
+    `);
+
     // Primera vez: rubros iniciales y migración de los dos grupos viejos.
     const hay = db.prepare(`SELECT COUNT(*) AS n FROM insumo_rubros WHERE empresa_id = ?`).get(EMPRESA_CON_GRUPOS).n;
     if (!hay) {
@@ -2665,8 +2672,10 @@ function reglaDelServicio(servicioId, ctx) {
   }
   const quita = new Set();
   for (const e of db.prepare(`SELECT product_id, tipo FROM servicio_excepciones WHERE service_id = ?`).all(sid)) {
-    if (e.tipo === "suma") deseados.add(String(e.product_id));
-    else { deseados.delete(String(e.product_id)); quita.add(String(e.product_id)); }
+    const pid = String(e.product_id);
+    // Una excepción "suma" de un insumo borrado también rompía la escritura.
+    if (e.tipo === "suma") { if (ctx.existe(pid)) deseados.add(pid); }
+    else { deseados.delete(pid); quita.add(pid); }
   }
   return { deseados, quita };
 }
@@ -2675,9 +2684,22 @@ function contextoRegla() {
   const porServicio = new Set(
     db.prepare(`SELECT id FROM insumo_rubros WHERE empresa_id = ? AND por_servicio = 1`).all(EMPRESA_CON_GRUPOS).map((r) => Number(r.id))
   );
-  const productos = leerRubrosDeProductos();
+  // Sólo insumos que siguen existiendo: si uno se borró del catálogo y quedó
+  // clasificado, asignarlo hace fallar la escritura entera (service_products
+  // tiene clave foránea contra Productos) y no se podía guardar ninguna regla.
+  const productos = new Map(
+    db.prepare(`
+      SELECT pr.product_id AS pid, pr.rubro_id AS rid
+      FROM producto_rubro pr
+      JOIN Productos p ON CAST(p.ProductID AS TEXT) = CAST(pr.product_id AS TEXT)
+      WHERE p.empresa_id = ?
+    `).all(EMPRESA_CON_GRUPOS).map((r) => [String(r.pid), Number(r.rid)])
+  );
   const gestionados = new Set([...productos].filter(([, rid]) => porServicio.has(rid)).map(([pid]) => pid));
-  return { porServicio, productos, gestionados };
+  const vivos = new Set(
+    db.prepare(`SELECT ProductID AS id FROM Productos WHERE empresa_id = ?`).all(EMPRESA_CON_GRUPOS).map((r) => String(r.id))
+  );
+  return { porServicio, productos, gestionados, existe: (pid) => vivos.has(String(pid)) };
 }
 
 /**
