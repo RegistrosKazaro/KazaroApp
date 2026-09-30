@@ -4398,6 +4398,12 @@ function MailPauseControl() {
   );
 }
 
+/* Un clic "simple" es el que maneja la app. Con Ctrl, ⌘, Shift o la rueda del
+   mouse dejamos que el navegador haga lo suyo y abra otra pestaña o ventana:
+   así se puede trabajar en dos secciones al mismo tiempo. */
+const esClicSimple = (e) =>
+  e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+
 export default function AdminPanel() {
   const nav = useNavigate();
   const { role } = useParams();
@@ -4454,7 +4460,11 @@ export default function AdminPanel() {
                       <a
                         className="admin-side-link"
                         href={`${base}${item.to}`}
-                        onClick={(e) => { e.preventDefault(); nav(`${base}${item.to}`); }}
+                        onClick={(e) => {
+                          if (!esClicSimple(e)) return;   // Ctrl/⌘ o rueda: que abra otra pestaña
+                          e.preventDefault();
+                          nav(`${base}${item.to}`);
+                        }}
                       >
                         <NavIcon name={item.icon} />
                         <span>{item.label}</span>
@@ -4462,15 +4472,21 @@ export default function AdminPanel() {
                     </li>
                   ) : (
                     <li key={item.id}>
-                      <button
-                        type="button"
+                      {/* Enlace de verdad, no botón: así cada sección se puede
+                          abrir en otra pestaña y trabajar en dos a la vez. */}
+                      <a
                         className={`admin-side-link ${tab === item.id ? "is-active" : ""}`}
-                        onClick={() => setTab(item.id)}
+                        href={`${base}/admin?tab=${item.id}`}
+                        onClick={(e) => {
+                          if (!esClicSimple(e)) return;
+                          e.preventDefault();
+                          setTab(item.id);
+                        }}
                         aria-current={tab === item.id ? "page" : undefined}
                       >
                         <NavIcon name={item.id} />
                         <span>{item.label}</span>
-                      </button>
+                      </a>
                     </li>
                   )
                 )}

@@ -28,6 +28,17 @@ import NotificationBell from "./components/NotificationBell";
 import logoKazaro from "./assets/LogoHorizWhite.png";
 import logoPazar from "./assets/LogoPazar.png";
 
+/* La raíz es el selector de empresa, pero si ya hay sesión abierta no hay nada
+   que elegir: se entra derecho. Así, abrir la app en otra pestaña no obliga a
+   volver a loguearse (y ese segundo login podía cambiarle la empresa a las dos
+   pestañas, porque la sesión es una sola). */
+function Inicio() {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="state">Cargando…</div>;
+  if (user) return <Navigate to="/roles" replace />;
+  return <CompanySelect />;
+}
+
 function Guarded() {
   const { user, loading } = useAuth();
   const location = useLocation();
@@ -195,7 +206,7 @@ export default function App() {
   return (
     <Routes>
       {/* PASO 1: Selector de empresa */}
-      <Route path="/"      element={<CompanySelect />} />
+      <Route path="/"      element={<Inicio />} />
 
       {/* PASO 2: Login (empresa ya elegida) */}
       <Route path="/login" element={<Login />} />
