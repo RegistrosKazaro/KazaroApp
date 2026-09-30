@@ -295,6 +295,35 @@ function respuestaServicio(vinculo, servicio, empresas) {
 }
 
 /**
+ * Si en 360 el servicio sigue vivo, acá también.
+ *
+ * Pasó de verdad (30/09/2026, servicio #1134): alguien lo dio de baja en esta
+ * app, en 360 no, y los cambios que mandaba 360 caían sobre un servicio
+ * borrado. Quedó renombrado y con supervisora asignada, pero invisible: el
+ * área lo buscaba y no aparecía en ningún lado. Ahora cualquier cambio de 360
+ * lo reactiva y queda registrado.
+ *
+ * Devuelve true si lo reactivó.
+ */
+function reactivarSiEstaBorrado(vinculo, motivo) {
+  const actual = servicioPorId(vinculo.servicio_id);
+  if (!actual || !actual.eliminadoAt) return false;
+
+  db.prepare(`UPDATE Servicios SET deleted_at = NULL WHERE ServiciosID = ?`).run(vinculo.servicio_id);
+  audit({
+    empresaId: vinculo.empresa_id,
+    usuario: "integracion-360",
+    accion: "update",
+    entidad: "Servicio",
+    entidadId: String(vinculo.servicio_id),
+    detalle: `360 externoId=${vinculo.externo_id}: estaba dado de baja desde ${actual.eliminadoAt} `
+      + `y se reactivó porque 360 lo sigue usando (${motivo})`,
+  });
+  console.log(`[360] Servicio reactivado: id ${vinculo.servicio_id} (externoId ${vinculo.externo_id}, ${motivo})`);
+  return true;
+}
+
+/**
  * Cambia el nombre del servicio vinculado a un externoId. El nombre de 360
  * manda: lo que se renombre allá se renombra acá.
  *
@@ -313,7 +342,9 @@ function renombrar(vinculo, nombreNuevo, empresas) {
     if (!actual) {
       return { status: 404, body: { error: "no_encontrado", mensaje: "El servicio vinculado ya no existe en Insumos." } };
     }
-    if (actual.nombre === nombreNuevo) return { status: 200, tipo: "sin_cambios" };
+    // Si estaba dado de baja acá, vuelve: en 360 sigue vivo.
+    const reactivado = reactivarSiEstaBorrado(vinculo, "renombrar");
+    if (actual.nombre === nombreNuevo) return { status: 200, tipo: "sin_cambios", reactivado };
 
     const otroVinculo = db.prepare(
       `SELECT externo_id FROM servicios_externos
@@ -346,7 +377,7 @@ function renombrar(vinculo, nombreNuevo, empresas) {
     }
 
     db.prepare(`UPDATE Servicios SET ServicioNombre = ? WHERE ServiciosID = ?`).run(nombreNuevo, vinculo.servicio_id);
-    return { status: 200, tipo: "actualizado", anterior: actual.nombre };
+    return { status: 200, tipo: "actualizado", anterior: actual.nombre, reactivado };
   })();
 
   if (r.body) {
@@ -456,6 +487,9 @@ function asignarSupervisor(vinculo, datos) {
   if (!r.ok) return { status: r.status, body: r.body };
   const elegido = r.empleado;
 
+  // Si estaba dado de baja acá, vuelve: en 360 le siguen asignando gente.
+  const reactivado = reactivarSiEstaBorrado(vinculo, "asignar supervisor");
+
   const previo = db.prepare(
     `SELECT a.EmpleadoID AS id, e.Nombre, e.Apellido FROM supervisor_services a
      LEFT JOIN Empleados e ON e.EmpleadosID = a.EmpleadoID
@@ -464,7 +498,7 @@ function asignarSupervisor(vinculo, datos) {
 
   const supervisorJson = { id: Number(elegido.id), nombre: nombreDe(elegido), legajo: elegido.legajo };
   if (previo && Number(previo.id) === Number(elegido.id)) {
-    return { status: 200, body: { resultado: "ya_asignado", supervisor: supervisorJson } };
+    return { status: 200, body: { resultado: "ya_asignado", supervisor: supervisorJson, ...(reactivado ? { reactivado } : {}) } };
   }
 
   // Lo mismo que hace el panel al cambiar de supervisor: se borra el que
@@ -496,6 +530,7 @@ function asignarSupervisor(vinculo, datos) {
     body: {
       resultado: "asignado",
       supervisor: supervisorJson,
+      ...(reactivado ? { reactivado } : {}),
       ...(previo ? { reemplazoA: { id: Number(previo.id), nombre: nombreDe(previo) } } : {}),
     },
   };
@@ -569,7 +604,9 @@ router.post("/servicios", avisarIgnorados(CAMPOS_ALTA), (req, res) => {
         if (Number(previo.empresa_id) !== empresaId) {
           return { tipo: "otra_empresa", vinculo: previo };
         }
-        return { tipo: "ya_existia", vinculo: previo };
+        // Reintento de un alta cuyo servicio alguien dio de baja acá: vuelve.
+        const reactivado = reactivarSiEstaBorrado(previo, "alta repetida");
+        return { tipo: "ya_existia", vinculo: previo, reactivado };
       }
 
       const mismoNombre = db.prepare(

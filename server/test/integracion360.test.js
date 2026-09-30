@@ -6,6 +6,7 @@
 // routes/integracion360.js, actualizar acá también.
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import Database from "better-sqlite3";
 
 const EMPRESAS = [
   { EmpresaID: 1, slug: "kazaro", nombre: "Kazaro", is_active: 1 },
@@ -116,4 +117,41 @@ test("legajo vacío, inexistente o repetido no asigna", () => {
 test("una empresa desactivada no se acepta", () => {
   const conInactiva = [...EMPRESAS, { EmpresaID: 3, slug: "vieja", nombre: "Vieja", is_active: 0 }];
   assert.equal(resolverEmpresa("vieja", conInactiva), null);
+});
+
+/* ── Servicios dados de baja acá pero vivos en 360 ─────────────────────────
+   Espejo de reactivarSiEstaBorrado() en routes/integracion360.js. Pasó con el
+   servicio #1134: se borró en Insumos, en 360 no, y los cambios que mandaba
+   360 caían sobre un servicio borrado. Quedó con el nombre nuevo y con
+   supervisora, pero invisible para el área. */
+function reactivarSiEstaBorrado(db, servicioId) {
+  const s = db.prepare(`SELECT deleted_at FROM Servicios WHERE ServiciosID = ?`).get(servicioId);
+  if (!s || !s.deleted_at) return false;
+  db.prepare(`UPDATE Servicios SET deleted_at = NULL WHERE ServiciosID = ?`).run(servicioId);
+  return true;
+}
+
+function baseConServicioBorrado() {
+  const db = new Database(":memory:");
+  db.exec(`CREATE TABLE Servicios (ServiciosID NUMERIC PRIMARY KEY, ServicioNombre TEXT, empresa_id INTEGER, deleted_at TEXT)`);
+  db.prepare(`INSERT INTO Servicios VALUES (?,?,?,?)`).run(1134, "SE - CONSORCIO MILENICA II", 1, "2026-09-28 19:31:21");
+  db.prepare(`INSERT INTO Servicios VALUES (?,?,?,?)`).run(96, "DYASA S.A", 1, null);
+  return db;
+}
+
+test("un cambio de 360 reactiva el servicio que se había dado de baja acá", () => {
+  const db = baseConServicioBorrado();
+  assert.equal(reactivarSiEstaBorrado(db, 1134), true);
+  assert.equal(db.prepare(`SELECT deleted_at d FROM Servicios WHERE ServiciosID = 1134`).get().d, null);
+});
+
+test("un servicio activo no se toca y no se informa como reactivado", () => {
+  const db = baseConServicioBorrado();
+  assert.equal(reactivarSiEstaBorrado(db, 96), false);
+  assert.equal(db.prepare(`SELECT deleted_at d FROM Servicios WHERE ServiciosID = 96`).get().d, null);
+});
+
+test("si el servicio ya no existe, no rompe", () => {
+  const db = baseConServicioBorrado();
+  assert.equal(reactivarSiEstaBorrado(db, 99999), false);
 });
