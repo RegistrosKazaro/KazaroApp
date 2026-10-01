@@ -842,7 +842,7 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
       </div>
 
       {/* Uniformes por un lado, insumos por otro */}
-      {tab !== "devoluciones" && (
+      {(
         <div className="dep-tipo" role="group" aria-label="Tipo de pedido">
           {[
             { key: "insumos", label: "Insumos" },
@@ -868,7 +868,6 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
           { key: "preparing", label: "En preparación" },
           { key: "closed",    label: "Listos para retirar" },
           { key: "retirado",  label: "Retirados" },
-          { key: "devoluciones", label: "Devoluciones" },
         ].map(({ key, label }) => (
           <button key={key} type="button"
             className={`pill pill--ghost${tab === key ? " is-active" : ""}`}
@@ -893,7 +892,7 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
       </div>
 
       {/* Filtros de control por servicio y fecha */}
-      {tab !== "devoluciones" && (
+      {(
         <div className="deposito-header-actions" style={{ gap: 8, marginBottom: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
           <label className="deposito-field" style={{ minWidth: 240, flex: "1 1 240px" }}>
             <span>Servicio</span>
@@ -929,7 +928,6 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
       {err && <div className="state error deposito-state">{err}</div>}
       {okMsg && <div className="state deposito-state">{okMsg}</div>}
 
-      {tab === "devoluciones" ? <DevolucionesDeposito /> : (
       <div className="deposito-table-wrapper">
         <table className="deposito-table" aria-label="Pedidos del depósito">
           <thead>
@@ -999,7 +997,7 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                         {/* Sólo admin: es para arreglar duplicados o cargas
                             erróneas. En la tarjeta de pendiente no va: se borra
                             el pedido entero desde su tarjeta. */}
-                        {!o.esPendiente && tab !== "devoluciones" && (
+                        {!o.esPendiente && (
                           <button type="button" className="pill pill--ghost" onClick={() => borrarPedido(o)}
                             title="Borrar este pedido (recuperable). Si ya descontó stock, se devuelve."
                             style={{ borderColor: "#b91c1c", color: "#b91c1c" }}>
@@ -1018,7 +1016,7 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                             Borrar
                           </button>
                         )}
-                        {tab !== "revision_deposito" && tab !== "devoluciones" && !o.esPendiente && (
+                        {tab !== "revision_deposito" && !o.esPendiente && (
                           <button type="button" className="pill pill--ghost" onClick={() => toggleEdit(o.id)}
                             style={{ borderColor: "#2563eb", color: "#1d4ed8" }}>
                             {editingOrders.has(o.id) ? "Cerrar edición" : "Editar"}
@@ -1155,7 +1153,6 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
           </tbody>
          </table>
       </div>
-      )}
 
       {/* Vista previa del remito */}
       {(selected || previewErr) && (
@@ -1393,6 +1390,7 @@ export default function Deposito() {
         <div className="dep-vistas" role="tablist" aria-label="Vista del panel">
           {[
             ["pedidos", "Pedidos"],
+            ["devoluciones", "Devoluciones"],
             ["despachos", "Control de despachos"],
             ["trazabilidad", "Trazabilidad"],
             ["papelera", "Papelera"],
@@ -1704,6 +1702,13 @@ export default function Deposito() {
       {activeView === "pedidos" && (
         <div style={{ marginTop: 16 }}>
           <DepositoOrdersPanel pedidosPorDia={[]} />
+        </div>
+      )}
+
+      {/* ===== DEVOLUCIONES ===== */}
+      {activeView === "devoluciones" && (
+        <div style={{ marginTop: 16 }}>
+          <DevolucionesDeposito />
         </div>
       )}
 

@@ -26,13 +26,17 @@ beforeEach(() => {
     if (url.includes("/deposito/devoluciones/remito/")) return Promise.resolve({ data: REMITO });
     return Promise.resolve({ data: {} });
   });
-  api.post.mockResolvedValue({ data: { ok: true, remito: "0001186", unidadesDescontadas: 200, unidadesRetornables: 2 } });
+  api.post.mockResolvedValue({ data: { ok: true, remito: "0001186", unidadesDescontadas: 200, unidadesRetornables: 2,
+    devueltos: [
+      { productoId: "10", nombre: "BOLSA NEGRA 80*100", cantidad: 200, retornable: false },
+      { productoId: "20", nombre: "TACHO 120 LTS C/RUEDAS", cantidad: 2, retornable: true },
+    ] } });
 });
 
 const buscar = async (user, numero = "0001186") => {
   render(<DevolucionesDeposito />);
   await user.type(screen.getByLabelText("Número de remito"), numero);
-  await user.click(screen.getByRole("button", { name: "Buscar" }));
+  await user.click(screen.getByRole("button", { name: "Buscar remito" }));
   return await screen.findByText(/Remito #0001186/);
 };
 
@@ -63,6 +67,16 @@ describe("Devoluciones del depósito", () => {
     expect(campo).toHaveValue("500");
   });
 
+  it("antes de confirmar dice qué va a pasar", async () => {
+    const user = userEvent.setup({ delay: null });
+    await buscar(user);
+    await user.type(screen.getByLabelText(/Cantidad que vuelve de BOLSA NEGRA/), "200");
+    await user.type(screen.getByLabelText(/Cantidad que vuelve de TACHO/), "2");
+    expect(screen.getByText(/Vuelven 202 unidades al stock/)).toBeInTheDocument();
+    expect(screen.getByText(/se le descuentan 200 al consumo del servicio/)).toBeInTheDocument();
+    expect(screen.getByText(/2 van y vuelven: el consumo no cambia/)).toBeInTheDocument();
+  });
+
   it("registra la devolución y cuenta qué se descuenta y qué no", async () => {
     const user = userEvent.setup({ delay: null });
     await buscar(user);
@@ -78,8 +92,9 @@ describe("Devoluciones del depósito", () => {
       { productoId: "10", cantidad: 200 },
       { productoId: "20", cantidad: 2 },
     ]));
-    expect(await screen.findByText(/Se le descuentan 200 al consumo del servicio/)).toBeInTheDocument();
-    expect(screen.getByText(/2 son de los que van y vuelven: siguen contando como usadas/)).toBeInTheDocument();
+    expect(await screen.findByText(/Devolución registrada — remito #0001186/)).toBeInTheDocument();
+    expect(screen.getByText(/200 unidades menos en el consumo del servicio/)).toBeInTheDocument();
+    expect(screen.getByText(/2 unidades de las que van y vuelven: el consumo no cambia/)).toBeInTheDocument();
   });
 
   it("si el remito no se retiró, muestra el aviso del servidor", async () => {
@@ -90,7 +105,7 @@ describe("Devoluciones del depósito", () => {
     });
     render(<DevolucionesDeposito />);
     await user.type(screen.getByLabelText("Número de remito"), "1186");
-    await user.click(screen.getByRole("button", { name: "Buscar" }));
+    await user.click(screen.getByRole("button", { name: "Buscar remito" }));
     expect(await screen.findByText(/todavía no se retiró/)).toBeInTheDocument();
   });
 
