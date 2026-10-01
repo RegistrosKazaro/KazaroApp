@@ -147,7 +147,10 @@ export default function DevolucionesDeposito() {
           <div className="deposito-card-header">
             <div>
               <h2>Remito #{remito.pedido.numero}</h2>
-              <small>{remito.pedido.servicio} · poné cuánto volvió de cada insumo</small>
+              <small>
+                {remito.pedido.servicio} · poné cuánto volvió de cada insumo.
+                {" "}Si lo que salió no coincide con el remito, corregí el pedido antes de cargar la devolución.
+              </small>
             </div>
             <div className="deposito-header-actions">
               <button type="button" className="pill pill--ghost" onClick={empezarDeNuevo}>Buscar otro</button>

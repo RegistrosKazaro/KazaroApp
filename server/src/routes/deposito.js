@@ -1443,6 +1443,32 @@ router.put("/orders/:id/items", mustWarehouse, (req, res) => {
       filas.push({ pid, name: row.name, precio, cantidad, pendiente, subtotal, code: row.code || "" });
     }
 
+    // Primero se corrige el pedido y DESPUÉS se carga la devolución. Si se hace
+    // al revés y se corrige para abajo un insumo que ya volvió, el stock se
+    // sumaría dos veces (una por la devolución y otra por la corrección), así
+    // que acá se frena y se explica qué hacer.
+    const yaDevuelto = new Map(
+      db.prepare(`SELECT producto_id AS pid, COALESCE(SUM(cantidad),0) AS dev
+                  FROM devoluciones
+                  WHERE pedido_id = ? AND LOWER(COALESCE(estado,'')) = 'aprobada'
+                  GROUP BY producto_id`).all(id).map((r) => [String(r.pid), Number(r.dev)])
+    );
+    if (yaDevuelto.size) {
+      const entregaNueva = new Map();
+      for (const f of filas) entregaNueva.set(String(f.pid), (entregaNueva.get(String(f.pid)) || 0) + (f.cantidad - f.pendiente));
+      for (const [pid, dev] of yaDevuelto) {
+        const queda = entregaNueva.get(pid) || 0;
+        if (queda < dev) {
+          const nombre = db.prepare(`SELECT ProductName AS n FROM Productos WHERE CAST(ProductID AS TEXT) = CAST(? AS TEXT)`).get(pid)?.n || `insumo ${pid}`;
+          return res.status(409).json({
+            error: `De ${nombre} ya se devolvieron ${dev} unidades, así que no se puede dejar la entrega en ${queda}. `
+              + `Corregí primero la devolución, o dejá al menos ${dev}.`,
+            insumo: nombre, devuelto: dev, entregaNueva: queda,
+          });
+        }
+      }
+    }
+
     // Si el pedido YA descontó stock (administrativos, que descuentan al crearse,
     // o supervisores ya retirados), hay que ajustar la DIFERENCIA: devolver lo
     // que se saca y descontar lo que se agrega. Si no alcanza, no se guarda nada.
