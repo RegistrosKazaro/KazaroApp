@@ -20,6 +20,7 @@ import {
   hardDeleteOrder,
   getProductIdsCategoriasSeparadas,
   audit,
+  registrarCambioProducto,
   INICIO_FLUJO_REVISION,
 } from "../db.js";
 import { sendMail } from "../utils/mailer.js";
@@ -1017,6 +1018,215 @@ router.put("/orders/:id/pendiente/:action", mustWarehouse, (req, res) => {
   } catch (e) {
     console.error("[deposito/pendiente]", e.message);
     res.status(500).json({ error: "No se pudo actualizar el pendiente" });
+  }
+});
+
+/* ========================= Devoluciones =========================
+
+   Las carga el DEPÓSITO, que es quien recibe la mercadería, buscando por el
+   número de remito que trae el supervisor. Se aplican en el momento: no hay
+   pedido-y-aprobación, porque la carga quien la recibe.
+
+   Dos clases, según el insumo:
+     · retornable (tacho, contenedor): vuelve al stock, pero el servicio lo usó
+       igual, así que NO se le descuenta del consumo.
+     · el resto (bolsas, papel): vuelve al stock y se descuenta. Salen 500,
+       vuelven 200, consumió 300.
+   La marca vive en Productos.retornable y se define una vez por insumo. */
+
+function numeroDeRemito(valor) {
+  const n = Number(String(valor ?? "").replace(/[^0-9]/g, ""));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** Lo entregado y lo ya devuelto de un pedido, por insumo. */
+function lineasDevolubles(pedidoId) {
+  const items = db.prepare(`
+    SELECT i.ProductoID AS productoId,
+           MAX(COALESCE(i.Nombre, '')) AS nombre,
+           MAX(COALESCE(i.Codigo, '')) AS codigo,
+           COALESCE(SUM(i.Cantidad), 0) AS pedido,
+           COALESCE(SUM(i.cantidad_pendiente), 0) AS pendiente,
+           COALESCE(MAX(i.Precio), 0) AS precio
+    FROM PedidoItems i WHERE i.PedidoID = ?
+    GROUP BY i.ProductoID
+  `).all(pedidoId);
+
+  const dev = db.prepare(`
+    SELECT producto_id AS pid, COALESCE(SUM(cantidad), 0) AS devuelto
+    FROM devoluciones WHERE pedido_id = ? AND LOWER(COALESCE(estado,'')) IN ('pendiente','aprobada')
+    GROUP BY producto_id
+  `).all(pedidoId);
+  const yaDevuelto = new Map(dev.map((d) => [String(d.pid), Number(d.devuelto || 0)]));
+
+  const retorna = new Map(
+    db.prepare(`SELECT ProductID AS id, COALESCE(retornable, 0) AS r FROM Productos`).all()
+      .map((p) => [String(p.id), Number(p.r) === 1])
+  );
+
+  return items.map((it) => {
+    // Lo que quedó pendiente nunca salió del depósito: no se puede devolver.
+    const entregado = Math.max(0, Number(it.pedido) - Number(it.pendiente));
+    const devuelto = yaDevuelto.get(String(it.productoId)) || 0;
+    return {
+      productoId: String(it.productoId),
+      nombre: it.nombre,
+      codigo: it.codigo,
+      precio: Number(it.precio),
+      entregado,
+      devuelto,
+      disponible: Math.max(0, entregado - devuelto),
+      retornable: retorna.get(String(it.productoId)) === true,
+    };
+  }).filter((l) => l.entregado > 0);
+}
+
+// Buscar el pedido por número de remito, para cargarle la devolución.
+router.get("/devoluciones/remito/:numero", mustWarehouse, (req, res) => {
+  try {
+    const empresaId = getEmpresaId(req);
+    const id = numeroDeRemito(req.params.numero);
+    if (!id) return res.status(400).json({ error: "Poné el número de remito" });
+
+    const ped = db.prepare(`
+      SELECT p.PedidoID AS id, p.Fecha AS fecha, p.retiro_at AS retiroAt, p.Status AS status,
+             p.ServicioID AS servicioId, s.ServicioNombre AS servicio, p.empresa_id AS empresaId,
+             p.deleted_at AS borradoAt
+      FROM Pedidos p LEFT JOIN Servicios s ON CAST(s.ServiciosID AS INTEGER) = CAST(p.ServicioID AS INTEGER)
+      WHERE p.PedidoID = ?
+    `).get(id);
+
+    if (!ped || Number(ped.empresaId ?? empresaId) !== Number(empresaId) || ped.borradoAt) {
+      return res.status(404).json({ error: `No existe el remito #${String(id).padStart(7, "0")}` });
+    }
+    const retirado = String(ped.retiroAt || "").trim() !== "";
+    if (!retirado) {
+      return res.status(409).json({
+        error: `El remito #${String(id).padStart(7, "0")} todavía no se retiró, así que no hay nada para devolver.`,
+      });
+    }
+
+    res.json({
+      ok: true,
+      pedido: {
+        id: ped.id, numero: String(ped.id).padStart(7, "0"),
+        fecha: ped.fecha, retiroAt: ped.retiroAt,
+        servicioId: ped.servicioId, servicio: ped.servicio || "Sin servicio",
+      },
+      items: lineasDevolubles(ped.id),
+    });
+  } catch (e) {
+    console.error("[deposito/devoluciones remito]", e?.message || e);
+    res.status(500).json({ error: "No se pudo buscar el remito" });
+  }
+});
+
+// Registrar la devolución: suma stock y, si corresponde, descuenta el consumo.
+router.post("/devoluciones", mustWarehouse, (req, res) => {
+  try {
+    const empresaId = getEmpresaId(req);
+    const id = numeroDeRemito(req.body?.pedidoId);
+    const motivo = String(req.body?.motivo || "").trim() || "Devolución en depósito";
+    const pedidas = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (!id) return res.status(400).json({ error: "Falta el remito" });
+    if (!pedidas.length) return res.status(400).json({ error: "No hay nada para devolver" });
+
+    const ped = db.prepare(`SELECT PedidoID AS id, empresa_id AS empresaId, retiro_at AS retiroAt, deleted_at AS borradoAt FROM Pedidos WHERE PedidoID = ?`).get(id);
+    if (!ped || Number(ped.empresaId ?? empresaId) !== Number(empresaId) || ped.borradoAt) {
+      return res.status(404).json({ error: "Remito no encontrado" });
+    }
+    if (String(ped.retiroAt || "").trim() === "") {
+      return res.status(409).json({ error: "El remito todavía no se retiró." });
+    }
+
+    // Se valida todo antes de tocar nada: o entra la devolución entera o ninguna.
+    const disponibles = new Map(lineasDevolubles(id).map((l) => [l.productoId, l]));
+    const validadas = [];
+    for (const p of pedidas) {
+      const pid = String(p?.productoId ?? "");
+      const cant = Math.trunc(Number(p?.cantidad));
+      if (!pid || !Number.isFinite(cant) || cant <= 0) continue;
+      const linea = disponibles.get(pid);
+      if (!linea) return res.status(400).json({ error: `El insumo ${pid} no está en ese remito` });
+      if (cant > linea.disponible) {
+        return res.status(400).json({ error: `De ${linea.nombre} sólo se pueden devolver ${linea.disponible}` });
+      }
+      validadas.push({ ...linea, cantidad: cant });
+    }
+    if (!validadas.length) return res.status(400).json({ error: "No hay nada para devolver" });
+
+    const ins = db.prepare(`
+      INSERT INTO devoluciones (pedido_id, producto_id, cantidad, motivo, empresa_id, solicitante_id, aprobador_id, estado, tipo, fecha_resolucion)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'aprobada', ?, datetime('now'))
+    `);
+    const stockActual = db.prepare(`SELECT COALESCE(Stock, 0) AS s, ProductName AS n, Code AS c FROM Productos WHERE ProductID = ?`);
+    const subirStock = db.prepare(`UPDATE Productos SET Stock = COALESCE(Stock, 0) + ? WHERE ProductID = ?`);
+
+    const hecho = db.transaction(() => {
+      const salida = [];
+      for (const v of validadas) {
+        const antes = stockActual.get(v.productoId);
+        subirStock.run(v.cantidad, v.productoId);
+        ins.run(id, v.productoId, v.cantidad, motivo, empresaId, req.user.id, req.user.id,
+          v.retornable ? "retornable" : "no_usado");
+        registrarCambioProducto({
+          productId: v.productoId, nombre: antes?.n ?? v.nombre, codigo: antes?.c ?? v.codigo,
+          campo: "stock", anterior: Number(antes?.s ?? 0), nuevo: Number(antes?.s ?? 0) + v.cantidad,
+          tipo: "devolucion", usuario: req.user?.username || req.user?.email || null,
+        });
+        salida.push({ ...v, stockNuevo: Number(antes?.s ?? 0) + v.cantidad });
+      }
+      return salida;
+    })();
+
+    const retornables = hecho.filter((h) => h.retornable);
+    const descuentan = hecho.filter((h) => !h.retornable);
+    audit({
+      empresaId, usuario: req.user?.username || req.user?.email || null,
+      accion: "update", entidad: "Devolucion", entidadId: String(id),
+      detalle: `Remito #${String(id).padStart(7, "0")}: ${hecho.length} insumo(s) devueltos`
+        + ` (${descuentan.reduce((a, h) => a + h.cantidad, 0)} u. que se descuentan del consumo`
+        + ` y ${retornables.reduce((a, h) => a + h.cantidad, 0)} u. retornables que no)`
+        + ` — ${motivo}`,
+    });
+
+    res.json({
+      ok: true,
+      remito: String(id).padStart(7, "0"),
+      devueltos: hecho.map((h) => ({
+        productoId: h.productoId, nombre: h.nombre, cantidad: h.cantidad,
+        retornable: h.retornable, stockNuevo: h.stockNuevo,
+      })),
+      unidadesDescontadas: descuentan.reduce((a, h) => a + h.cantidad, 0),
+      unidadesRetornables: retornables.reduce((a, h) => a + h.cantidad, 0),
+    });
+  } catch (e) {
+    console.error("[deposito/devoluciones POST]", e?.message || e);
+    res.status(500).json({ error: "No se pudo registrar la devolución" });
+  }
+});
+
+// Lo devuelto últimamente, para ver qué se cargó y poder revisar.
+router.get("/devoluciones", mustWarehouse, (req, res) => {
+  try {
+    const empresaId = getEmpresaId(req);
+    const limite = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+    const rows = db.prepare(`
+      SELECT d.id, d.pedido_id AS pedidoId, d.cantidad, d.motivo, d.tipo, d.fecha_resolucion AS fecha,
+             COALESCE(pr.ProductName, '') AS insumo, COALESCE(s.ServicioNombre, '') AS servicio,
+             COALESCE(e.Nombre || ' ' || COALESCE(e.Apellido, ''), '') AS quien
+      FROM devoluciones d
+      LEFT JOIN Productos pr ON CAST(pr.ProductID AS TEXT) = CAST(d.producto_id AS TEXT)
+      LEFT JOIN Pedidos p ON p.PedidoID = d.pedido_id
+      LEFT JOIN Servicios s ON CAST(s.ServiciosID AS INTEGER) = CAST(p.ServicioID AS INTEGER)
+      LEFT JOIN Empleados e ON e.EmpleadosID = d.aprobador_id
+      WHERE COALESCE(d.empresa_id, 1) = ? AND LOWER(COALESCE(d.estado,'')) = 'aprobada'
+      ORDER BY d.id DESC LIMIT ?
+    `).all(empresaId, limite);
+    res.json({ ok: true, rows: rows.map((r) => ({ ...r, remito: String(r.pedidoId).padStart(7, "0") })) });
+  } catch (e) {
+    console.error("[deposito/devoluciones GET]", e?.message || e);
+    res.status(500).json({ error: "No se pudieron cargar las devoluciones" });
   }
 });
 

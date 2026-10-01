@@ -901,3 +901,73 @@
 }
 
 .dep-tipo-btn.is-active .dep-tipo-cuenta { background: #dbeafe; color: #1e3a8a; }
+
+/* ===== Devoluciones: las carga el depósito buscando por remito ===== */
+.dev-dep { display: flex; flex-direction: column; gap: 1rem; }
+
+.dev-buscar { display: flex; align-items: flex-end; gap: 0.6rem; flex-wrap: wrap; }
+.dev-buscar label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.82rem; color: #334155; }
+.dev-buscar input { width: 180px; }
+.dev-ayuda { font-size: 0.8rem; color: #64748b; }
+
+.dev-error, .dev-ok {
+  font-size: 0.86rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 10px;
+}
+.dev-error { background: #fef2f2; color: #7f1d1d; border: 1px solid #fecaca; }
+.dev-ok { background: #f0fdf4; color: #14532d; border: 1px solid #bbf7d0; }
+
+.dev-remito { border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; background: #fff; }
+.dev-remito-cab {
+  display: flex; justify-content: space-between; align-items: center; gap: 0.6rem;
+  flex-wrap: wrap; padding: 0.7rem 0.9rem; background: #f8fafc; border-bottom: 1px solid #e2e8f0;
+}
+.dev-remito-num { font-size: 0.95rem; color: #0f172a; margin-right: 0.6rem; }
+.dev-remito-serv { font-size: 0.85rem; color: #475569; }
+
+.dev-lista { display: flex; flex-direction: column; }
+.dev-fila {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px 100px 170px;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.5rem 0.9rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+.dev-fila:last-child { border-bottom: 0; }
+.dev-fila--cab { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: #475569; background: #f8fafc; }
+.dev-fila.is-cargada { background: #f0fdf4; }
+.dev-insumo { display: flex; flex-direction: column; gap: 0.1rem; font-size: 0.88rem; color: #0f172a; min-width: 0; }
+.dev-insumo small { font-size: 0.74rem; color: #64748b; }
+.dev-col-num { text-align: center; font-variant-numeric: tabular-nums; font-size: 0.88rem; }
+.dev-tag {
+  display: inline-block; margin-left: 0.4rem;
+  font-size: 0.68rem; padding: 0.05rem 0.45rem; border-radius: 999px;
+  background: #e0e7ff; color: #3730a3; vertical-align: middle;
+}
+.dev-cant { width: 70px; text-align: center; }
+.dev-todo {
+  display: block; margin: 0.2rem auto 0;
+  font: inherit; font-size: 0.72rem; color: #1d4ed8;
+  background: none; border: 0; cursor: pointer; text-decoration: underline;
+}
+
+.dev-pie {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  padding: 0.7rem 0.9rem; background: #f8fafc; border-top: 1px solid #e2e8f0;
+}
+.dev-motivo { flex: 1 1 260px; }
+.dev-resumen { font-size: 0.84rem; color: #475569; }
+.dev-vacio { padding: 1.5rem; text-align: center; font-size: 0.88rem; color: #475569; }
+
+.dev-ultimas h3 { margin: 0 0 0.5rem; font-size: 0.95rem; font-weight: 500; color: #0f172a; }
+.dev-ultimas .dev-lista { border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; background: #fff; }
+.dev-fila--hist { grid-template-columns: minmax(0, 1fr) 90px minmax(0, 1fr); }
+.dev-hist-meta { font-size: 0.78rem; color: #64748b; text-align: right; }
+
+@media (max-width: 720px) {
+  .dev-fila, .dev-fila--hist { grid-template-columns: minmax(0, 1fr) 110px; }
+  .dev-fila--cab { display: none; }
+  .dev-hist-meta { grid-column: 1 / -1; text-align: left; }
+}

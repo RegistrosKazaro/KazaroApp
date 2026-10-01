@@ -80,6 +80,7 @@ function ProductsSection() {
     code: "",
     catId: "",
     imageUrl: "",
+    retornable: false,
   });
   const [catTouched, setCatTouched] = useState(false);
   const [editingLoading, setEditingLoading] = useState(false);
@@ -172,6 +173,7 @@ function ProductsSection() {
     stock: "",
     code: "",
     catId: "",
+    retornable: false,
   });
   setTimeout(() => nameRef.current?.focus(), 0);
 };
@@ -193,6 +195,7 @@ const onEdit = async (row) => {
     stock: row.stock ?? "",
     code: row.code ?? "",
     catId: "",
+    retornable: Number(row.retornable ?? 0) === 1,
   });
 
   setRoleVisibility(["supervisor", "administrativo"]);
@@ -226,6 +229,7 @@ const onEdit = async (row) => {
       stock: data?.stock ?? prev.stock ?? "",
       code: data?.code ?? prev.code ?? "",
       catId,
+      retornable: Number(data?.retornable ?? 0) === 1,
     }));
   } catch (e) {
     setErr(e?.response?.data?.error || e.message || "No se pudo cargar el producto completo");
@@ -238,7 +242,7 @@ const onEdit = async (row) => {
   const onCancel = () => {
     setEditingId(null);
     setCatTouched(false);
-    setDraft({ name: "", price: "", stock: "", code: "", catId: "", imageUrl: "" });
+    setDraft({ name: "", price: "", stock: "", code: "", catId: "", imageUrl: "", retornable: false });
     setStatusMsg("");
     setErr("");
   };
@@ -253,6 +257,7 @@ const onEdit = async (row) => {
     stock: draft.stock === "" || draft.stock === null ? null : Number(draft.stock),
     code: draft.code === "" || draft.code === null ? null : String(draft.code),
     imageUrl: draft.imageUrl === "" || draft.imageUrl === null ? null : String(draft.imageUrl).trim(),
+    retornable: !!draft.retornable,
   };
 
   if (!payload.name) {
@@ -650,6 +655,19 @@ const onEdit = async (row) => {
               {draft.imageUrl ? (
                 <img src={draft.imageUrl} alt="Vista previa" style={{ marginTop: 6, width: 90, height: 90, objectFit: "cover", borderRadius: 8, border: "1px solid #e5e7eb" }} onError={(e) => { e.currentTarget.style.display = "none"; }} />
               ) : null}
+            </label>
+            {/* Lo que va y vuelve: al devolverlo suma stock, pero el servicio
+                lo usó igual, así que no se le descuenta del consumo. */}
+            <label className="prod-retornable">
+              <input
+                type="checkbox"
+                checked={!!draft.retornable}
+                onChange={(e) => setDraft((d) => ({ ...d, retornable: e.target.checked }))}
+              />
+              <span>
+                Va y vuelve (tacho, contenedor, carro)
+                <small>Al devolverlo vuelve al stock, pero se sigue contando como usado por el servicio.</small>
+              </span>
             </label>
             <label>
               <span>Categoría</span>

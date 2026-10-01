@@ -7,7 +7,7 @@ import useDebounced from "../hooks/useDebounced";
 import { formatMoney, formatNumber } from "../utils/format";
 import { normalizeText } from "../utils/text";
 import "../styles/deposito.css";
-import DevolucionesPendientes from "../components/DevolucionesPendientes";
+import DevolucionesDeposito from "../components/DevolucionesDeposito";
 import ControlDespachos from "../components/ControlDespachos";
 import PapeleraPedidos from "../components/PapeleraPedidos";
 import Trazabilidad from "../components/Trazabilidad";
@@ -929,7 +929,7 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
       {err && <div className="state error deposito-state">{err}</div>}
       {okMsg && <div className="state deposito-state">{okMsg}</div>}
 
-      {tab === "devoluciones" ? <DevolucionesPendientes /> : (
+      {tab === "devoluciones" ? <DevolucionesDeposito /> : (
       <div className="deposito-table-wrapper">
         <table className="deposito-table" aria-label="Pedidos del depósito">
           <thead>

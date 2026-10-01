@@ -4,7 +4,6 @@ import { normalizeText } from "../utils/text";
 import { useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
-import ReturnModal from "../components/ReturnModal";
 import { formatMoney } from "../utils/format";
 import { msDeFechaDb, formatoFechaHoraAr, diasDesdeFechaDb } from "../utils/fechas";
 
@@ -78,7 +77,6 @@ export default function MisPedidos() {
   // encontrar el que se quiere devolver se vuelve imposible a fuerza de scroll.
   const [q, setQ] = useState("");
   const [meses, setMeses] = useState(3);
-  const [returnOrder, setReturnOrder] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -390,12 +388,7 @@ export default function MisPedidos() {
                   >
                     {pdfLoading && pdfOrder?.id === o.id ? "Cargando…" : "Ver remito"}
                   </button>
-                  {o.status === "retirado" && (
-                    <button type="button" onClick={() => setReturnOrder(o)}
-                      style={{ padding: "6px 16px", borderRadius: 999, border: "1px solid #1d4ed8", cursor: "pointer", background: "#fff", color: "#1d4ed8", fontWeight: 600, fontSize: "0.85rem", marginLeft: 8 }}>
-                      Devolver
-                    </button>
-                  )}
+
                 </div>
               )}
             </div>
@@ -429,7 +422,6 @@ export default function MisPedidos() {
         </div>
       )}
 
-      {returnOrder && <ReturnModal order={returnOrder} onClose={() => setReturnOrder(null)} />}
     </div>
   );
 }

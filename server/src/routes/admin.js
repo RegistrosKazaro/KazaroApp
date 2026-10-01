@@ -155,6 +155,7 @@ router.get("/products", mustBeAdmin, (req, res) => {
       SELECT ${C_ID} AS id,
              ${C_NAME} AS name
              ${hasIsActive ? ", COALESCE(is_active, 1) AS is_active" : ""}
+             ${prodCols.includes("retornable") ? ", COALESCE(retornable, 0) AS retornable" : ""}
              ${C_CAT     ? `, ${C_CAT}     AS categoryId`   : ""}
              ${C_CATNAME ? `, ${C_CATNAME} AS categoryName` : ""}
              ${C_CODE    ? `, ${C_CODE}    AS code`         : ""}
@@ -625,6 +626,11 @@ router.put("/products/:id", mustBeAdmin, (req, res) => {
       sets.push(`${C_CAT} = ?`); vals.push(v === "" || v === null ? null : v);
     } else if (!C_CAT && C_CATNAME && req.body?.categoryName !== undefined) {
       sets.push(`${C_CATNAME} = ?`); vals.push(String(req.body.categoryName ?? "").trim() || null);
+    }
+    // Va y vuelve entero (tacho, contenedor): al devolverlo suma stock pero no
+    // se le descuenta el consumo al servicio, porque lo usó igual.
+    if (req.body?.retornable !== undefined && prodCols.includes("retornable")) {
+      sets.push(`"retornable" = ?`); vals.push(req.body.retornable ? 1 : 0);
     }
     if (req.body?.imageUrl !== undefined) {
       const iu = String(req.body.imageUrl ?? "").trim();

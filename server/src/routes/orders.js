@@ -400,14 +400,18 @@ router.get("/:id/returnable", requireAuth, (req, res) => {
   }
 });
 
-// Crear solicitud de devolución (supervisor) — NO toca stock
+// Crear devolución — DEPÓSITO o admin.
+// Desde el 01/10/2026 el supervisor ya no devuelve: trae el remito al depósito
+// y el depósito la carga desde su panel (POST /deposito/devoluciones), que
+// además suma el stock en el momento. Esta ruta queda para compatibilidad y
+// deja la devolución pendiente de aprobar.
 /**
  * Registra una devolución. Acepta un insumo suelto (pedidoId, productoId,
  * cantidad, motivo) o VARIOS de una vez en `items`, para que el supervisor no
  * tenga que repetir la operación insumo por insumo.
  * Es todo o nada: si una línea falla, no se guarda ninguna.
  */
-router.post("/returns", requireAuth, (req, res) => {
+router.post("/returns", requireAuth, requireRole(["deposito", "admin"]), (req, res) => {
   try {
     const { pedidoId, productoId, cantidad, motivo, items } = req.body || {};
     const pid = Number(pedidoId);

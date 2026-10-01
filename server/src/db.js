@@ -456,6 +456,21 @@ export function revokeVisibility(productId, roleName) {
   `).run(productId, role);
 }
 
+/* Insumos que van y vuelven enteros: tachos, contenedores, carros. Cuando el
+   depósito los recibe de vuelta suman stock otra vez, pero el servicio los usó
+   igual, así que no se le descuentan del consumo. Ver ensureDevolucionesViews. */
+export function ensureProductoRetornable() {
+  try {
+    const cols = tinfo("Productos").map((c) => c.name.toLowerCase());
+    if (!cols.includes("retornable")) {
+      db.exec(`ALTER TABLE Productos ADD COLUMN retornable INTEGER NOT NULL DEFAULT 0`);
+    }
+  } catch (e) {
+    console.error("[db] ensureProductoRetornable error:", e?.message || e);
+  }
+}
+ensureProductoRetornable();
+
 export function ensureProductHistorialTable() {
   try {
     db.exec(`
@@ -1528,6 +1543,20 @@ function ensureDevolucionesViews() {
       );
     `);
 
+    // Dos clases de devolución, decididas con el usuario (01/10/2026):
+    //   · "no_usado"   → lo que no se llegó a usar (bolsas de más): vuelve al
+    //     stock Y se descuenta del consumo del servicio. Salen 500, vuelven
+    //     200, consumió 300.
+    //   · "retornable" → lo que va y vuelve entero (tachos, contenedores):
+    //     vuelve al stock pero NO se descuenta, porque el servicio igual lo
+    //     usó esos días. Si se descontara, el informe mostraría 0 y parecería
+    //     que nunca lo pidió.
+    // Por eso las vistas de neto sólo restan las de tipo "no_usado".
+    const colsDev = tinfo("devoluciones").map((c) => c.name);
+    if (!colsDev.includes("tipo")) {
+      db.exec(`ALTER TABLE devoluciones ADD COLUMN tipo TEXT NOT NULL DEFAULT 'no_usado'`);
+    }
+
     // Se recrean siempre, así un cambio de definición se aplica en el deploy.
     db.exec(`DROP VIEW IF EXISTS v_pedidos_neto;`);
     db.exec(`DROP VIEW IF EXISTS v_pedido_items_neto;`);
@@ -1538,6 +1567,7 @@ function ensureDevolucionesViews() {
         SELECT pedido_id, producto_id, COALESCE(SUM(cantidad),0) AS devuelto
         FROM devoluciones
         WHERE LOWER(COALESCE(estado,'')) = 'aprobada'
+          AND LOWER(COALESCE(tipo,'no_usado')) <> 'retornable'
         GROUP BY pedido_id, producto_id;
     `);
 
@@ -3083,6 +3113,7 @@ export function adminGetProductById(id, empresaId) {
       ${stockExpr},
       ${codeExpr},
       ${catExpr}
+      ${prodCols.includes("retornable") ? ", COALESCE(p.retornable, 0) AS retornable" : ""}
     FROM ${products} p
     WHERE (CAST(p.${prodId} AS TEXT) = CAST(@id AS TEXT) OR rowid = @id) ${empresaFilter}
     LIMIT 1
