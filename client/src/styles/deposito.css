@@ -903,125 +903,67 @@
 .dep-tipo-btn.is-active .dep-tipo-cuenta { background: #dbeafe; color: #1e3a8a; }
 
 
-/* ===== Devoluciones (depósito) =====
-   El orden de la pantalla sigue el de la tarea: buscar el remito, poner lo que
-   volvió, confirmar. Colores medidos para contraste AA sobre blanco. */
-.dev { display: flex; flex-direction: column; gap: 1rem; max-width: 1100px; }
 
-.dev-cab { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
-.dev-cab h2 { margin: 0 0 0.2rem; font-size: 1.15rem; font-weight: 600; color: #0f172a; }
-.dev-cab p { margin: 0; font-size: 0.88rem; color: #475569; max-width: 60ch; }
+/* ===== Devoluciones =====
+   Reusa deposito-card / deposito-table / pill / state. Acá sólo lo propio:
+   el buscador de remito, la celda de carga y la etiqueta "va y vuelve". */
+.dev-wrap { display: flex; flex-direction: column; gap: 1rem; }
 
-/* Paso 1: el número de remito, solo y grande */
-.dev-paso1 {
-  display: flex; flex-direction: column; gap: 0.4rem;
-  padding: 1.4rem; border: 1px solid #e2e8f0; border-radius: 14px; background: #f8fafc;
-}
-.dev-paso1 label { font-size: 0.85rem; color: #334155; }
-.dev-paso1-fila { display: flex; gap: 0.6rem; flex-wrap: wrap; }
-.dev-remito-input {
-  width: 190px; font-size: 1.35rem; font-weight: 500; letter-spacing: 0.05em;
-  padding: 0.5rem 0.75rem; border: 1px solid #94a3b8; border-radius: 10px;
-  background: #fff; color: #0f172a; font-variant-numeric: tabular-nums;
-}
-.dev-remito-input:focus-visible { outline: 2px solid #2563eb; outline-offset: 1px; border-color: #2563eb; }
-.dev-pista { font-size: 0.8rem; color: #64748b; }
-
-.dev-error {
-  font-size: 0.88rem; padding: 0.6rem 0.8rem; border-radius: 10px;
-  background: #fef2f2; color: #7f1d1d; border: 1px solid #fecaca;
+.dev-busqueda { display: flex; align-items: flex-end; gap: 0.6rem; flex-wrap: wrap; }
+.dev-numero {
+  width: 170px;
+  font-size: 1.05rem;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
 }
 
-/* Paso 2: el remito y sus insumos */
-.dev-trabajo { border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; overflow: hidden; }
-.dev-remito-cab {
-  display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap;
-  padding: 0.8rem 1rem; background: #eff6ff; border-bottom: 1px solid #bfdbfe;
+.deposito-page .dev-nombre { color: #111827; }
+.deposito-page .dev-sub {
+  display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+  margin-top: 0.15rem; font-size: 0.75rem; color: #6b7280;
 }
-.dev-remito-datos { display: flex; flex-direction: column; gap: 0.1rem; }
-.dev-remito-num { font-size: 1.05rem; font-weight: 600; color: #1e3a8a; font-variant-numeric: tabular-nums; }
-.dev-remito-serv { font-size: 0.9rem; color: #1e40af; }
-.dev-instruccion { margin: 0; padding: 0.7rem 1rem 0; font-size: 0.88rem; color: #475569; }
-
-.dev-tabla { display: flex; flex-direction: column; padding: 0.5rem 0.4rem 0; }
-.dev-fila {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 100px 110px 190px;
-  gap: 0.5rem; align-items: center;
-  padding: 0.55rem 0.6rem; border-radius: 10px;
-}
-.dev-fila--cab {
-  font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em;
-  color: #475569; padding-bottom: 0.3rem;
-}
-.dev-fila + .dev-fila { border-top: 1px solid #f1f5f9; border-radius: 0; }
-.dev-fila.is-cargada { background: #ecfdf5; border-top-color: transparent; border-radius: 10px; }
-.dev-insumo { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
-.dev-nombre { font-size: 0.92rem; color: #0f172a; overflow-wrap: break-word; }
-.dev-sub { display: flex; align-items: center; gap: 0.4rem; font-size: 0.76rem; color: #64748b; flex-wrap: wrap; }
-.dev-chip {
+.deposito-page .dev-chip {
   font-size: 0.7rem; padding: 0.05rem 0.5rem; border-radius: 999px;
   background: #e0e7ff; color: #3730a3; white-space: nowrap;
 }
-.dev-num { text-align: center; }
-.dev-dato { font-size: 0.95rem; color: #334155; font-variant-numeric: tabular-nums; }
-.dev-entrada { display: flex; flex-direction: column; align-items: center; gap: 0.2rem; }
-.dev-cant {
-  width: 88px; text-align: center; font-size: 1rem; font-variant-numeric: tabular-nums;
-  padding: 0.35rem 0.4rem; border: 1px solid #94a3b8; border-radius: 8px; background: #fff; color: #0f172a;
-}
-.dev-cant:focus-visible { outline: 2px solid #2563eb; outline-offset: 1px; border-color: #2563eb; }
-.dev-todo { font: inherit; font-size: 0.74rem; color: #1d4ed8; background: none; border: 0; cursor: pointer; text-decoration: underline; }
-.dev-todo:disabled { color: #94a3b8; cursor: default; text-decoration: none; }
 
-/* Paso 3: qué va a pasar, antes de confirmar */
+.deposito-page .dev-cant {
+  width: 86px; text-align: right; font-variant-numeric: tabular-nums;
+}
+.deposito-page .dev-todo {
+  display: block; margin-top: 0.2rem; margin-left: auto;
+  font: inherit; font-size: 0.72rem; color: #1d4ed8;
+  background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline;
+}
+.deposito-page .dev-todo:disabled { color: #9ca3af; cursor: default; text-decoration: none; }
+.deposito-page .dev-tr-cargada > td { background: #f0fdf4; }
+
 .dev-confirmar {
-  display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
-  margin-top: 0.6rem; padding: 0.8rem 1rem; background: #f8fafc; border-top: 1px solid #e2e8f0;
+  display: flex; align-items: flex-end; gap: 0.75rem; flex-wrap: wrap;
+  margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #e5e7eb;
 }
-.dev-confirmar.is-lista { background: #ecfdf5; border-top-color: #bbf7d0; }
-.dev-motivo {
-  flex: 1 1 240px; min-width: 200px; font: inherit; font-size: 0.88rem;
-  padding: 0.45rem 0.6rem; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; color: #0f172a;
-}
-.dev-efecto { display: flex; flex-wrap: wrap; gap: 0.35rem; font-size: 0.85rem; color: #14532d; }
-.dev-efecto-total { font-weight: 600; }
-.dev-efecto-vacio { color: #64748b; }
-.dev-vacio { padding: 2rem 1rem; text-align: center; font-size: 0.9rem; color: #475569; }
+.dev-confirmar .dev-motivo { flex: 1 1 240px; }
+.dev-efecto { margin: 0 0 0.35rem; font-size: 0.82rem; color: #374151; flex: 1 1 100%; }
 
-/* Lo que quedó hecho */
-.dev-hecho { border: 1px solid #bbf7d0; border-radius: 14px; background: #f0fdf4; padding: 0.9rem 1rem; }
-.dev-hecho-titulo { font-size: 1rem; font-weight: 600; color: #14532d; margin-bottom: 0.5rem; }
-.dev-hecho-lista { margin: 0 0 0.6rem; padding-left: 1.1rem; font-size: 0.88rem; color: #166534; }
-.dev-hecho-lista li { margin-bottom: 0.15rem; }
-.dev-nota { color: #15803d; }
-.dev-hecho-pie { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; font-size: 0.85rem; color: #14532d; }
-
-/* Historial */
-.dev-historial h3 { margin: 0 0 0.5rem; font-size: 0.95rem; font-weight: 500; color: #0f172a; }
-.dev-historial ul { list-style: none; margin: 0; padding: 0; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; }
-.dev-historial li {
-  display: grid; grid-template-columns: 56px minmax(0, 1fr) minmax(0, 0.8fr);
-  gap: 0.6rem; align-items: center; padding: 0.5rem 0.8rem; border-bottom: 1px solid #f1f5f9;
-}
-.dev-historial li:last-child { border-bottom: 0; }
-.dev-hist-cant { font-size: 0.95rem; color: #0f172a; text-align: right; font-variant-numeric: tabular-nums; }
-.dev-hist-insumo { display: flex; flex-direction: column; gap: 0.1rem; font-size: 0.88rem; color: #0f172a; min-width: 0; }
-.dev-hist-insumo small { font-size: 0.75rem; color: #64748b; }
-.dev-hist-meta { font-size: 0.78rem; color: #64748b; text-align: right; }
-
-.dev-solo-movil { display: none; }
+.dev-hecho { display: block; }
+.dev-hecho ul { margin: 0.4rem 0 0.6rem; padding-left: 1.1rem; }
+.dev-hecho li { margin-bottom: 0.1rem; }
 
 @media (max-width: 760px) {
-  /* Las columnas no entran: cada insumo pasa a ser un bloque y los números
-     van escritos debajo del nombre, con su rótulo. */
-  .dev-fila { grid-template-columns: minmax(0, 1fr) 120px; row-gap: 0.35rem; }
-  .dev-fila--cab { display: none; }
-  .dev-fila .dev-dato { display: none; }
-  .dev-solo-movil { display: block; color: #475569; }
-  .dev-entrada { grid-column: 2; grid-row: 1; align-self: center; }
-  .dev-confirmar { flex-direction: column; align-items: stretch; }
-  .dev-confirmar .btn { width: 100%; }
-  .dev-historial li { grid-template-columns: 48px minmax(0, 1fr); }
-  .dev-hist-meta { grid-column: 1 / -1; text-align: left; }
+  /* La tabla no entra: cada fila pasa a ser una ficha con los datos rotulados. */
+  .deposito-page .dev-wrap .deposito-table thead { display: none; }
+  .deposito-page .dev-wrap .deposito-table,
+  .deposito-page .dev-wrap .deposito-table tbody,
+  .deposito-page .dev-wrap .deposito-table tr,
+  .deposito-page .dev-wrap .deposito-table td { display: block; width: auto; }
+  .deposito-page .dev-wrap .deposito-table tr {
+    border-bottom: 1px solid #e5e7eb; padding: 0.5rem 0.25rem;
+  }
+  .deposito-page .dev-wrap .deposito-table td { border: 0; padding: 0.15rem 0.5rem; text-align: left; }
+  .deposito-page .dev-wrap .deposito-table td[data-rotulo]::before {
+    content: attr(data-rotulo) ": "; color: #6b7280; font-size: 0.75rem;
+  }
+  .deposito-page .dev-cant { width: 100%; text-align: left; }
+  .deposito-page .dev-todo { margin-left: 0; }
+  .dev-confirmar .pill { width: 100%; }
 }

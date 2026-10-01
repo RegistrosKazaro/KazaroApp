@@ -46,7 +46,7 @@ describe("Devoluciones del depósito", () => {
     await buscar(user);
     // El número va tal cual lo tipean, con ceros y todo: el servidor lo limpia.
     expect(api.get).toHaveBeenCalledWith("/deposito/devoluciones/remito/0001186");
-    expect(screen.getByText("HOSPITAL EVA PERON")).toBeInTheDocument();
+    expect(screen.getByText(/HOSPITAL EVA PERON/)).toBeInTheDocument();
     expect(screen.getByLabelText(/Cantidad que vuelve de BOLSA NEGRA/)).toBeInTheDocument();
     // Lo que ya se devolvió entero no se ofrece de nuevo.
     expect(screen.queryByLabelText(/Cantidad que vuelve de PAPEL HIGIENICO/)).not.toBeInTheDocument();
@@ -55,7 +55,7 @@ describe("Devoluciones del depósito", () => {
   it("marca los insumos que van y vuelven", async () => {
     const user = userEvent.setup({ delay: null });
     await buscar(user);
-    const fila = screen.getByText("TACHO 120 LTS C/RUEDAS").closest(".dev-fila");
+    const fila = screen.getByText("TACHO 120 LTS C/RUEDAS").closest("tr");
     expect(within(fila).getByText("va y vuelve")).toBeInTheDocument();
   });
 
@@ -72,9 +72,11 @@ describe("Devoluciones del depósito", () => {
     await buscar(user);
     await user.type(screen.getByLabelText(/Cantidad que vuelve de BOLSA NEGRA/), "200");
     await user.type(screen.getByLabelText(/Cantidad que vuelve de TACHO/), "2");
-    expect(screen.getByText(/Vuelven 202 unidades al stock/)).toBeInTheDocument();
-    expect(screen.getByText(/se le descuentan 200 al consumo del servicio/)).toBeInTheDocument();
-    expect(screen.getByText(/2 van y vuelven: el consumo no cambia/)).toBeInTheDocument();
+    // El resumen arma el texto con varios pedazos: se mira el párrafo entero.
+    const resumen = document.querySelector(".dev-efecto").textContent;
+    expect(resumen).toMatch(/Vuelven 202 unidades al stock/);
+    expect(resumen).toMatch(/se le descuentan 200 al consumo del servicio/);
+    expect(resumen).toMatch(/2 de los que van y vuelven: el consumo no cambia/);
   });
 
   it("registra la devolución y cuenta qué se descuenta y qué no", async () => {
@@ -93,8 +95,9 @@ describe("Devoluciones del depósito", () => {
       { productoId: "20", cantidad: 2 },
     ]));
     expect(await screen.findByText(/Devolución registrada — remito #0001186/)).toBeInTheDocument();
-    expect(screen.getByText(/200 unidades menos en el consumo del servicio/)).toBeInTheDocument();
-    expect(screen.getByText(/2 unidades de las que van y vuelven: el consumo no cambia/)).toBeInTheDocument();
+    const hecho = document.querySelector(".dev-hecho").textContent;
+    expect(hecho).toMatch(/200 BOLSA NEGRA 80\*100 — volvió al stock y se le descuenta al servicio/);
+    expect(hecho).toMatch(/2 TACHO 120 LTS C\/RUEDAS — volvió al stock y sigue contando como usado/);
   });
 
   it("si el remito no se retiró, muestra el aviso del servidor", async () => {

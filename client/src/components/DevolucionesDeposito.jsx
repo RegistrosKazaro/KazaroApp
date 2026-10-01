@@ -2,43 +2,20 @@
 //
 // Devoluciones: las carga el depósito, que es quien recibe la mercadería.
 //
-// El supervisor trae el remito en la mano, así que la pantalla va en ese orden:
-// primero el número de remito, después las cantidades que volvieron, y al final
-// un resumen que dice en castellano qué va a pasar antes de confirmar.
+// Usa los mismos bloques que el resto del panel (deposito-card, deposito-table,
+// pill, state), para que no desentone con Pedidos, Despachos o Trazabilidad.
 //
-// Lo que vuelve siempre suma stock. Lo que cambia es el consumo del servicio:
-// los insumos marcados "va y vuelve" (tachos, contenedores, dispensers) se
-// usaron igual y no se descuentan; el resto sí.
+// El supervisor trae el remito en la mano, así que la pantalla va en ese orden:
+// número de remito, cantidades que volvieron y, antes de confirmar, un resumen
+// de qué va a pasar. Lo que vuelve siempre suma stock; lo que cambia es el
+// consumo del servicio: los insumos marcados "va y vuelve" (tachos,
+// contenedores, dispensers) se usaron igual y no se descuentan, el resto sí.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
+import { formatNumber } from "../utils/format";
 
 const soloNumeros = (v) => String(v ?? "").replace(/\D/g, "");
-const unidades = (n) => `${n} ${n === 1 ? "unidad" : "unidades"}`;
-
-function Resultado({ datos, onOtra }) {
-  const d = Number(datos.unidadesDescontadas || 0);
-  const r = Number(datos.unidadesRetornables || 0);
-  return (
-    <div className="dev-hecho" role="status">
-      <div className="dev-hecho-titulo">Devolución registrada — remito #{datos.remito}</div>
-      <ul className="dev-hecho-lista">
-        {datos.devueltos.map((x) => (
-          <li key={x.productoId}>
-            <strong>{x.cantidad}</strong> {x.nombre}
-            {x.retornable
-              ? <span className="dev-nota"> — volvió al stock y sigue contando como usado</span>
-              : <span className="dev-nota"> — volvió al stock y se le descuenta al servicio</span>}
-          </li>
-        ))}
-      </ul>
-      <div className="dev-hecho-pie">
-        {d > 0 && <span>{unidades(d)} menos en el consumo del servicio.</span>}
-        {r > 0 && <span>{unidades(r)} de las que van y vuelven: el consumo no cambia.</span>}
-        <button type="button" className="btn primary" onClick={onOtra}>Cargar otra devolución</button>
-      </div>
-    </div>
-  );
-}
+const unidades = (n) => `${formatNumber(n)} ${n === 1 ? "unidad" : "unidades"}`;
 
 export default function DevolucionesDeposito() {
   const [numero, setNumero] = useState("");
@@ -117,147 +94,183 @@ export default function DevolucionesDeposito() {
   };
 
   return (
-    <section className="dev">
-      <header className="dev-cab">
-        <div>
-          <h2>Devoluciones</h2>
-          <p>Lo que el servicio devuelve vuelve al stock. Se carga con el número de remito que trae el supervisor.</p>
+    <div className="dev-wrap">
+      {/* Buscar el remito */}
+      <section className="deposito-card">
+        <div className="deposito-card-header">
+          <div>
+            <h2>Devoluciones</h2>
+            <small>Lo que el servicio devuelve vuelve al stock. Se carga con el número de remito que trae el supervisor.</small>
+          </div>
+          <div className="deposito-header-actions">
+            {ultimas.length > 0 && (
+              <button type="button" className="pill pill--ghost" onClick={() => setVerUltimas((v) => !v)}>
+                {verUltimas ? "Ocultar" : "Ver"} últimas ({ultimas.length})
+              </button>
+            )}
+          </div>
         </div>
-        {ultimas.length > 0 && (
-          <button type="button" className="btn ghost" onClick={() => setVerUltimas((v) => !v)}>
-            {verUltimas ? "Ocultar" : "Ver"} las últimas ({ultimas.length})
-          </button>
-        )}
-      </header>
 
-      {err && <div className="dev-error" role="alert">{err}</div>}
-      {hecho && <Resultado datos={hecho} onOtra={empezarDeNuevo} />}
-
-      {!remito && !hecho && (
-        <form className="dev-paso1" onSubmit={buscar}>
-          <label htmlFor="dev-remito-input">Número de remito</label>
-          <div className="dev-paso1-fila">
-            <input id="dev-remito-input" className="dev-remito-input" value={numero} inputMode="numeric"
+        <form className="dev-busqueda" onSubmit={buscar}>
+          <label className="deposito-field">
+            <span>Número de remito</span>
+            <input id="dev-remito-input" className="deposito-search dev-numero" value={numero} inputMode="numeric"
               onChange={(e) => setNumero(e.target.value)} placeholder="0001186"
               aria-label="Número de remito" autoFocus />
-            <button type="submit" className="btn primary" disabled={buscando}>
-              {buscando ? "Buscando…" : "Buscar remito"}
-            </button>
-          </div>
-          <span className="dev-pista">Es el número que figura arriba del remito, con ceros o sin ceros.</span>
+          </label>
+          <button type="submit" className="pill" disabled={buscando}>
+            {buscando ? "Buscando…" : "Buscar remito"}
+          </button>
         </form>
-      )}
 
+        {err && <div className="state error deposito-state">{err}</div>}
+
+        {hecho && (
+          <div className="state deposito-state dev-hecho">
+            <strong>Devolución registrada — remito #{hecho.remito}</strong>
+            <ul>
+              {hecho.devueltos.map((x) => (
+                <li key={x.productoId}>
+                  {formatNumber(x.cantidad)} {x.nombre} — volvió al stock y{" "}
+                  {x.retornable ? "sigue contando como usado" : "se le descuenta al servicio"}
+                </li>
+              ))}
+            </ul>
+            <button type="button" className="pill" onClick={empezarDeNuevo}>Cargar otra devolución</button>
+          </div>
+        )}
+      </section>
+
+      {/* El remito y sus insumos */}
       {remito && (
-        <div className="dev-trabajo">
-          <div className="dev-remito-cab">
-            <div className="dev-remito-datos">
-              <span className="dev-remito-num">Remito #{remito.pedido.numero}</span>
-              <span className="dev-remito-serv">{remito.pedido.servicio}</span>
+        <section className="deposito-card">
+          <div className="deposito-card-header">
+            <div>
+              <h2>Remito #{remito.pedido.numero}</h2>
+              <small>{remito.pedido.servicio} · poné cuánto volvió de cada insumo</small>
             </div>
-            <button type="button" className="btn ghost" onClick={empezarDeNuevo}>Buscar otro remito</button>
+            <div className="deposito-header-actions">
+              <button type="button" className="pill pill--ghost" onClick={empezarDeNuevo}>Buscar otro</button>
+            </div>
           </div>
 
           {pendientes.length === 0 ? (
-            <div className="dev-vacio">De este remito ya se devolvió todo lo que se podía devolver.</div>
+            <div className="state deposito-state">De este remito ya se devolvió todo lo que se podía devolver.</div>
           ) : (
             <>
-              <p className="dev-instruccion">Poné cuánto volvió de cada insumo. Lo que no volvió, dejalo vacío.</p>
-
-              <div className="dev-tabla" role="table" aria-label="Insumos del remito">
-                <div className="dev-fila dev-fila--cab" role="row">
-                  <span role="columnheader">Insumo</span>
-                  <span role="columnheader" className="dev-num">Se entregó</span>
-                  <span role="columnheader" className="dev-num">Volvió antes</span>
-                  <span role="columnheader" className="dev-num">Vuelve ahora</span>
-                </div>
-
-                {pendientes.map((it) => {
-                  const valor = cant[it.productoId] ?? "";
-                  return (
-                    <div key={it.productoId} role="row"
-                      className={`dev-fila${Number(valor) > 0 ? " is-cargada" : ""}`}>
-                      <span role="cell" className="dev-insumo">
-                        <span className="dev-nombre">{it.nombre}</span>
-                        <span className="dev-sub">
-                          {it.codigo ? `Cód. ${it.codigo}` : "Sin código"}
-                          {it.retornable && (
-                            <span className="dev-chip" title="Vuelve al stock, pero el servicio lo usó igual: no se le descuenta">
-                              va y vuelve
-                            </span>
-                          )}
-                        </span>
-                        {/* En el celular las columnas no entran: el dato va acá. */}
-                        <span className="dev-sub dev-solo-movil">
-                          Se entregó {it.entregado}
-                          {it.devuelto > 0 ? ` · ya volvieron ${it.devuelto}` : ""}
-                        </span>
-                      </span>
-                      <span role="cell" className="dev-num dev-dato">{it.entregado}</span>
-                      <span role="cell" className="dev-num dev-dato">{it.devuelto > 0 ? it.devuelto : "—"}</span>
-                      <span role="cell" className="dev-num dev-entrada">
-                        <input className="dev-cant" type="text" inputMode="numeric" value={valor}
-                          onChange={(e) => escribir(it, e.target.value)}
-                          onFocus={(e) => e.target.select()}
-                          placeholder="0" aria-label={`Cantidad que vuelve de ${it.nombre}`} />
-                        <button type="button" className="dev-todo"
-                          onClick={() => escribir(it, String(it.disponible))}
-                          disabled={Number(valor) === it.disponible}>
-                          volvió todo ({it.disponible})
-                        </button>
-                      </span>
-                    </div>
-                  );
-                })}
+              <div className="deposito-table-wrapper">
+                <table className="deposito-table" aria-label="Insumos del remito">
+                  <thead>
+                    <tr>
+                      <th scope="col">Insumo</th>
+                      <th scope="col" className="deposito-th--numeric">Se entregó</th>
+                      <th scope="col" className="deposito-th--numeric">Volvió antes</th>
+                      <th scope="col" className="deposito-th--numeric">Vuelve ahora</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pendientes.map((it) => {
+                      const valor = cant[it.productoId] ?? "";
+                      return (
+                        <tr key={it.productoId} className={Number(valor) > 0 ? "dev-tr-cargada" : ""}>
+                          <td>
+                            <div className="dev-nombre">{it.nombre}</div>
+                            <div className="dev-sub">
+                              {it.codigo ? `Cód. ${it.codigo}` : "Sin código"}
+                              {it.retornable && (
+                                <span className="dev-chip" title="Vuelve al stock, pero el servicio lo usó igual: no se le descuenta">
+                                  va y vuelve
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="deposito-td--numeric" data-rotulo="Se entregó">{formatNumber(it.entregado)}</td>
+                          <td className="deposito-td--numeric" data-rotulo="Volvió antes">{it.devuelto > 0 ? formatNumber(it.devuelto) : "—"}</td>
+                          <td className="deposito-td--numeric">
+                            <input className="deposito-search dev-cant" type="text" inputMode="numeric" value={valor}
+                              onChange={(e) => escribir(it, e.target.value)}
+                              onFocus={(e) => e.target.select()}
+                              placeholder="0" aria-label={`Cantidad que vuelve de ${it.nombre}`} />
+                            <button type="button" className="dev-todo"
+                              onClick={() => escribir(it, String(it.disponible))}
+                              disabled={Number(valor) === it.disponible}>
+                              volvió todo ({formatNumber(it.disponible)})
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
 
-              <div className={`dev-confirmar${elegidos.length ? " is-lista" : ""}`}>
-                <input className="dev-motivo" value={motivo} maxLength={120}
-                  onChange={(e) => setMotivo(e.target.value)}
-                  placeholder="Motivo (opcional): sobrante, error de pedido…" aria-label="Motivo" />
-
-                <div className="dev-efecto" aria-live="polite">
-                  {elegidos.length === 0 ? (
-                    <span className="dev-efecto-vacio">Cargá las cantidades que volvieron.</span>
-                  ) : (
-                    <>
-                      <span className="dev-efecto-total">
-                        {uDescuentan + uRetornables === 1 ? "Vuelve" : "Vuelven"} {unidades(uDescuentan + uRetornables)} al stock
-                      </span>
-                      {uDescuentan > 0 && <span>· se le descuentan {uDescuentan} al consumo del servicio</span>}
-                      {uRetornables > 0 && <span>· {uRetornables} {uRetornables === 1 ? "va" : "van"} y {uRetornables === 1 ? "vuelve" : "vuelven"}: el consumo no cambia</span>}
-                    </>
-                  )}
-                </div>
-
-                <button type="button" className="btn primary" onClick={confirmar}
-                  disabled={guardando || !elegidos.length}>
+              <div className="dev-confirmar">
+                <label className="deposito-field dev-motivo">
+                  <span>Motivo (opcional)</span>
+                  <input className="deposito-search" value={motivo} maxLength={120}
+                    onChange={(e) => setMotivo(e.target.value)}
+                    placeholder="Sobrante, error de pedido…" aria-label="Motivo" />
+                </label>
+                <p className="dev-efecto" aria-live="polite">
+                  {elegidos.length === 0
+                    ? "Cargá las cantidades que volvieron."
+                    : (
+                      <>
+                        Vuelven <strong>{unidades(uDescuentan + uRetornables)}</strong> al stock
+                        {uDescuentan > 0 && <> · se le descuentan {formatNumber(uDescuentan)} al consumo del servicio</>}
+                        {uRetornables > 0 && <> · {formatNumber(uRetornables)} de los que van y vuelven: el consumo no cambia</>}
+                      </>
+                    )}
+                </p>
+                <button type="button" className="pill" onClick={confirmar} disabled={guardando || !elegidos.length}>
                   {guardando ? "Registrando…" : "Registrar devolución"}
                 </button>
               </div>
             </>
           )}
-        </div>
+        </section>
       )}
 
+      {/* Historial */}
       {verUltimas && ultimas.length > 0 && (
-        <div className="dev-historial">
-          <h3>Últimas devoluciones</h3>
-          <ul>
-            {ultimas.map((u) => (
-              <li key={u.id}>
-                <span className="dev-hist-cant">{u.cantidad}</span>
-                <span className="dev-hist-insumo">
-                  {u.insumo}
-                  {u.tipo === "retornable" && <span className="dev-chip">va y vuelve</span>}
-                  <small>Remito #{u.remito} · {u.servicio}</small>
-                </span>
-                <span className="dev-hist-meta">{u.motivo || "—"}{u.quien ? ` · ${u.quien}` : ""}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <section className="deposito-card">
+          <div className="deposito-card-header">
+            <div>
+              <h2>Últimas devoluciones</h2>
+              <small>Las {ultimas.length} más recientes</small>
+            </div>
+          </div>
+          <div className="deposito-table-wrapper">
+            <table className="deposito-table" aria-label="Últimas devoluciones">
+              <thead>
+                <tr>
+                  <th scope="col">Insumo</th>
+                  <th scope="col" className="deposito-th--numeric">Cantidad</th>
+                  <th scope="col">Remito</th>
+                  <th scope="col">Servicio</th>
+                  <th scope="col">Motivo</th>
+                  <th scope="col">Quién</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ultimas.map((u) => (
+                  <tr key={u.id}>
+                    <td>
+                      <div className="dev-nombre">{u.insumo}</div>
+                      {u.tipo === "retornable" && <span className="dev-chip">va y vuelve</span>}
+                    </td>
+                    <td className="deposito-td--numeric" data-rotulo="Cantidad">{formatNumber(u.cantidad)}</td>
+                    <td data-rotulo="Remito">#{u.remito}</td>
+                    <td data-rotulo="Servicio">{u.servicio || "—"}</td>
+                    <td data-rotulo="Motivo">{u.motivo || "—"}</td>
+                    <td data-rotulo="Quién">{u.quien || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
       )}
-    </section>
+    </div>
   );
 }
