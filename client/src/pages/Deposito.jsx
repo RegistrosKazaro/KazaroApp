@@ -779,8 +779,9 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
     }
   };
 
-  const fetchPdfSmart = async (id) => {
-    for (const path of [`/orders/pdf/${id}`, `/admin/orders/pdf/${id}`, `/orders/${id}/pdf`]) {
+  const fetchPdfSmart = async (id, soloPendiente = false) => {
+    const q = soloPendiente ? "?solo=pendiente" : "";
+    for (const path of [`/orders/pdf/${id}${q}`, `/admin/orders/pdf/${id}${q}`, `/orders/${id}/pdf${q}`]) {
       try {
         const res = await api.get(path, { responseType: "blob", headers: { Accept: "application/pdf" }, withCredentials: true });
         const ct = (res.headers?.["content-type"] || "").toLowerCase();
@@ -788,17 +789,80 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
         return URL.createObjectURL(res.data);
       } catch { /* intentar siguiente */ }
     }
-    const r = await fetch(`${API_BASE_URL?.replace(/\/$/, "")}/orders/pdf/${id}`, { headers: { Accept: "application/pdf" }, credentials: "include" });
+    const r = await fetch(`${API_BASE_URL?.replace(/\/$/, "")}/orders/pdf/${id}${q}`, { headers: { Accept: "application/pdf" }, credentials: "include" });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return URL.createObjectURL(await r.blob());
   };
 
-  const onPreviewRemito = async (o) => {
-    setSelected(o); setPreviewErr(""); setPreviewLoading(true);
+  const onPreviewRemito = async (o, soloPendiente = false) => {
+    setSelected({ ...o, soloPendiente }); setPreviewErr(""); setPreviewLoading(true);
     if (pdfUrl) { URL.revokeObjectURL(pdfUrl); setPdfUrl(null); }
-    try { setPdfUrl(await fetchPdfSmart(o.id)); }
+    try { setPdfUrl(await fetchPdfSmart(o.id, soloPendiente)); }
     catch (e) { setPreviewErr(e?.message || "No se pudo cargar el remito"); setSelected(null); }
     finally { setPreviewLoading(false); }
+  };
+
+  /* Corregir lo que quedó pendiente, insumo por insumo. Pasa cuando no se puede
+     cumplir con todo: llega menos, o se acuerda otra cantidad. Lo que ya se
+     entregó no se toca. */
+  /* Corregir lo que quedó pendiente, insumo por insumo. Pasa cuando no se puede
+     cumplir con todo: llega menos, o se acuerda otra cantidad. Lo que ya se
+     entregó no se toca. */
+  const editarPendiente = async (o) => {
+    const items = (Array.isArray(o.items) ? o.items : []).filter((i) => Number(i.cantidad) > 0);
+    if (!items.length) { setErr("Este pendiente no tiene insumos"); return; }
+
+    const cambios = [];
+    for (const it of items) {
+      const txt = window.prompt(
+        [
+          `¿Cuánto queda pendiente de ${it.nombre}?`,
+          "",
+          `Ahora quedan ${it.cantidad}. Poné menos si no se va a entregar todo, o 0 para darlo de baja.`,
+          "Cancelar deja esta línea como está.",
+        ].join("\n"),
+        String(it.cantidad)
+      );
+      if (txt === null) continue;
+      const n = Math.trunc(Number(String(txt).replace(/[^0-9]/g, "")));
+      if (!Number.isFinite(n) || n > Number(it.cantidad)) {
+        setErr(`De ${it.nombre} quedaban ${it.cantidad}: no se puede poner ${txt}.`);
+        return;
+      }
+      if (n !== Number(it.cantidad)) {
+        cambios.push({
+          productoId: it.productId ?? it.productoId ?? it.id,
+          pendiente: n, nombre: it.nombre, antes: Number(it.cantidad),
+        });
+      }
+    }
+    if (!cambios.length) { setOkMsg("No se cambió ninguna cantidad."); return; }
+
+    const aviso = [
+      `Corregir lo pendiente del pedido #${o.displayId}`,
+      "",
+      ...cambios.map((c) => `• ${c.nombre}: ${c.antes} → ${c.pendiente}`),
+      "",
+      "Lo ya entregado y el stock no cambian.",
+      "",
+      "¿Guardar?",
+    ].join("\n");
+    if (!window.confirm(aviso)) return;
+
+    try {
+      const { data } = await api.put(
+        `/deposito/orders/${o.pedidoIdReal ?? o.id}/pendiente/cantidades`,
+        { items: cambios.map((c) => ({ productoId: c.productoId, pendiente: c.pendiente })) },
+        { withCredentials: true }
+      );
+      setErr("");
+      setOkMsg(data?.restante
+        ? `Pendiente corregido: quedan ${data.restante} unidades por entregar.`
+        : `Pendiente corregido: no queda nada por entregar del pedido #${o.displayId}.`);
+      list();
+    } catch (e) {
+      setErr(e?.response?.data?.error || "No se pudo corregir el pendiente");
+    }
   };
 
   const closePreview = () => {
@@ -1008,6 +1072,19 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                             que quedó sin enviar; el pedido original no se toca.
                             No va en "Listo para retirar": ahí ya quedó registrado
                             en Control de despachos. */}
+                        {o.esPendiente && (
+                          <button type="button" className="pill pill--ghost" onClick={() => onPreviewRemito(o, true)}
+                            title="Remito con sólo lo que falta entregar, con el mismo número">
+                            Remito del pendiente
+                          </button>
+                        )}
+                        {o.esPendiente && (tab === "open" || tab === "preparing") && (
+                          <button type="button" className="pill pill--ghost" onClick={() => editarPendiente(o)}
+                            title="Corregir cuánto queda pendiente de cada insumo"
+                            style={{ borderColor: "#2563eb", color: "#1d4ed8" }}>
+                            Editar cantidades
+                          </button>
+                        )}
                         {o.esPendiente && (tab === "open" || tab === "preparing") && (
                           <button type="button" className="pill pill--ghost" onClick={() => eliminarPendiente(o)}
                             title="Borrar lo que quedó pendiente: no se va a enviar. Lo entregado y el stock no cambian."

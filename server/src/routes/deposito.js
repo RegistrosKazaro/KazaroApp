@@ -844,6 +844,112 @@ router.delete("/orders/:id", mustWarehouse, (req, res) => {
    retirar queda el movimiento para la conciliación; al retirarlo se descuenta
    el stock y recién ahí suma en los informes.
 =========================================================== */
+/* Corregir lo que quedó pendiente, insumo por insumo.
+
+   A veces no se puede cumplir con todo lo que quedó debiendo: llega menos, o se
+   acuerda entregar una cantidad distinta. Acá se bajan esas cantidades sin
+   tocar lo que YA se entregó, que es lo que mueve stock e informes.
+
+   Sólo se puede bajar: subir el pendiente sería entregar de menos algo que ya
+   salió, y eso se corrige editando el pedido. Bajar a 0 es lo mismo que borrar
+   ese pendiente. */
+router.put("/orders/:id/pendiente/cantidades", mustWarehouse, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const empresaId = getEmpresaId(req);
+
+    const ped = db.prepare(`SELECT PedidoID, empresa_id, pendiente_status FROM Pedidos WHERE PedidoID = ?`).get(id);
+    if (!ped) return res.status(404).json({ error: "Pedido no encontrado" });
+    if (ped.empresa_id != null && Number(ped.empresa_id) !== Number(empresaId)) {
+      return res.status(404).json({ error: "Pedido no encontrado" });
+    }
+    // Igual que al borrar: si ya está listo para retirar, el movimiento quedó
+    // registrado en Control de despachos y no se puede cambiar por acá.
+    if (String(ped.pendiente_status || "").toLowerCase() === "closed") {
+      return res.status(409).json({
+        error: "Este pendiente ya está listo para retirar y quedó registrado en Control de despachos. Volvelo a 'pendiente' para corregirlo.",
+      });
+    }
+
+    const pedidos = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (!pedidos.length) return res.status(400).json({ error: "No hay cambios para guardar" });
+
+    const lineas = db.prepare(
+      `SELECT PedidoItemID AS rid, ProductoID AS pid, Nombre AS nombre, Precio AS precio,
+              Cantidad AS cant, COALESCE(cantidad_pendiente,0) AS pend
+       FROM PedidoItems WHERE PedidoID = ? AND COALESCE(cantidad_pendiente,0) > 0`
+    ).all(id);
+    if (!lineas.length) return res.status(400).json({ error: "Este pedido no tiene pendientes" });
+
+    // Se valida todo antes de tocar nada.
+    const cambios = [];
+    for (const x of pedidos) {
+      const pid = Number(x?.productoId ?? x?.productId);
+      const nuevo = Math.trunc(Number(x?.pendiente));
+      const linea = lineas.find((l) => Number(l.pid) === pid);
+      if (!linea) return res.status(400).json({ error: `El insumo ${pid} no está pendiente en este pedido` });
+      if (!Number.isFinite(nuevo) || nuevo < 0) return res.status(400).json({ error: "Cantidad inválida" });
+      if (nuevo > linea.pend) {
+        return res.status(400).json({
+          error: `De ${linea.nombre} quedaban ${linea.pend} pendientes: no se puede subir a ${nuevo}. Para entregar más, editá el pedido.`,
+        });
+      }
+      if (nuevo !== linea.pend) cambios.push({ ...linea, nuevo });
+    }
+    if (!cambios.length) return res.json({ ok: true, sinCambios: true });
+
+    // Un pedido despachado no puede quedar sin nada: lo entregado tiene que
+    // seguir existiendo en alguna línea.
+    const todas = db.prepare(`SELECT PedidoItemID AS rid, Cantidad AS cant, COALESCE(cantidad_pendiente,0) AS pend FROM PedidoItems WHERE PedidoID = ?`).all(id);
+    const quedaAlgo = todas.some((l) => {
+      const c = cambios.find((x) => x.rid === l.rid);
+      return (c ? (l.cant - l.pend) + c.nuevo : l.cant) > 0;
+    });
+    if (!quedaAlgo) {
+      return res.status(400).json({ error: "Así el pedido queda vacío. Si no se entregó nada, conviene borrar el pedido." });
+    }
+
+    const borrar = db.prepare(`DELETE FROM PedidoItems WHERE PedidoItemID = ?`);
+    const bajar = db.prepare(`UPDATE PedidoItems SET Cantidad = ?, Subtotal = ?, cantidad_pendiente = ? WHERE PedidoItemID = ?`);
+
+    const r = db.transaction(() => {
+      let unidades = 0;
+      for (const c of cambios) {
+        const entregado = Number(c.cant) - Number(c.pend);
+        const cantidadNueva = entregado + c.nuevo;
+        unidades += Number(c.pend) - c.nuevo;
+        // Una línea sin nada entregado y sin pendiente ya no es parte del pedido.
+        if (cantidadNueva <= 0) borrar.run(c.rid);
+        else bajar.run(cantidadNueva, cantidadNueva * Number(c.precio || 0), c.nuevo, c.rid);
+      }
+      db.prepare(
+        `UPDATE Pedidos SET Total = (SELECT COALESCE(SUM(Subtotal),0) FROM PedidoItems WHERE PedidoID = ?) WHERE PedidoID = ?`
+      ).run(id, id);
+
+      const resto = db.prepare(`SELECT COALESCE(SUM(cantidad_pendiente),0) AS n FROM PedidoItems WHERE PedidoID = ?`).get(id).n;
+      if (Number(resto) === 0) {
+        db.prepare(
+          `UPDATE Pedidos SET pendiente_status = NULL, pendiente_closedat = NULL, pendiente_retiro_at = NULL WHERE PedidoID = ?`
+        ).run(id);
+      }
+      return { unidades, restante: Number(resto) };
+    })();
+
+    try {
+      audit({
+        empresaId, usuario: req.user?.username || req.user?.email || null,
+        accion: "update", entidad: "Pendiente", entidadId: String(id),
+        detalle: "Pendiente corregido: " + cambios.map((c) => `${c.nombre} ${c.pend} → ${c.nuevo}`).join(", "),
+      });
+    } catch { /* el registro no debe frenar la corrección */ }
+
+    res.json({ ok: true, lineas: cambios.length, unidadesQuitadas: r.unidades, restante: r.restante });
+  } catch (e) {
+    console.error("[deposito/pendiente cantidades]", e?.message || e);
+    res.status(500).json({ error: "No se pudo corregir el pendiente" });
+  }
+});
+
 router.put("/orders/:id/pendiente/:action", mustWarehouse, (req, res) => {
   try {
     const id = Number(req.params.id);

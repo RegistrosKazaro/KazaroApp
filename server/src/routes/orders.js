@@ -17,6 +17,7 @@ import { toISO } from "../utils/fechas.js";
 const DEPOSITO_CC_FALLBACK = "gustavo.bacur@kazaro.com.ar";
 
 const router = Router();
+const SALTO = String.fromCharCode(10);  // salto de línea para la nota del remito
 const pad7 = (n) => String(n ?? "").padStart(7, "0");
 
 // La base guarda UTC. Antes esto le agregaba "-03:00" al string, o sea que lo
@@ -270,10 +271,37 @@ router.get("/pdf/:id", requireAuth, async (req, res) => {
       if (ownerRow?.empresa_id) empresaNombre = resolveEmpresaNombre(ownerRow.empresa_id);
     } catch {}
 
-    const pedidoParaPdf = {
+    let pedidoParaPdf = {
       ...pedido, rol, empresaNombre,
       servicio: rol === "supervisor" ? { id: sid || null, name: serviceName } : null,
     };
+
+    /* ?solo=pendiente → el remito de la entrega que falta.
+       Cuando un pedido se entrega en tandas, el depósito necesita un papel con
+       SÓLO lo que queda debiendo, para entregar eso. Es el mismo remito: va con
+       el mismo número, porque pertenece al mismo pedido. */
+    const soloPendiente = String(req.query?.solo || "").toLowerCase() === "pendiente";
+    if (soloPendiente) {
+      const items = (pedido.items || [])
+        .filter((it) => Number(it.pendiente || 0) > 0)
+        .map((it) => ({
+          ...it,
+          qty: Number(it.pendiente),
+          cantidad: Number(it.pendiente),
+          pendiente: 0,                       // en este papel ya no queda nada debiendo
+          subtotal: Number(it.pendiente) * Number(it.price ?? it.precio ?? 0),
+        }));
+      if (!items.length) {
+        return res.status(409).json({ error: "Este pedido no tiene nada pendiente de entrega." });
+      }
+      const total = items.reduce((a, it) => a + Number(it.subtotal || 0), 0);
+      pedidoParaPdf = {
+        ...pedidoParaPdf,
+        items, Total: total, entregas: 1, pendienteTotal: 0,
+        Nota: [`ENTREGA DE LO QUE QUEDÓ PENDIENTE del remito #${pad7(id)}.`, pedido.Nota]
+          .filter(Boolean).join(SALTO),
+      };
+    }
 
     const { filename, buffer } = await generateRemitoPDFBuffer({ pedido: pedidoParaPdf });
     res.setHeader("Content-Type", "application/pdf");
