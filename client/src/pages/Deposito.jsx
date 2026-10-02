@@ -197,6 +197,121 @@ const API_BASE_URL = (import.meta?.env && import.meta.env.VITE_API_URL) || "http
    Editor de un pedido en revisión (agregar/quitar/cambiar
    cantidad de insumos y confirmar). onDone recarga la lista.
    ===================================================== */
+/* Editor de lo que quedó pendiente, en la misma fila y con la misma pinta que
+   el editor de pedidos. A veces no se puede cumplir con todo: llega menos o se
+   acuerda otra cantidad. Lo que ya se entregó no se toca: sólo se baja lo que
+   el pedido sigue debiendo. */
+function PendienteEditor({ order, onDone, onCancel }) {
+  const [items, setItems] = useState(() =>
+    (order.items || [])
+      .map((it) => ({
+        productId: Number(it.productId ?? it.ProductoID ?? it.product_id ?? it.id),
+        nombre: it.nombre ?? it.name ?? "",
+        codigo: it.codigo ?? it.code ?? "",
+        precio: Number(it.precio ?? it.price ?? 0),
+        pendiente: Number(it.cantidad ?? it.qty ?? 0),   // en esta tarjeta, `cantidad` ES lo pendiente
+        queda: Number(it.cantidad ?? it.qty ?? 0),
+      }))
+      .filter((it) => it.pendiente > 0)
+  );
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  const escribir = (pid, val) =>
+    setItems((prev) => prev.map((it) => (it.productId === pid ? { ...it, queda: val } : it)));
+
+  const normalizar = (pid) =>
+    setItems((prev) => prev.map((it) => {
+      if (it.productId !== pid) return it;
+      const n = Math.trunc(Number(it.queda));
+      return { ...it, queda: !Number.isFinite(n) || n < 0 ? 0 : Math.min(n, it.pendiente) };
+    }));
+
+  const cambios = items.filter((it) => Number(it.queda) !== it.pendiente);
+  const totalQueda = items.reduce((s, it) => s + (Number(it.queda) || 0), 0);
+
+  const guardar = async () => {
+    if (!cambios.length) { setMsg("No cambiaste ninguna cantidad."); return; }
+    setBusy(true); setMsg("");
+    try {
+      await api.put(`/deposito/orders/${order.id}/pendiente/cantidades`, {
+        items: cambios.map((it) => ({ productoId: it.productId, pendiente: Number(it.queda) || 0 })),
+      }, { withCredentials: true });
+      onDone && onDone();
+    } catch (e) {
+      setMsg(e?.response?.data?.error || "No se pudo guardar");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="deposito-items-panel">
+      <div className="deposito-items-title">Corregir lo que queda pendiente</div>
+      <div style={{ fontSize: "0.85rem", color: "#4b5563", marginBottom: 8 }}>
+        Poné cuánto queda realmente por entregar. Con 0 ese insumo se da de baja.
+        Lo que ya se entregó, el stock y los informes no cambian.
+      </div>
+
+      {msg && <div className="state error" style={{ marginBottom: 8 }}>{msg}</div>}
+
+      <table className="deposito-items-table">
+        <thead>
+          <tr>
+            <th scope="col">Código</th>
+            <th scope="col">Insumo</th>
+            <th scope="col" className="numeric" style={{ width: 110 }}>Quedaba</th>
+            <th scope="col" className="numeric" style={{ width: 170 }}>Queda ahora</th>
+            <th scope="col" className="numeric">Precio</th>
+            <th scope="col" className="numeric">Subtotal</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((it) => {
+            const q = Number(it.queda) || 0;
+            return (
+              <tr key={it.productId}>
+                <td>{it.codigo ? <span className="deposito-code">{it.codigo}</span> : <span style={{ color: "#4b5563" }}>—</span>}</td>
+                <td>{it.nombre}</td>
+                <td className="numeric">{fmt(it.pendiente)}</td>
+                <td className="numeric" style={{ whiteSpace: "nowrap" }}>
+                  <input type="number" min="0" max={it.pendiente} value={it.queda}
+                    onChange={(e) => escribir(it.productId, e.target.value)}
+                    onBlur={() => normalizar(it.productId)}
+                    style={{ width: 70, textAlign: "right", fontWeight: 700 }} />
+                  <button type="button" className="pill pill--ghost"
+                    onClick={() => escribir(it.productId, q > 0 ? 0 : it.pendiente)}
+                    title="Alternar entre dar de baja todo y dejarlo como estaba"
+                    style={{ padding: "1px 6px", marginLeft: 4, fontSize: "0.7rem" }}>
+                    {q > 0 ? "nada" : "todo"}
+                  </button>
+                </td>
+                <td className="numeric">{money(it.precio)}</td>
+                <td className="numeric">{money(it.precio * q)}</td>
+              </tr>
+            );
+          })}
+          {items.length === 0 && (
+            <tr><td colSpan={6} style={{ color: "#4b5563" }}>Este pendiente no tiene insumos.</td></tr>
+          )}
+        </tbody>
+      </table>
+
+      <div className="deposito-items-actions" style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: "0.85rem", color: "#4b5563" }}>
+          {cambios.length
+            ? `${cambios.length} cambio${cambios.length === 1 ? "" : "s"} · quedarían ${fmt(totalQueda)} unidades por entregar`
+            : `Quedan ${fmt(totalQueda)} unidades por entregar`}
+        </span>
+        <div style={{ flex: 1 }} />
+        <button type="button" className="pill pill--ghost" onClick={onCancel} disabled={busy}>Cancelar</button>
+        <button type="button" className="pill" onClick={guardar} disabled={busy || !cambios.length}
+          style={{ background: "#2563eb", borderColor: "#1d4ed8" }}>
+          {busy ? "Guardando…" : "Guardar cambios"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function RevisionOrderEditor({ order, onDone, canConfirm = true, seedFaltantes = null }) {
   const [items, setItems] = useState(() =>
     (order.itemsTodos || order.items || []).map((it) => ({
@@ -607,6 +722,16 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
     });
   };
 
+  // La tarjeta del pendiente tiene su propia clave: se edita aparte del pedido.
+  const [editandoPend, setEditandoPend] = useState(() => new Set());
+  const togglePendiente = (clave) => {
+    setEditandoPend((prev) => {
+      const next = new Set(prev);
+      if (next.has(clave)) next.delete(clave); else next.add(clave);
+      return next;
+    });
+  };
+
   const toggleEdit = (id) => {
     setEditingOrders(prev => {
       const next = new Set(prev);
@@ -800,69 +925,6 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
     try { setPdfUrl(await fetchPdfSmart(o.id, soloPendiente)); }
     catch (e) { setPreviewErr(e?.message || "No se pudo cargar el remito"); setSelected(null); }
     finally { setPreviewLoading(false); }
-  };
-
-  /* Corregir lo que quedó pendiente, insumo por insumo. Pasa cuando no se puede
-     cumplir con todo: llega menos, o se acuerda otra cantidad. Lo que ya se
-     entregó no se toca. */
-  /* Corregir lo que quedó pendiente, insumo por insumo. Pasa cuando no se puede
-     cumplir con todo: llega menos, o se acuerda otra cantidad. Lo que ya se
-     entregó no se toca. */
-  const editarPendiente = async (o) => {
-    const items = (Array.isArray(o.items) ? o.items : []).filter((i) => Number(i.cantidad) > 0);
-    if (!items.length) { setErr("Este pendiente no tiene insumos"); return; }
-
-    const cambios = [];
-    for (const it of items) {
-      const txt = window.prompt(
-        [
-          `¿Cuánto queda pendiente de ${it.nombre}?`,
-          "",
-          `Ahora quedan ${it.cantidad}. Poné menos si no se va a entregar todo, o 0 para darlo de baja.`,
-          "Cancelar deja esta línea como está.",
-        ].join("\n"),
-        String(it.cantidad)
-      );
-      if (txt === null) continue;
-      const n = Math.trunc(Number(String(txt).replace(/[^0-9]/g, "")));
-      if (!Number.isFinite(n) || n > Number(it.cantidad)) {
-        setErr(`De ${it.nombre} quedaban ${it.cantidad}: no se puede poner ${txt}.`);
-        return;
-      }
-      if (n !== Number(it.cantidad)) {
-        cambios.push({
-          productoId: it.productId ?? it.productoId ?? it.id,
-          pendiente: n, nombre: it.nombre, antes: Number(it.cantidad),
-        });
-      }
-    }
-    if (!cambios.length) { setOkMsg("No se cambió ninguna cantidad."); return; }
-
-    const aviso = [
-      `Corregir lo pendiente del pedido #${o.displayId}`,
-      "",
-      ...cambios.map((c) => `• ${c.nombre}: ${c.antes} → ${c.pendiente}`),
-      "",
-      "Lo ya entregado y el stock no cambian.",
-      "",
-      "¿Guardar?",
-    ].join("\n");
-    if (!window.confirm(aviso)) return;
-
-    try {
-      const { data } = await api.put(
-        `/deposito/orders/${o.pedidoIdReal ?? o.id}/pendiente/cantidades`,
-        { items: cambios.map((c) => ({ productoId: c.productoId, pendiente: c.pendiente })) },
-        { withCredentials: true }
-      );
-      setErr("");
-      setOkMsg(data?.restante
-        ? `Pendiente corregido: quedan ${data.restante} unidades por entregar.`
-        : `Pendiente corregido: no queda nada por entregar del pedido #${o.displayId}.`);
-      list();
-    } catch (e) {
-      setErr(e?.response?.data?.error || "No se pudo corregir el pendiente");
-    }
   };
 
   const closePreview = () => {
@@ -1079,10 +1141,11 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                           </button>
                         )}
                         {o.esPendiente && (tab === "open" || tab === "preparing") && (
-                          <button type="button" className="pill pill--ghost" onClick={() => editarPendiente(o)}
+                          <button type="button" className="pill pill--ghost"
+                            onClick={() => togglePendiente(o.key ?? String(o.id))}
                             title="Corregir cuánto queda pendiente de cada insumo"
                             style={{ borderColor: "#2563eb", color: "#1d4ed8" }}>
-                            Editar cantidades
+                            {editandoPend.has(o.key ?? String(o.id)) ? "Cerrar edición" : "Editar"}
                           </button>
                         )}
                         {o.esPendiente && (tab === "open" || tab === "preparing") && (
@@ -1149,6 +1212,17 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                       <td colSpan={6} style={{ padding: 0 }}>
                         <RevisionOrderEditor order={o} onDone={list} canConfirm={false}
                           seedFaltantes={pickupFaltantes[o.id] || null} />
+                      </td>
+                    </tr>
+                  )}
+                  {o.esPendiente && editandoPend.has(o.key ?? String(o.id)) && (
+                    <tr key={`${o.key ?? o.id}-pend-edit`} className="deposito-row--items-container">
+                      <td colSpan={6} style={{ padding: 0 }}>
+                        <PendienteEditor
+                          order={o}
+                          onCancel={() => togglePendiente(o.key ?? String(o.id))}
+                          onDone={() => { togglePendiente(o.key ?? String(o.id)); setOkMsg(`Pendiente del pedido #${o.displayId} corregido.`); setErr(""); list(); }}
+                        />
                       </td>
                     </tr>
                   )}
