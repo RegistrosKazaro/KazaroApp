@@ -173,3 +173,16 @@ test("el historial de un pedido trae salida y devolución", () => {
   assert.equal(h.length, 2);
   assert.deepEqual(h.map((x) => x.tipo), ["salida", "entrada"]);
 });
+
+test("ensureTablas devuelve true cuando las crea", () => {
+  const db = new Database(":memory:");
+  assert.equal(ensureTablas(db), true);
+});
+
+test("si no se pueden crear las tablas, avisa pero NO tira el servidor", () => {
+  // db.js llama a esto al arrancar: una excepción acá dejaría la app sin levantar.
+  const roto = { exec() { throw new Error("disco lleno"); }, prepare() { throw new Error("disco lleno"); } };
+  let ok;
+  assert.doesNotThrow(() => { ok = ensureTablas(roto); });
+  assert.equal(ok, false);
+});

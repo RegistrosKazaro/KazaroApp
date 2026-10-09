@@ -23,7 +23,22 @@ export const ESTADOS = ["pendiente", "enviando", "enviado", "error", "sin_mapeo"
 
 const ahora = () => new Date().toISOString().slice(0, 19).replace("T", " ");
 
+/**
+ * Crea las dos tablas (ésta y la del mapeo). Se llama al arrancar, así que si
+ * algo fallara NO puede tirar el servidor: se avisa y la app sigue andando sin
+ * la cola, igual que antes de que existiera. Devuelve si quedó lista.
+ */
 export function ensureTablas(db) {
+  try {
+    crearTablas(db);
+    return true;
+  } catch (e) {
+    console.error("[flexxus] no se pudieron crear las tablas de la cola:", e?.message || e);
+    return false;
+  }
+}
+
+function crearTablas(db) {
   ensureDepositos(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS flexxus_outbox (
