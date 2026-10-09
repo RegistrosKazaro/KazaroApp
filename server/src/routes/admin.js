@@ -43,6 +43,18 @@ import { toISO, fmtAr, diaAr } from "../utils/fechas.js";
 import { sinAcentosSql, normalizarBusqueda } from "../utils/busqueda.js";
 import { sugerirRubro } from "../utils/rubrosSugeridos.js";
 import empresaRouter from "./admin_empresa_addon.js";
+import {
+  asignar as asignarDepositoFlexxus,
+  importarConfirmados as importarDepositosFlexxus,
+  listarMapeo as listarMapeoFlexxus,
+  resumen as resumenMapeoFlexxus,
+  compartidos as depositosCompartidos,
+  ESTADOS_MAPEO,
+} from "../integrations/flexxusDepositos.js";
+import {
+  resumen as resumenOutboxFlexxus,
+  reencolarSinMapeo as reencolarFlexxus,
+} from "../integrations/flexxusOutbox.js";
 
 const router = Router();
 const mustBeAdmin = [requireAuth, requireRole(["admin", "Admin"])];
@@ -2708,6 +2720,105 @@ router.post("/flexxus/match/refresh", mustBeAdmin, (req, res) => {
   } catch (e) {
     console.error("[admin] POST /flexxus/match/refresh error:", e?.message || e);
     res.status(500).json({ error: e?.message || "No se pudo recalcular el matcheo" });
+  }
+});
+
+/* ------------------------------------------------------
+   Flexxus: a qué depósito del ERP corresponde cada servicio.
+   Sólo Kazaro. Todo esto es consulta y edición del mapeo:
+   no manda nada a Flexxus todavía.
+   ------------------------------------------------------ */
+
+// El mapeo completo, para la pantalla.
+router.get("/flexxus/depositos", mustBeAdmin, (req, res) => {
+  try {
+    if (!soloKazaro(req, res)) return;
+    const estado = ESTADOS_MAPEO.includes(req.query.estado) ? req.query.estado : null;
+    const filas = listarMapeoFlexxus(db, {
+      busqueda: req.query.q || "",
+      estado,
+      soloConPedidos: req.query.soloConPedidos === "1",
+      limite: Math.min(Number(req.query.limite) || 1000, 2000),
+    });
+    res.json({
+      ok: true,
+      rows: filas,
+      resumen: resumenMapeoFlexxus(db),
+      compartidos: depositosCompartidos(db),
+    });
+  } catch (e) {
+    console.error("GET /admin/flexxus/depositos error:", e?.message || e);
+    res.status(500).json({ error: "No se pudo leer el mapeo de depósitos" });
+  }
+});
+
+// Asignar (o limpiar) el depósito de un servicio. Mandar codigo vacío o null
+// significa "lo miramos y no existe en Flexxus", que no es lo mismo que no
+// haberlo mirado: por eso se guarda igual.
+router.put("/flexxus/depositos/:servicioId", mustBeAdmin, (req, res) => {
+  try {
+    if (!soloKazaro(req, res)) return;
+    const id = Number(req.params.servicioId);
+    const existe = db.prepare(
+      `SELECT 1 FROM Servicios WHERE ServiciosID = ? AND empresa_id = ? AND deleted_at IS NULL`
+    ).get(id, EMPRESA_CON_GRUPOS);
+    if (!existe) return res.status(404).json({ error: "Servicio no encontrado" });
+
+    const r = asignarDepositoFlexxus(db, {
+      servicioId: id,
+      codigoDeposito: req.body?.codigo ?? null,
+      nombreDeposito: req.body?.deposito ?? null,
+      origen: "manual",
+      motivo: req.body?.motivo ?? null,
+    });
+    if (!r.ok) return res.status(400).json({ error: r.error });
+
+    // Si tenía movimientos esperando un depósito, ahora pueden salir.
+    let reencolados = 0;
+    if (r.codigoDeposito) {
+      try { reencolados = reencolarFlexxus(db, id).reencolados || 0; } catch { /* informativo */ }
+    }
+    res.json({ ok: true, ...r, reencolados });
+  } catch (e) {
+    console.error("PUT /admin/flexxus/depositos error:", e?.message || e);
+    res.status(500).json({ error: "No se pudo guardar el depósito del servicio" });
+  }
+});
+
+// Cargar de una vez el archivo de decisiones confirmadas. Lo que ya se
+// confirmó a mano no se pisa: esas decisiones mandan.
+router.post("/flexxus/depositos/importar", mustBeAdmin, (req, res) => {
+  try {
+    if (!soloKazaro(req, res)) return;
+    const datos = req.body?.mapeos || req.body?.sin_deposito ? req.body : null;
+    if (!datos) {
+      return res.status(400).json({ error: 'El archivo tiene que traer "mapeos" y/o "sin_deposito".' });
+    }
+    const r = importarDepositosFlexxus(db, datos);
+    res.json({ ok: true, ...r, resumen: resumenMapeoFlexxus(db) });
+  } catch (e) {
+    console.error("POST /admin/flexxus/depositos/importar error:", e?.message || e);
+    res.status(500).json({ error: "No se pudo importar el mapeo" });
+  }
+});
+
+// La cola de movimientos: cuántos hay en cada estado y los últimos.
+router.get("/flexxus/outbox", mustBeAdmin, (req, res) => {
+  try {
+    if (!soloKazaro(req, res)) return;
+    const limite = Math.min(Number(req.query.limite) || 50, 200);
+    const rows = db.prepare(`
+      SELECT o.id, o.external_id AS externalId, o.pedido_id AS pedidoId, o.servicio_id AS servicioId,
+             o.tipo, o.estado, o.intentos, o.ultimo_error AS ultimoError,
+             o.numero_mov AS numeroMovimiento, o.creado_at AS creadoAt,
+             s.ServicioNombre AS servicio
+      FROM flexxus_outbox o
+      LEFT JOIN Servicios s ON s.ServiciosID = o.servicio_id
+      ORDER BY o.id DESC LIMIT ?`).all(limite);
+    res.json({ ok: true, rows, resumen: resumenOutboxFlexxus(db) });
+  } catch (e) {
+    console.error("GET /admin/flexxus/outbox error:", e?.message || e);
+    res.status(500).json({ error: "No se pudo leer la cola de movimientos" });
   }
 });
 

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import Database from "better-sqlite3";
 import {
   ensureTablas, asignar, depositoDe, importarConfirmados,
-  listarSinMapear, resumen, compartidos, DEPOSITO_CENTRAL,
+  listarSinMapear, listarMapeo, resumen, compartidos, DEPOSITO_CENTRAL,
 } from "../src/integrations/flexxusDepositos.js";
 
 function baseNueva() {
@@ -13,11 +13,11 @@ function baseNueva() {
   db.exec(`
     CREATE TABLE Servicios (
       ServiciosID INTEGER PRIMARY KEY, ServicioNombre TEXT,
-      empresa_id INTEGER, deleted_at TEXT);
+      empresa_id INTEGER, deleted_at TEXT, zona TEXT, grupo TEXT);
     CREATE TABLE Pedidos (
       PedidoID INTEGER PRIMARY KEY, ServicioID INTEGER, deleted_at TEXT);
   `);
-  const s = db.prepare(`INSERT INTO Servicios VALUES (?,?,?,?)`);
+  const s = db.prepare(`INSERT INTO Servicios (ServiciosID, ServicioNombre, empresa_id, deleted_at) VALUES (?,?,?,?)`);
   s.run(43, "BELGRANO - PREDIO VILLA ESQUIU", 1, null);
   s.run(53, "CLUB ATLETICO BELGRANO - PREDIO SOCIAL Y FAMILIAR", 1, null);
   s.run(485, "UEPC - Sede Administrativa", 1, null);
@@ -151,4 +151,52 @@ test("el resumen no revienta si no se puede leer Servicios", () => {
   const r = resumen(db);
   assert.equal(r.conDeposito, 1);
   assert.equal(r.sinMapear, null);              // no se pudo contar, pero no rompe
+});
+
+test("el mapeo para la pantalla trae los tres estados", () => {
+  const db = baseNueva();
+  asignar(db, { servicioId: 43, codigoDeposito: "660", nombreDeposito: "VILLA ESQUIU", origen: "confirmado" });
+  asignar(db, { servicioId: 485, codigoDeposito: null, motivo: "No existe en Flexxus." });
+  const filas = listarMapeo(db);
+  const por = Object.fromEntries(filas.map((f) => [f.servicioId, f.estado]));
+  assert.equal(por[43], "mapeado");
+  assert.equal(por[485], "sin_deposito");
+  assert.equal(por[412], "sin_mapear");
+  assert.ok(!(999 in por));    // borrado
+  assert.ok(!(1000 in por));   // Pazar
+});
+
+test("el mapeo ordena por pedidos y, a igualdad, por nombre", () => {
+  const db = baseNueva();
+  const filas = listarMapeo(db);
+  // 43 y 412 tienen 2 pedidos cada uno; desempata el nombre.
+  assert.deepEqual(filas.slice(0, 2).map((f) => f.servicioId), [43, 412]);
+  assert.equal(filas[0].pedidos, 2);
+  // El pedido borrado no cuenta.
+  assert.equal(filas.find((f) => f.servicioId === 412).pedidos, 2);
+  // Los que no piden quedan al final.
+  assert.equal(filas.at(-1).pedidos, 0);
+});
+
+test("el mapeo se puede filtrar por estado", () => {
+  const db = baseNueva();
+  asignar(db, { servicioId: 43, codigoDeposito: "660" });
+  asignar(db, { servicioId: 485, codigoDeposito: null });
+  assert.deepEqual(listarMapeo(db, { estado: "mapeado" }).map((f) => f.servicioId), [43]);
+  assert.deepEqual(listarMapeo(db, { estado: "sin_deposito" }).map((f) => f.servicioId), [485]);
+  assert.deepEqual(listarMapeo(db, { estado: "sin_mapear" }).map((f) => f.servicioId).sort((a, b) => a - b), [53, 412]);
+});
+
+test("el mapeo busca por servicio, por deposito y por codigo", () => {
+  const db = baseNueva();
+  asignar(db, { servicioId: 43, codigoDeposito: "660", nombreDeposito: "VILLA ESQUIU" });
+  assert.equal(listarMapeo(db, { busqueda: "belgrano" }).length, 2);   // 43 y 53
+  assert.deepEqual(listarMapeo(db, { busqueda: "villa esquiu" }).map((f) => f.servicioId), [43]);
+  assert.deepEqual(listarMapeo(db, { busqueda: "660" }).map((f) => f.servicioId), [43]);
+});
+
+test("el mapeo puede traer solo los que piden", () => {
+  const db = baseNueva();
+  const ids = listarMapeo(db, { soloConPedidos: true }).map((f) => f.servicioId).sort((a, b) => a - b);
+  assert.deepEqual(ids, [43, 412]);
 });

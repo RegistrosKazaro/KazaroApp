@@ -146,6 +146,59 @@ export function listarSinMapear(db, { soloConPedidos = false, limite = 500 } = {
     LIMIT ?`).all(limite);
 }
 
+/** Los tres estados en que puede estar un servicio frente a Flexxus. */
+export const ESTADOS_MAPEO = ["mapeado", "sin_deposito", "sin_mapear"];
+
+/**
+ * El mapeo completo para la pantalla: todos los servicios de Kazaro con su
+ * depósito, si lo tienen. Trae también los que no se miraron nunca, porque son
+ * justamente los que hay que resolver.
+ *
+ * `estado` filtra: mapeado (tiene depósito), sin_deposito (se miró y no existe
+ * en Flexxus) o sin_mapear (nadie lo tocó todavía).
+ */
+export function listarMapeo(db, { busqueda = "", estado = null, soloConPedidos = false,
+                                  limite = 1000 } = {}) {
+  const texto = String(busqueda || "").trim().toUpperCase();
+  const filtros = [];
+  const params = [];
+
+  if (texto) {
+    filtros.push(`(UPPER(s.ServicioNombre) LIKE ? OR UPPER(COALESCE(d.nombre_deposito,'')) LIKE ?
+                   OR COALESCE(d.codigo_deposito,'') LIKE ?)`);
+    params.push(`%${texto}%`, `%${texto}%`, `%${texto}%`);
+  }
+  if (estado === "mapeado") filtros.push(`d.codigo_deposito IS NOT NULL`);
+  else if (estado === "sin_deposito") filtros.push(`d.servicio_id IS NOT NULL AND d.codigo_deposito IS NULL`);
+  else if (estado === "sin_mapear") filtros.push(`d.servicio_id IS NULL`);
+
+  // El filtro por pedidos va en el WHERE con la subconsulta repetida, no en un
+  // HAVING: sin GROUP BY, SQLite rechaza el HAVING.
+  if (soloConPedidos) {
+    filtros.push(`(SELECT COUNT(*) FROM Pedidos p
+                    WHERE p.ServicioID = s.ServiciosID AND p.deleted_at IS NULL) > 0`);
+  }
+  const where = filtros.length ? `AND ${filtros.join(" AND ")}` : "";
+
+  const filas = db.prepare(`
+    SELECT s.ServiciosID AS servicioId, s.ServicioNombre AS servicio,
+           s.zona, s.grupo,
+           d.codigo_deposito AS codigo, d.nombre_deposito AS deposito,
+           d.origen, d.motivo, d.actualizado_at AS actualizadoAt,
+           (SELECT COUNT(*) FROM Pedidos p
+             WHERE p.ServicioID = s.ServiciosID AND p.deleted_at IS NULL) AS pedidos
+    FROM Servicios s
+    LEFT JOIN flexxus_depositos d ON d.servicio_id = s.ServiciosID
+    WHERE s.empresa_id = 1 AND s.deleted_at IS NULL ${where}
+    ORDER BY pedidos DESC, s.ServicioNombre
+    LIMIT ?`).all(...params, limite);
+
+  return filas.map((f) => ({
+    ...f,
+    estado: f.codigo ? "mapeado" : (f.origen ? "sin_deposito" : "sin_mapear"),
+  }));
+}
+
 /**
  * Cuántos servicios están mapeados, cuántos sin depósito y cuántos sin mirar.
  * `sinMapear` cruza con la tabla Servicios; si por lo que sea no se puede leer,

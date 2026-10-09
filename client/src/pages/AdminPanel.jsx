@@ -13,6 +13,7 @@ import MassReassignServicesSection from "./MassReassignServicesSection";
 import TwoFactorSection from "./TwoFactorSection";
 import StockCriticoSection from "./StockCriticoSection";
 import ControlPedidosSection from "./ControlPedidosSection";
+import FlexxusDepositos from "../components/FlexxusDepositos";
 const API_BASE_URL =
   (import.meta?.env && import.meta.env.VITE_API_URL) || "http://localhost:4000";
 
@@ -4296,7 +4297,8 @@ const NAV_GROUPS = [
       { id: "products",      label: "Productos" },
       { id: "stockCritico",  label: "Stock crítico" },
       { id: "incomingStock", label: "Ingresos programados" },
-      { id: "flexxus",       label: "Flexxus" },
+      { id: "flexxus",          label: "Flexxus" },
+      { id: "flexxusDepositos", label: "Depósitos Flexxus" },
     ],
   },
   {
@@ -4344,6 +4346,7 @@ const NAV_ICONS = {
   stockCritico:    ["M10.3 3.9 2.4 17.5A2 2 0 0 0 4.1 20.5h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z", "M12 9v4M12 17h.01"],
   incomingStock:   ["M3 7h11v9H3zM14 10h4l3 3v3h-7z", "M7 20a2 2 0 1 1 0-4 2 2 0 0 1 0 4M17 20a2 2 0 1 1 0-4 2 2 0 0 1 0 4"],
   flexxus:         ["M9 3v5M15 3v5M6 8h12v4a6 6 0 0 1-12 0zM12 18v3"],
+  flexxusDepositos: ["M3 10h18M5 10V7l7-4 7 4v3", "M5 10v10h14V10M9 20v-5h6v5"],
   services:        ["M2.5 20a6.5 6.5 0 0 1 13 0M17 11h5M19.5 8.5V14", "M9 4.8a3.2 3.2 0 1 1 0 6.4 3.2 3.2 0 0 1 0-6.4"],
   createService:   ["M12 5v14M5 12h14"],
   serviceProducts: ["M4 6h7M4 12h7M4 18h7M15 6h5M15 12h5M15 18h5"],
@@ -4540,6 +4543,7 @@ export default function AdminPanel() {
           {tab === "employees" && <EmployeesSection />}
           {tab === "twofa" && <TwoFactorSection />}
           {tab === "flexxus" && <FlexxusMatchSection />}
+          {tab === "flexxusDepositos" && <FlexxusDepositos />}
         </div>
       </div>
     </div>
