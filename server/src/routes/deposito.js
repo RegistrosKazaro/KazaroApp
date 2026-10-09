@@ -226,6 +226,10 @@ async function notifyOrderReady(orderId, closedAt) {
       entityType: "pedido_listo",
       entityId: String(orderId),
       empresaId,
+      // Este aviso sale en segundo plano: nadie está esperando la respuesta,
+      // así que ante un rechazo pasajero de Gmail conviene insistir. Sin esto
+      // se perdieron 28 avisos (una racha de 421 el 11/08 y tres 451 sueltos).
+      reintentos: true,
     });
 
     console.log(`[deposito] Notificación enviada a ${supervisorEmail} — pedido #${nro}`);

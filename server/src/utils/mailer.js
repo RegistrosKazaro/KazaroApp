@@ -126,6 +126,50 @@ function getTransporter(cfg, cacheKey) {
   return t;
 }
 
+/**
+ * ¿El fallo es pasajero? Los 4xx de SMTP y los cortes de red lo son: el mismo
+ * mail mandado un minuto después sale. Los 5xx no (credenciales mal, casilla
+ * inexistente): insistir no arregla nada y encima castiga la reputación.
+ *
+ * Esto nos costó 28 avisos de "listo para retirar" que nunca llegaron: 25 en
+ * una racha de 421 el 11/08/2026 y 3 de 451 entre agosto y octubre.
+ */
+export function esErrorTemporal(e) {
+  const codigo = Number(e?.responseCode ?? e?.code);
+  if (Number.isFinite(codigo) && codigo >= 400) return codigo < 500;
+  const red = new Set(["ECONNECTION", "ETIMEDOUT", "ESOCKET", "ECONNRESET",
+                       "ECONNREFUSED", "EDNS", "EAI_AGAIN", "EPIPE"]);
+  if (red.has(String(e?.code || "").toUpperCase())) return true;
+  // Último recurso: el texto. nodemailer no siempre completa responseCode.
+  return /\b4\d\d[- ]\d/.test(String(e?.message || ""));
+}
+
+const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Corre `fn` reintentando sólo si el error es pasajero. Las esperas van en
+ * segundos crecientes: la racha del 11/08 duró 31 segundos, así que hay que
+ * aguantar más que un par de intentos pegados.
+ *
+ * `esperar` se puede inyectar para poder testearlo sin esperar de verdad.
+ */
+export async function conReintentos(fn, { esperas = [5000, 15000, 45000], esperar = dormir,
+                                          alReintentar = null } = {}) {
+  let ultimo;
+  for (let intento = 0; intento <= esperas.length; intento += 1) {
+    try {
+      return await fn(intento + 1);
+    } catch (e) {
+      ultimo = e;
+      const quedan = intento < esperas.length;
+      if (!quedan || !esErrorTemporal(e)) throw e;
+      alReintentar?.(e, intento + 1, esperas[intento]);
+      await esperar(esperas[intento]);
+    }
+  }
+  throw ultimo;
+}
+
 export async function sendMail({
   to, cc, bcc, subject, text, html, attachments,
   entityType, entityId,
@@ -137,6 +181,11 @@ export async function sendMail({
   empresaNombre = null,
   overrideTo = false,
   exclusive = false,
+  // Reintentar ante fallos pasajeros. Apagado por defecto a propósito: hay
+  // envíos (crear pedido, restablecer contraseña) donde alguien está esperando
+  // la respuesta en pantalla y no puede quedarse un minuto colgado. Se enciende
+  // sólo en los avisos que salen en segundo plano.
+  reintentos = false,
 }) {
   // Pausa activa: no se envía nada. Se registra como "paused" para dejar rastro
   // y se devuelve sin error, para no romper los flujos que llaman a sendMail.
@@ -216,7 +265,13 @@ export async function sendMail({
         return info;
       } catch {}
     }
-    const info = await t.sendMail(safeOpts);
+    const enviar = () => t.sendMail(safeOpts);
+    const info = reintentos
+      ? await conReintentos(enviar, {
+          alReintentar: (e, intento, espera) =>
+            console.warn(`[mailer] fallo pasajero (intento ${intento}), reintento en ${espera / 1000}s:`, e?.message || e),
+        })
+      : await enviar();
     safeLog({ entityType, entityId, to: logTo, subject: subjectFinal, status: "sent", providerId: info.messageId || info.response, error: null });
     return info;
   } catch (e) {
