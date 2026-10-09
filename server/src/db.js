@@ -43,11 +43,22 @@ function resolveDbPath() {
     ? (path.isAbsolute(env.DB_PATH) ? env.DB_PATH : path.resolve(process.cwd(), env.DB_PATH))
     : null;
 
-  if (inEnv && fs.existsSync(inEnv)) return inEnv;
-
+  // Si alguien dijo explícitamente qué base usar, se usa ESA y ninguna otra.
+  // Antes, si el archivo no existía se seguía buscando Kazaro.db por todo el
+  // proyecto y se abría la primera que apareciera: un error de tipeo en el
+  // DB_PATH del .env levantaba el servidor contra una base equivocada, sin un
+  // solo aviso. Ahora se devuelve la ruta pedida y el guardia de abajo corta.
   if (inEnv) {
+    if (fs.existsSync(inEnv)) return inEnv;
+    // Excepción: el .db principal falta pero están sus WAL/SHM en esa misma
+    // carpeta. Es una recuperación a mano conocida, y no sale del directorio
+    // que pidieron.
     const sib = trySiblingDbFromWal(path.dirname(inEnv));
-    if (sib) return sib;
+    if (sib && fs.existsSync(sib)) {
+      console.warn(`[db] DB_PATH apunta a ${inEnv}, que no existe. Uso el hermano de su WAL: ${sib}`);
+      return sib;
+    }
+    return inEnv;
   }
 
   const candidates = uniq([
@@ -83,6 +94,10 @@ const fileMustExist = mustExistBecauseEnv || mustExistBecauseWal;
 
 if (fileMustExist && !fs.existsSync(dbPath)) {
   console.error(`[db] No se encontró la base en: ${dbPath}`);
+  if (mustExistBecauseEnv) {
+    console.error(`[db] DB_PATH está puesto en "${env.DB_PATH}" y ese archivo no existe.`);
+    console.error("[db] NO se va a usar otra base en su lugar: corregí la ruta o copiá la base ahí.");
+  }
   if (mustExistBecauseWal) {
     console.error("[db] Detecté WAL/SHM, pero falta el archivo .db principal. Copiá tu Kazaro.db junto a esos .db-wal/.db-shm");
   }
