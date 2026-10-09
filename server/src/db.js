@@ -4,6 +4,9 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { env } from "./utils/env.js";
+// Crea las tablas del mapeo servicio->depósito y de la cola de movimientos a
+// Flexxus. Nada se envía todavía: por ahora sólo existen, vacías.
+import { ensureTablas as ensureFlexxusOutbox } from "./integrations/flexxusOutbox.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1625,6 +1628,7 @@ ensureDevolucionesViews();
 ensureVisibilitySchema();
 ensureServiceProductsPivot();
 ensureIncomingStockTable();
+ensureFlexxusOutbox(db);
 
 export function getProductById(productId) {
   const sch = discoverCatalogSchema();
