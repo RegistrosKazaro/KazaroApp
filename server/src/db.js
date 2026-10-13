@@ -48,18 +48,15 @@ function resolveDbPath() {
   // proyecto y se abría la primera que apareciera: un error de tipeo en el
   // DB_PATH del .env levantaba el servidor contra una base equivocada, sin un
   // solo aviso. Ahora se devuelve la ruta pedida y el guardia de abajo corta.
-  if (inEnv) {
-    if (fs.existsSync(inEnv)) return inEnv;
-    // Excepción: el .db principal falta pero están sus WAL/SHM en esa misma
-    // carpeta. Es una recuperación a mano conocida, y no sale del directorio
-    // que pidieron.
-    const sib = trySiblingDbFromWal(path.dirname(inEnv));
-    if (sib && fs.existsSync(sib)) {
-      console.warn(`[db] DB_PATH apunta a ${inEnv}, que no existe. Uso el hermano de su WAL: ${sib}`);
-      return sib;
-    }
-    return inEnv;
-  }
+  // Nada de buscar un "parecido": si el archivo pedido no está, se devuelve
+  // igual y el guardia de abajo corta con un error claro.
+  //
+  // Acá hubo una excepción para el caso "falta el .db pero están sus WAL/SHM",
+  // y estaba mal: buscaba CUALQUIER .db-wal de la carpeta, así que un DB_PATH
+  // mal escrito terminaba abriendo otra base que estuviera al lado. Lo
+  // encontró un test: alcanzó con que otro test dejara una base en la carpeta
+  // temporal. En /home/ec2-user/data/kazaro/ habría abierto la base de verdad.
+  if (inEnv) return inEnv;
 
   const candidates = uniq([
     inEnv,

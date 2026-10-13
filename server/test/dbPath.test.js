@@ -61,3 +61,21 @@ test("el mensaje de error dice que ruta se pidio, para poder corregirla", () => 
   assert.equal(r.ok, false);
   assert.match(r.salida, new RegExp(path.basename(inexistente)));
 });
+
+test("un DB_PATH mal escrito NO abre otra base que haya al lado", () => {
+  // El caso que destapó el bug: la carpeta tiene una base (con su WAL) y se
+  // apunta a un nombre que no existe. Antes abria la de al lado.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kz_vecina_"));
+  const vecina = path.join(dir, "OtraBase.db");
+  fs.writeFileSync(vecina, "");
+  fs.writeFileSync(vecina + "-wal", "");
+  const conTipeo = path.join(dir, "Kazarp.db");       // la "p" es el tipeo
+  try {
+    const r = arrancar(conTipeo);
+    assert.equal(r.ok, false, "tiene que cortar, no abrir la vecina");
+    assert.doesNotMatch(r.salida, /OtraBase/, "ni siquiera la menciona");
+    assert.match(r.salida, /NO se va a usar otra base/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

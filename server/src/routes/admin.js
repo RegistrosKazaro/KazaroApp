@@ -529,6 +529,43 @@ router.get("/products/:id", mustBeAdmin, (req, res) => {
   }
 });
 
+/**
+ * Traduce el choque de código repetido a algo que se entienda.
+ *
+ * SQLite contesta "UNIQUE constraint failed: Productos.Code, Productos.empresa_id",
+ * que no le dice nada a quien está cargando un insumo. Acá se busca cuál es el
+ * insumo que ya tiene ese código y se devuelve con nombre y apellido.
+ *
+ * @returns true si ya contestó; false si el error era otro.
+ */
+function avisarCodigoRepetido(e, res, { codigo, empresaId, excluirId = null }) {
+  const msg = String(e?.message || "");
+  if (!/UNIQUE constraint failed/i.test(msg) || !/\.code/i.test(msg)) return false;
+
+  let duenio = null;
+  try {
+    const sch = discoverCatalogSchema();
+    if (sch?.ok && sch.cols.prodCode) {
+      const { products } = sch.tables;
+      const { prodId, prodName, prodCode } = sch.cols;
+      duenio = db.prepare(
+        `SELECT ${prodId} AS id, ${prodName} AS nombre FROM ${products}
+         WHERE TRIM(${prodCode}) = TRIM(?) AND empresa_id = ?
+           ${excluirId ? `AND ${prodId} <> ?` : ""} LIMIT 1`
+      ).get(...[String(codigo ?? ""), Number(empresaId ?? 1), ...(excluirId ? [excluirId] : [])]);
+    }
+  } catch { /* si no se puede averiguar, igual avisamos del código */ }
+
+  res.status(409).json({
+    error: duenio
+      ? `El código ${codigo} ya lo usa "${duenio.nombre}". Poné otro código o editá ese insumo.`
+      : `Ya hay un insumo con el código ${codigo}. Poné otro.`,
+    codigo: String(codigo ?? ""),
+    productoExistente: duenio || null,
+  });
+  return true;
+}
+
 router.post("/products", mustBeAdmin, (req, res) => {
   try {
     const sch = prodSchemaOrThrow();
@@ -587,6 +624,9 @@ router.post("/products", mustBeAdmin, (req, res) => {
 
     res.status(201).json({ ok: true, id: info.lastInsertRowid });
   } catch (e) {
+    if (avisarCodigoRepetido(e, res, {
+      codigo: req.body?.code, empresaId: req.user?.empresaId ?? 1,
+    })) return;
     console.error("POST /admin/products error:", e?.message || e);
     res.status(500).json({ error: "No se pudo crear el producto" });
   }
@@ -679,6 +719,9 @@ router.put("/products/:id", mustBeAdmin, (req, res) => {
 
     res.json({ ok: true, product: updated });
   } catch (e) {
+    if (avisarCodigoRepetido(e, res, {
+      codigo: req.body?.code, empresaId: req.user?.empresaId ?? 1, excluirId: req.params?.id,
+    })) return;
     res.status(500).json({ error: "No se pudo actualizar" });
   }
 });
