@@ -1169,15 +1169,17 @@ function lineasDevolubles(pedidoId) {
   `).all(pedidoId);
   const yaDevuelto = new Map(dev.map((d) => [String(d.pid), Number(d.devuelto || 0)]));
 
-  const retorna = new Map(
-    db.prepare(`SELECT ProductID AS id, COALESCE(retornable, 0) AS r FROM Productos`).all()
-      .map((p) => [String(p.id), Number(p.r) === 1])
+  const marcas = new Map(
+    db.prepare(`SELECT ProductID AS id, COALESCE(retornable, 0) AS r,
+                       COALESCE(pregunta_estado, 0) AS pe FROM Productos`).all()
+      .map((p) => [String(p.id), { retornable: Number(p.r) === 1, preguntaEstado: Number(p.pe) === 1 }])
   );
 
   return items.map((it) => {
     // Lo que quedó pendiente nunca salió del depósito: no se puede devolver.
     const entregado = Math.max(0, Number(it.pedido) - Number(it.pendiente));
     const devuelto = yaDevuelto.get(String(it.productoId)) || 0;
+    const marca = marcas.get(String(it.productoId)) || {};
     return {
       productoId: String(it.productoId),
       nombre: it.nombre,
@@ -1186,7 +1188,9 @@ function lineasDevolubles(pedidoId) {
       entregado,
       devuelto,
       disponible: Math.max(0, entregado - devuelto),
-      retornable: retorna.get(String(it.productoId)) === true,
+      retornable: marca.retornable === true,
+      // A un "va y vuelve" no se le pregunta nada: ya se sabe que se usó.
+      preguntaEstado: marca.retornable !== true && marca.preguntaEstado === true,
     };
   }).filter((l) => l.entregado > 0);
 }
@@ -1261,7 +1265,11 @@ router.post("/devoluciones", mustWarehouse, (req, res) => {
       if (cant > linea.disponible) {
         return res.status(400).json({ error: `De ${linea.nombre} sólo se pueden devolver ${linea.disponible}` });
       }
-      validadas.push({ ...linea, cantidad: cant });
+      // El depósito dice si volvió abierto o usado. Sólo se le pregunta a los
+      // insumos marcados (líquidos y textiles); del resto no viene nada y se
+      // sigue tratando como antes.
+      const usado = linea.preguntaEstado && p?.estado === "usado";
+      validadas.push({ ...linea, cantidad: cant, usado });
     }
     if (!validadas.length) return res.status(400).json({ error: "No hay nada para devolver" });
 
@@ -1278,7 +1286,7 @@ router.post("/devoluciones", mustWarehouse, (req, res) => {
         const antes = stockActual.get(v.productoId);
         subirStock.run(v.cantidad, v.productoId);
         ins.run(id, v.productoId, v.cantidad, motivo, empresaId, req.user.id, req.user.id,
-          v.retornable ? "retornable" : "no_usado");
+          v.retornable ? "retornable" : (v.usado ? "usado" : "no_usado"));
         registrarCambioProducto({
           productId: v.productoId, nombre: antes?.n ?? v.nombre, codigo: antes?.c ?? v.codigo,
           campo: "stock", anterior: Number(antes?.s ?? 0), nuevo: Number(antes?.s ?? 0) + v.cantidad,
@@ -1289,14 +1297,17 @@ router.post("/devoluciones", mustWarehouse, (req, res) => {
       return salida;
     })();
 
+    const unidades = (lista) => lista.reduce((a, h) => a + h.cantidad, 0);
     const retornables = hecho.filter((h) => h.retornable);
-    const descuentan = hecho.filter((h) => !h.retornable);
+    const usados = hecho.filter((h) => !h.retornable && h.usado);
+    const descuentan = hecho.filter((h) => !h.retornable && !h.usado);
     audit({
       empresaId, usuario: req.user?.username || req.user?.email || null,
       accion: "update", entidad: "Devolucion", entidadId: String(id),
       detalle: `Remito #${String(id).padStart(7, "0")}: ${hecho.length} insumo(s) devueltos`
-        + ` (${descuentan.reduce((a, h) => a + h.cantidad, 0)} u. que se descuentan del consumo`
-        + ` y ${retornables.reduce((a, h) => a + h.cantidad, 0)} u. retornables que no)`
+        + ` (${unidades(descuentan)} u. que se descuentan del consumo`
+        + `, ${unidades(usados)} u. que volvieron abiertas o usadas y se le cobran igual`
+        + ` y ${unidades(retornables)} u. retornables)`
         + ` — ${motivo}`,
     });
 
@@ -1305,10 +1316,11 @@ router.post("/devoluciones", mustWarehouse, (req, res) => {
       remito: String(id).padStart(7, "0"),
       devueltos: hecho.map((h) => ({
         productoId: h.productoId, nombre: h.nombre, cantidad: h.cantidad,
-        retornable: h.retornable, stockNuevo: h.stockNuevo,
+        retornable: h.retornable, usado: h.usado === true, stockNuevo: h.stockNuevo,
       })),
-      unidadesDescontadas: descuentan.reduce((a, h) => a + h.cantidad, 0),
-      unidadesRetornables: retornables.reduce((a, h) => a + h.cantidad, 0),
+      unidadesDescontadas: unidades(descuentan),
+      unidadesRetornables: unidades(retornables),
+      unidadesUsadas: unidades(usados),
     });
   } catch (e) {
     console.error("[deposito/devoluciones POST]", e?.message || e);

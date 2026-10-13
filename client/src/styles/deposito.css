@@ -927,6 +927,17 @@
   background: #e0e7ff; color: #3730a3; white-space: nowrap;
 }
 
+/* "¿Volvió abierto?" — sólo aparece en los insumos marcados (líquidos y
+   textiles) y recién cuando se carga una cantidad, para no ensuciar la tabla. */
+.deposito-page .dev-estado {
+  display: flex; gap: 0.9rem; flex-wrap: wrap;
+  margin-top: 0.35rem; font-size: 0.78rem; color: #374151;
+}
+.deposito-page .dev-estado label {
+  display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer;
+}
+.deposito-page .dev-estado input { margin: 0; cursor: pointer; }
+
 .deposito-page .dev-cant {
   width: 86px; text-align: right; font-variant-numeric: tabular-nums;
 }

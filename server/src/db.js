@@ -480,6 +480,13 @@ export function ensureProductoRetornable() {
     if (!cols.includes("retornable")) {
       db.exec(`ALTER TABLE Productos ADD COLUMN retornable INTEGER NOT NULL DEFAULT 0`);
     }
+    // Insumos a los que el depósito tiene que preguntar si volvieron abiertos
+    // o usados: líquidos y textiles. Un bidón empezado o una rejilla sucia
+    // vuelven al stock, pero el servicio ya los gastó. Arranca en 0 para
+    // todos: hasta que se marquen, nada cambia. Ver ensureDevolucionesViews.
+    if (!cols.includes("pregunta_estado")) {
+      db.exec(`ALTER TABLE Productos ADD COLUMN pregunta_estado INTEGER NOT NULL DEFAULT 0`);
+    }
   } catch (e) {
     console.error("[db] ensureProductoRetornable error:", e?.message || e);
   }
@@ -1566,7 +1573,17 @@ function ensureDevolucionesViews() {
     //     vuelve al stock pero NO se descuenta, porque el servicio igual lo
     //     usó esos días. Si se descontara, el informe mostraría 0 y parecería
     //     que nunca lo pidió.
-    // Por eso las vistas de neto sólo restan las de tipo "no_usado".
+    //
+    // Y una tercera, decidida el 13/10/2026: "usado" → el envase volvió
+    // ABIERTO o el textil volvió sucio. Vuelve al stock (se puede usar en otro
+    // lado) pero TAMPOCO se descuenta: el costo queda en el servicio que lo
+    // abrió. Es el criterio del rubro, donde un envase abierto no se acepta en
+    // devolución. Sale de haber encontrado $83.261 acreditados en el pedido
+    // #0001327 por bidones empezados, más $226.512 en textiles usados.
+    //
+    // Por eso las vistas de neto sólo restan las de tipo "no_usado". Lo ya
+    // cargado sigue siendo "no_usado", así que ningún pedido viejo cambia de
+    // monto: el criterio nuevo rige de acá en adelante.
     const colsDev = tinfo("devoluciones").map((c) => c.name);
     if (!colsDev.includes("tipo")) {
       db.exec(`ALTER TABLE devoluciones ADD COLUMN tipo TEXT NOT NULL DEFAULT 'no_usado'`);
@@ -1582,7 +1599,7 @@ function ensureDevolucionesViews() {
         SELECT pedido_id, producto_id, COALESCE(SUM(cantidad),0) AS devuelto
         FROM devoluciones
         WHERE LOWER(COALESCE(estado,'')) = 'aprobada'
-          AND LOWER(COALESCE(tipo,'no_usado')) <> 'retornable'
+          AND LOWER(COALESCE(tipo,'no_usado')) NOT IN ('retornable', 'usado')
         GROUP BY pedido_id, producto_id;
     `);
 

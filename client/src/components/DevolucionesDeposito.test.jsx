@@ -16,6 +16,7 @@ const REMITO = {
     { productoId: "10", nombre: "BOLSA NEGRA 80*100", codigo: "004", entregado: 500, devuelto: 0, disponible: 500, retornable: false },
     { productoId: "20", nombre: "TACHO 120 LTS C/RUEDAS", codigo: "231", entregado: 2, devuelto: 0, disponible: 2, retornable: true },
     { productoId: "30", nombre: "PAPEL HIGIENICO", codigo: "092", entregado: 10, devuelto: 10, disponible: 0, retornable: false },
+    { productoId: "40", nombre: "DETERGENTE KAZARO X 5 LTS", codigo: "100000032", entregado: 3, devuelto: 0, disponible: 3, retornable: false, preguntaEstado: true },
   ],
 };
 
@@ -117,5 +118,78 @@ describe("Devoluciones del depósito", () => {
     await buscar(user);
     expect(screen.getByRole("button", { name: "Registrar devolución" })).toBeDisabled();
     expect(api.post).not.toHaveBeenCalled();
+  });
+});
+
+describe("¿Volvió abierto?", () => {
+  it("sólo pregunta en los insumos marcados, y recién al cargar una cantidad", async () => {
+    const user = userEvent.setup({ delay: null });
+    await buscar(user);
+    // Antes de poner cantidad no hay pregunta.
+    expect(screen.queryByLabelText(/Cómo volvió DETERGENTE/)).not.toBeInTheDocument();
+
+    await user.type(screen.getByLabelText(/Cantidad que vuelve de DETERGENTE/), "2");
+    expect(screen.getByLabelText(/Cómo volvió DETERGENTE/)).toBeInTheDocument();
+
+    // A la bolsa, que no está marcada, no se le pregunta nunca.
+    await user.type(screen.getByLabelText(/Cantidad que vuelve de BOLSA NEGRA/), "100");
+    expect(screen.queryByLabelText(/Cómo volvió BOLSA NEGRA/)).not.toBeInTheDocument();
+  });
+
+  it("arranca en 'sin abrir', que es lo más frecuente", async () => {
+    const user = userEvent.setup({ delay: null });
+    await buscar(user);
+    await user.type(screen.getByLabelText(/Cantidad que vuelve de DETERGENTE/), "2");
+    const grupo = screen.getByLabelText(/Cómo volvió DETERGENTE/);
+    const [sinAbrir, usado] = within(grupo).getAllByRole("radio");
+    expect(sinAbrir).toBeChecked();
+    expect(usado).not.toBeChecked();
+  });
+
+  it("marcar 'abierto o usado' cambia lo que dice que va a pasar", async () => {
+    const user = userEvent.setup({ delay: null });
+    await buscar(user);
+    await user.type(screen.getByLabelText(/Cantidad que vuelve de DETERGENTE/), "2");
+    expect(document.querySelector(".dev-efecto").textContent)
+      .toMatch(/se le descuentan 2 al consumo/);
+
+    const grupo = screen.getByLabelText(/Cómo volvió DETERGENTE/);
+    await user.click(within(grupo).getAllByRole("radio")[1]);
+    const resumen = document.querySelector(".dev-efecto").textContent;
+    expect(resumen).toMatch(/2 volvieron abiertas o usadas: se le cobran igual/);
+    expect(resumen).not.toMatch(/se le descuentan 2 al consumo/);
+  });
+
+  it("manda el estado de cada línea, y sólo de las que corresponde", async () => {
+    const user = userEvent.setup({ delay: null });
+    await buscar(user);
+    await user.type(screen.getByLabelText(/Cantidad que vuelve de DETERGENTE/), "2");
+    await user.click(within(screen.getByLabelText(/Cómo volvió DETERGENTE/)).getAllByRole("radio")[1]);
+    await user.type(screen.getByLabelText(/Cantidad que vuelve de BOLSA NEGRA/), "100");
+    await user.click(screen.getByRole("button", { name: "Registrar devolución" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalled());
+    const [, body] = api.post.mock.calls[0];
+    const detergente = body.items.find((i) => i.productoId === "40");
+    const bolsa = body.items.find((i) => i.productoId === "10");
+    expect(detergente.estado).toBe("usado");
+    expect(bolsa.estado).toBeUndefined();
+  });
+
+  it("si se deja en 'sin abrir', lo manda explícito", async () => {
+    const user = userEvent.setup({ delay: null });
+    await buscar(user);
+    await user.type(screen.getByLabelText(/Cantidad que vuelve de DETERGENTE/), "3");
+    await user.click(screen.getByRole("button", { name: "Registrar devolución" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalled());
+    const [, body] = api.post.mock.calls[0];
+    expect(body.items.find((i) => i.productoId === "40").estado).toBe("sin_abrir");
+  });
+
+  it("al 'va y vuelve' no se le pregunta: ya se sabe que se usó", async () => {
+    const user = userEvent.setup({ delay: null });
+    await buscar(user);
+    await user.type(screen.getByLabelText(/Cantidad que vuelve de TACHO/), "2");
+    expect(screen.queryByLabelText(/Cómo volvió TACHO/)).not.toBeInTheDocument();
   });
 });

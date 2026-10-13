@@ -18,6 +18,7 @@ const soloNumeros = (v) => String(v ?? "").replace(/\D/g, "");
 const unidades = (n) => `${formatNumber(n)} ${n === 1 ? "unidad" : "unidades"}`;
 
 export default function DevolucionesDeposito() {
+  const [estados, setEstados] = useState({});   // productoId -> "sin_abrir" | "usado"
   const [numero, setNumero] = useState("");
   const [buscando, setBuscando] = useState(false);
   const [remito, setRemito] = useState(null);
@@ -40,13 +41,14 @@ export default function DevolucionesDeposito() {
 
   const empezarDeNuevo = () => {
     setRemito(null); setNumero(""); setCant({}); setMotivo(""); setErr(""); setHecho(null);
+    setEstados({});
   };
 
   const buscar = async (e) => {
     e?.preventDefault?.();
     const n = soloNumeros(numero);
     if (!n) { setErr("Escribí el número que figura en el remito."); return; }
-    setBuscando(true); setErr(""); setHecho(null); setRemito(null); setCant({});
+    setBuscando(true); setErr(""); setHecho(null); setRemito(null); setCant({}); setEstados({});
     try {
       const { data } = await api.get(`/deposito/devoluciones/remito/${n}`);
       setRemito(data);
@@ -71,8 +73,14 @@ export default function DevolucionesDeposito() {
     .map((i) => ({ item: i, cantidad: Number(cant[i.productoId] || 0) }))
     .filter((x) => x.cantidad > 0), [items, cant]);
 
-  const uDescuentan = elegidos.filter((x) => !x.item.retornable).reduce((a, x) => a + x.cantidad, 0);
-  const uRetornables = elegidos.filter((x) => x.item.retornable).reduce((a, x) => a + x.cantidad, 0);
+  // Un insumo marcado vuelve "sin abrir" salvo que el depósito diga lo
+  // contrario: es lo más frecuente y evita que haya que tocar cada línea.
+  const volvioUsado = (item) => item.preguntaEstado && estados[item.productoId] === "usado";
+
+  const sumar = (filtro) => elegidos.filter(filtro).reduce((a, x) => a + x.cantidad, 0);
+  const uRetornables = sumar((x) => x.item.retornable);
+  const uUsados = sumar((x) => !x.item.retornable && volvioUsado(x.item));
+  const uDescuentan = sumar((x) => !x.item.retornable && !volvioUsado(x.item));
 
   const confirmar = async () => {
     if (!elegidos.length) return;
@@ -80,7 +88,11 @@ export default function DevolucionesDeposito() {
     try {
       const { data } = await api.post("/deposito/devoluciones", {
         pedidoId: remito.pedido.id,
-        items: elegidos.map((x) => ({ productoId: x.item.productoId, cantidad: x.cantidad })),
+        items: elegidos.map((x) => ({
+          productoId: x.item.productoId,
+          cantidad: x.cantidad,
+          ...(x.item.preguntaEstado ? { estado: volvioUsado(x.item) ? "usado" : "sin_abrir" } : {}),
+        })),
         motivo: motivo.trim(),
       });
       setHecho(data);
@@ -132,7 +144,9 @@ export default function DevolucionesDeposito() {
               {hecho.devueltos.map((x) => (
                 <li key={x.productoId}>
                   {formatNumber(x.cantidad)} {x.nombre} — volvió al stock y{" "}
-                  {x.retornable ? "sigue contando como usado" : "se le descuenta al servicio"}
+                  {x.retornable ? "sigue contando como usado"
+                    : x.usado ? "se le cobra igual, porque volvió abierto o usado"
+                    : "se le descuenta al servicio"}
                 </li>
               ))}
             </ul>
@@ -186,6 +200,23 @@ export default function DevolucionesDeposito() {
                                 </span>
                               )}
                             </div>
+                            {it.preguntaEstado && Number(valor) > 0 && (
+                              <div className="dev-estado" role="radiogroup"
+                                aria-label={`¿Cómo volvió ${it.nombre}?`}>
+                                <label>
+                                  <input type="radio" name={`estado-${it.productoId}`}
+                                    checked={!volvioUsado(it)}
+                                    onChange={() => setEstados((e) => ({ ...e, [it.productoId]: "sin_abrir" }))} />
+                                  Sin abrir
+                                </label>
+                                <label title="Vuelve al stock, pero el servicio ya lo gastó: no se le descuenta">
+                                  <input type="radio" name={`estado-${it.productoId}`}
+                                    checked={volvioUsado(it)}
+                                    onChange={() => setEstados((e) => ({ ...e, [it.productoId]: "usado" }))} />
+                                  Abierto o usado
+                                </label>
+                              </div>
+                            )}
                           </td>
                           <td className="deposito-td--numeric" data-rotulo="Se entregó">{formatNumber(it.entregado)}</td>
                           <td className="deposito-td--numeric" data-rotulo="Volvió antes">{it.devuelto > 0 ? formatNumber(it.devuelto) : "—"}</td>
@@ -219,8 +250,9 @@ export default function DevolucionesDeposito() {
                     ? "Cargá las cantidades que volvieron."
                     : (
                       <>
-                        Vuelven <strong>{unidades(uDescuentan + uRetornables)}</strong> al stock
+                        Vuelven <strong>{unidades(uDescuentan + uRetornables + uUsados)}</strong> al stock
                         {uDescuentan > 0 && <> · se le descuentan {formatNumber(uDescuentan)} al consumo del servicio</>}
+                        {uUsados > 0 && <> · {formatNumber(uUsados)} volvieron abiertas o usadas: se le cobran igual</>}
                         {uRetornables > 0 && <> · {formatNumber(uRetornables)} de los que van y vuelven: el consumo no cambia</>}
                       </>
                     )}
@@ -261,6 +293,7 @@ export default function DevolucionesDeposito() {
                     <td>
                       <div className="dev-nombre">{u.insumo}</div>
                       {u.tipo === "retornable" && <span className="dev-chip">va y vuelve</span>}
+                      {u.tipo === "usado" && <span className="dev-chip">volvió abierto</span>}
                     </td>
                     <td className="deposito-td--numeric" data-rotulo="Cantidad">{formatNumber(u.cantidad)}</td>
                     <td data-rotulo="Remito">#{u.remito}</td>
