@@ -37,6 +37,8 @@ export default function FlexxusDepositos() {
   const [soloConPedidos, setSoloConPedidos] = useState(true);
   const [editando, setEditando] = useState(null);   // servicioId en edición
   const [cola, setCola] = useState(null);
+  const [prueba, setPrueba] = useState(null);
+  const [probando, setProbando] = useState(false);
   const archivoRef = useRef(null);
 
   const cargar = useCallback(async () => {
@@ -70,6 +72,21 @@ export default function FlexxusDepositos() {
   }, []);
 
   useEffect(() => { cargarCola(); }, [cargarCola]);
+
+  // Sólo lee de Flexxus: se loguea y pide depósitos y stock. No escribe nada.
+  const probar = async () => {
+    setProbando(true); setPrueba(null); setErr(""); setMsg("");
+    try {
+      const { data } = await api.post("/admin/flexxus/probar-conexion");
+      setPrueba(data);
+    } catch (e) {
+      const d = e?.response?.data;
+      if (d?.pasos) setPrueba(d);
+      else setErr(d?.error || e.message || "No se pudo probar la conexión");
+    } finally {
+      setProbando(false);
+    }
+  };
 
   const importar = async (archivo) => {
     setErr(""); setMsg("");
@@ -155,7 +172,24 @@ export default function FlexxusDepositos() {
         <button className="btn" onClick={() => archivoRef.current?.click()}>
           Importar confirmados…
         </button>
+        <button className="btn" onClick={probar} disabled={probando}>
+          {probando ? "Probando…" : "Probar conexión"}
+        </button>
       </div>
+
+      {prueba && (
+        <div className={`state ${prueba.ok ? "success" : "error"}`} role="status">
+          <strong>{prueba.ok ? "La conexión con Flexxus funciona." : "La conexión con Flexxus falló."}</strong>
+          <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+            {(prueba.pasos || []).map((p) => (
+              <li key={p.paso}>
+                {p.ok ? "✓" : "✗"} {p.paso}: {p.detalle}
+                {p.status ? ` (HTTP ${p.status})` : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {(msg || err) && (
         <div className={`state ${err ? "error" : "success"}`} role={err ? "alert" : "status"}>

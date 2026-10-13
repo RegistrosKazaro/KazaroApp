@@ -176,3 +176,40 @@ describe("Depósitos de Flexxus", () => {
     expect(await screen.findByText("No se pudo leer el mapeo de depósitos")).toBeInTheDocument();
   });
 });
+
+describe("Probar conexión con Flexxus", () => {
+  it("muestra cada paso cuando funciona", async () => {
+    const user = userEvent.setup({ delay: null });
+    api.post.mockResolvedValue({ data: { ok: true, pasos: [
+      { paso: "login", ok: true, detalle: "sesión iniciada" },
+      { paso: "leer depósitos", ok: true, detalle: "854 depósitos" },
+    ] } });
+    await pintar();
+    await user.click(screen.getByRole("button", { name: "Probar conexión" }));
+    expect(await screen.findByText(/La conexión con Flexxus funciona/)).toBeInTheDocument();
+    expect(screen.getByText(/854 depósitos/)).toBeInTheDocument();
+    expect(api.post).toHaveBeenCalledWith("/admin/flexxus/probar-conexion");
+  });
+
+  it("si un paso falla lo marca, con el código HTTP", async () => {
+    const user = userEvent.setup({ delay: null });
+    api.post.mockRejectedValue({ response: { data: { ok: false, pasos: [
+      { paso: "login", ok: true, detalle: "sesión iniciada" },
+      { paso: "leer depósitos", ok: false, detalle: "sin permiso", status: 403 },
+    ] } } });
+    await pintar();
+    await user.click(screen.getByRole("button", { name: "Probar conexión" }));
+    expect(await screen.findByText(/La conexión con Flexxus falló/)).toBeInTheDocument();
+    expect(screen.getByText(/HTTP 403/)).toBeInTheDocument();
+  });
+
+  it("si faltan las credenciales lo dice claro", async () => {
+    const user = userEvent.setup({ delay: null });
+    api.post.mockRejectedValue({ response: { data: {
+      ok: false, error: "Faltan los datos de acceso en el .env del servidor: FLEXXUS_API_URL, FLEXXUS_USER y FLEXXUS_PASS.",
+    } } });
+    await pintar();
+    await user.click(screen.getByRole("button", { name: "Probar conexión" }));
+    expect(await screen.findByText(/Faltan los datos de acceso/)).toBeInTheDocument();
+  });
+});

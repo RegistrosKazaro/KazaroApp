@@ -55,6 +55,8 @@ import {
   resumen as resumenOutboxFlexxus,
   reencolarSinMapeo as reencolarFlexxus,
 } from "../integrations/flexxusOutbox.js";
+import { crearClienteFlexxus, configDesdeEnv } from "../integrations/flexxusClient.js";
+import { probarConexion } from "../integrations/flexxusDespachador.js";
 
 const router = Router();
 const mustBeAdmin = [requireAuth, requireRole(["admin", "Admin"])];
@@ -2819,6 +2821,27 @@ router.get("/flexxus/outbox", mustBeAdmin, (req, res) => {
   } catch (e) {
     console.error("GET /admin/flexxus/outbox error:", e?.message || e);
     res.status(500).json({ error: "No se pudo leer la cola de movimientos" });
+  }
+});
+
+// Probar el acceso a Flexxus. SOLO LEE: se loguea, pide los depósitos y el
+// stock del central. No escribe nada, ni acá ni allá. Es lo primero que hay
+// que correr el día que lleguen las credenciales.
+router.post("/flexxus/probar-conexion", mustBeAdmin, async (req, res) => {
+  try {
+    if (!soloKazaro(req, res)) return;
+    const cfg = configDesdeEnv();
+    if (!cfg) {
+      return res.status(400).json({
+        ok: false,
+        error: "Faltan los datos de acceso en el .env del servidor: FLEXXUS_API_URL, FLEXXUS_USER y FLEXXUS_PASS.",
+      });
+    }
+    const resultado = await probarConexion(crearClienteFlexxus(cfg));
+    res.json(resultado);
+  } catch (e) {
+    console.error("POST /admin/flexxus/probar-conexion error:", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "No se pudo probar la conexión" });
   }
 });
 
