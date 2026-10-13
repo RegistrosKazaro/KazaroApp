@@ -200,3 +200,48 @@ test("el mapeo puede traer solo los que piden", () => {
   const ids = listarMapeo(db, { soloConPedidos: true }).map((f) => f.servicioId).sort((a, b) => a - b);
   assert.deepEqual(ids, [43, 412]);
 });
+
+test("el import respeta el origen que trae cada fila", () => {
+  const db = baseNueva();
+  importarConfirmados(db, {
+    mapeos: [
+      { servicio_id: 43, codigo_deposito: "660", deposito: "A", origen: "automatico" },
+      { servicio_id: 53, codigo_deposito: "652", deposito: "B", origen: "confirmado" },
+    ],
+  });
+  assert.equal(depositoDe(db, 43).origen, "automatico");
+  assert.equal(depositoDe(db, 53).origen, "confirmado");
+});
+
+test("el archivo puede fijar el origen de todas sus filas", () => {
+  const db = baseNueva();
+  importarConfirmados(db, {
+    origen: "automatico",
+    mapeos: [{ servicio_id: 43, codigo_deposito: "660", deposito: "A" }],
+  });
+  assert.equal(depositoDe(db, 43).origen, "automatico");
+});
+
+test("sin origen declarado se asume confirmado, como el primer archivo", () => {
+  const db = baseNueva();
+  importarConfirmados(db, { mapeos: [{ servicio_id: 43, codigo_deposito: "660", deposito: "A" }] });
+  assert.equal(depositoDe(db, 43).origen, "confirmado");
+});
+
+test("un origen inventado no se guarda: cae al del archivo", () => {
+  const db = baseNueva();
+  importarConfirmados(db, { mapeos: [{ servicio_id: 43, codigo_deposito: "660", origen: "cualquiera" }] });
+  assert.equal(depositoDe(db, 43).origen, "confirmado");
+});
+
+test("un import automatico no pisa lo que una persona confirmo", () => {
+  const db = baseNueva();
+  asignar(db, { servicioId: 43, codigoDeposito: "660", origen: "confirmado" });
+  const r = importarConfirmados(db, {
+    origen: "automatico",
+    mapeos: [{ servicio_id: 43, codigo_deposito: "999", deposito: "OTRO" }],
+  });
+  assert.equal(r.respetados, 1);
+  assert.equal(depositoDe(db, 43).codigo, "660");
+  assert.equal(depositoDe(db, 43).origen, "confirmado");
+});

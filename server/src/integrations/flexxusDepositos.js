@@ -85,7 +85,16 @@ export function depositoDe(db, servicioId) {
 }
 
 /**
- * Carga el archivo de decisiones confirmadas (confirmados.json).
+ * Carga un archivo de mapeos.
+ *
+ * El archivo dice de dónde viene cada decisión, y eso importa: no es lo mismo
+ * algo que miró una persona que algo que resolvió el comparador por parecido de
+ * nombres. Si el día de mañana uno está mal, hay que saber cuál mirar primero.
+ *
+ * El origen se toma de cada fila (`origen`), o del archivo entero (`origen` en
+ * la raíz), y si no viene nada se asume "confirmado" — que es como venía el
+ * primer archivo, hecho a mano.
+ *
  * Lo que ya esté confirmado NO se pisa con algo automático: las decisiones
  * tomadas a mano mandan.
  */
@@ -94,8 +103,13 @@ export function importarConfirmados(db, datos) {
   const sinDeposito = Array.isArray(datos?.sin_deposito) ? datos.sin_deposito : [];
   const resultado = { asignados: 0, sinDeposito: 0, respetados: 0, errores: [] };
 
+  const origenDelArchivo = ORIGENES.includes(datos?.origen) ? datos.origen : "confirmado";
+  const origenDe = (m) => (ORIGENES.includes(m?.origen) ? m.origen : origenDelArchivo);
+
   const aplicar = (m, codigo, nombre) => {
+    const origen = origenDe(m);
     const previo = depositoDe(db, m.servicio_id);
+    // Una decisión tomada a mano no la pisa ningún archivo, venga de donde venga.
     if (previo?.origen === "confirmado" && previo.codigo !== codigo) {
       resultado.respetados += 1;
       return null;
@@ -104,7 +118,7 @@ export function importarConfirmados(db, datos) {
       servicioId: m.servicio_id,
       codigoDeposito: codigo,
       nombreDeposito: nombre,
-      origen: "confirmado",
+      origen,
       motivo: m.motivo ?? null,
     });
   };
