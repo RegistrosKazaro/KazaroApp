@@ -166,3 +166,28 @@ describe("Informes", () => {
     expect(await screen.findByText("Se cayó el servidor")).toBeInTheDocument();
   });
 });
+
+describe("Equipamiento prestado", () => {
+  it("se muestra aparte cuando lo hay", async () => {
+    api.get.mockImplementation((url) => {
+      if (!url.includes("/reports/panel")) return Promise.resolve({ data: {} });
+      return Promise.resolve({ data: {
+        ...RESPUESTA,
+        kpis: { ...RESPUESTA.kpis, monto: 121050, unidades: 120, equipamiento: 1418336, unidadesEquipamiento: 21 },
+      } });
+    });
+    abrir();
+    expect(await screen.findByText("Equipamiento prestado")).toBeInTheDocument();
+    expect(screen.getByText(/21 u\. que volvieron al depósito/)).toBeInTheDocument();
+  });
+
+  it("no ensucia la pantalla cuando no hay", async () => {
+    api.get.mockImplementation((url) => {
+      if (!url.includes("/reports/panel")) return Promise.resolve({ data: {} });
+      return Promise.resolve({ data: { ...RESPUESTA, kpis: { ...RESPUESTA.kpis, equipamiento: 0 } } });
+    });
+    abrir();
+    await screen.findByText("Pedidos");
+    expect(screen.queryByText("Equipamiento prestado")).not.toBeInTheDocument();
+  });
+});

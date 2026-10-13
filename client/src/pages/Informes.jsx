@@ -381,6 +381,13 @@ export default function Informes() {
             <Kpi label="Insumos distintos" valor={formatNumber(k.insumos)} />
             <Kpi label="Devoluciones aprobadas" valor={formatNumber(dev.aprobadas)}
               detalle={dev.aprobadas ? `${formatMoney(dev.monto)} · ${formatNumber(dev.unidades)} u.` : "ninguna en el período"} />
+            {/* El equipamiento prestado (cestos, tachos, contenedores) se usó
+                y por eso sus unidades están en el total, pero volvió al
+                depósito: su plata no es consumo y se muestra aparte. */}
+            {k.equipamiento > 0 && (
+              <Kpi label="Equipamiento prestado" valor={formatMoney(k.equipamiento)}
+                detalle={`${formatNumber(k.unidadesEquipamiento || 0)} u. que volvieron al depósito`} />
+            )}
           </div>
 
           {data.sinRetirar?.pedidos > 0 && (

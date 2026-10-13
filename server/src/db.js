@@ -1603,6 +1603,21 @@ function ensureDevolucionesViews() {
         GROUP BY pedido_id, producto_id;
     `);
 
+    // Equipamiento que se prestó y volvió. Las UNIDADES siguen contando como
+    // usadas —si fueron 10 cestos al evento, el servicio usó 10—, pero su
+    // PLATA no es consumo: el cesto es nuestro y volvió. Mezclarlas deformaba
+    // los informes: SE - AIRBAG figuraba con $1.539.386 de consumo cuando
+    // $1.418.336 eran 20 cestos que volvieron al depósito, o sea el 92%.
+    // Decidido con el usuario el 13/10/2026.
+    db.exec(`
+      CREATE VIEW v_equipamiento_prestado AS
+        SELECT pedido_id, producto_id, COALESCE(SUM(cantidad),0) AS prestado
+        FROM devoluciones
+        WHERE LOWER(COALESCE(estado,'')) = 'aprobada'
+          AND LOWER(COALESCE(tipo,'')) = 'retornable'
+        GROUP BY pedido_id, producto_id;
+    `);
+
     // Un ítem por (pedido, producto) con la cantidad y el subtotal ya netos.
     // Se agrupa porque un mismo producto puede estar en más de una fila del
     // pedido, y la devolución se registra por producto.
@@ -1619,11 +1634,30 @@ function ensureDevolucionesViews() {
           -- Lo que quedó pendiente de entregar todavía no salió del depósito,
           -- así que no cuenta como consumido: se descuenta igual que una devolución.
           COALESCE(SUM(i.cantidad_pendiente),0) AS Pendiente,
+          -- Unidades que el servicio usó. El equipamiento prestado SÍ cuenta
+          -- acá: si pidió 10 cestos y los devolvió, los usó esos días.
           MAX(0, COALESCE(SUM(i.Cantidad),0) - COALESCE(SUM(i.cantidad_pendiente),0) - COALESCE(MAX(d.devuelto),0)) AS Cantidad,
-          MAX(0, (COALESCE(SUM(i.Cantidad),0) - COALESCE(SUM(i.cantidad_pendiente),0) - COALESCE(MAX(d.devuelto),0)) * COALESCE(MAX(i.Precio),0)) AS Subtotal
+          -- De esas unidades, cuántas son equipamiento que volvió.
+          MIN(
+            COALESCE(MAX(r.prestado),0),
+            MAX(0, COALESCE(SUM(i.Cantidad),0) - COALESCE(SUM(i.cantidad_pendiente),0) - COALESCE(MAX(d.devuelto),0))
+          ) AS Prestado,
+          -- Plata del equipamiento prestado. Se informa aparte y NO es consumo.
+          MIN(
+            COALESCE(MAX(r.prestado),0),
+            MAX(0, COALESCE(SUM(i.Cantidad),0) - COALESCE(SUM(i.cantidad_pendiente),0) - COALESCE(MAX(d.devuelto),0))
+          ) * COALESCE(MAX(i.Precio),0) AS MontoPrestado,
+          -- Lo que de verdad se gastó: las unidades usadas menos el
+          -- equipamiento que volvió, por el precio.
+          MAX(0,
+            MAX(0, COALESCE(SUM(i.Cantidad),0) - COALESCE(SUM(i.cantidad_pendiente),0) - COALESCE(MAX(d.devuelto),0))
+            - COALESCE(MAX(r.prestado),0)
+          ) * COALESCE(MAX(i.Precio),0) AS Subtotal
         FROM PedidoItems i
         LEFT JOIN v_devoluciones_aprobadas d
           ON d.pedido_id = i.PedidoID AND d.producto_id = i.ProductoID
+        LEFT JOIN v_equipamiento_prestado r
+          ON r.pedido_id = i.PedidoID AND r.producto_id = i.ProductoID
         GROUP BY i.PedidoID, i.ProductoID;
     `);
 
@@ -1640,12 +1674,19 @@ function ensureDevolucionesViews() {
               ON i.PedidoID = d.pedido_id AND i.ProductoID = d.producto_id
             WHERE d.pedido_id = p.PedidoID
           ),0) AS MontoDevuelto,
+          COALESCE((
+            SELECT SUM(i.MontoPrestado) FROM v_pedido_items_neto i
+            WHERE i.PedidoID = p.PedidoID
+          ),0) AS EquipamientoPrestado,
           MAX(0, COALESCE(p.Total,0) - COALESCE((
             SELECT SUM(d.devuelto * COALESCE(i.Precio,0))
             FROM v_devoluciones_aprobadas d
             JOIN v_pedido_items_neto i
               ON i.PedidoID = d.pedido_id AND i.ProductoID = d.producto_id
             WHERE d.pedido_id = p.PedidoID
+          ),0) - COALESCE((
+            SELECT SUM(i.MontoPrestado) FROM v_pedido_items_neto i
+            WHERE i.PedidoID = p.PedidoID
           ),0)) AS TotalNeto
         FROM Pedidos p;
     `);

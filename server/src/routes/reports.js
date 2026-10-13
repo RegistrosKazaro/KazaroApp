@@ -933,7 +933,12 @@ function construirPanel(req) {
     const kpi = db.prepare(`
       SELECT COALESCE(SUM(i.Subtotal),0) AS monto, COALESCE(SUM(i.Cantidad),0) AS unidades,
              COUNT(DISTINCT p.PedidoID) AS pedidos, COUNT(DISTINCT p.ServicioID) AS servicios,
-             COUNT(DISTINCT i.ProductoID) AS insumos ${BASE()}`).get(...P);
+             COUNT(DISTINCT i.ProductoID) AS insumos,
+             -- Equipamiento que se prestó y volvió: las unidades ya están
+             -- contadas arriba, pero su plata no es consumo. Se informa aparte
+             -- para que no desaparezca del mapa.
+             COALESCE(SUM(i.MontoPrestado),0) AS equipamiento,
+             COALESCE(SUM(i.Prestado),0) AS unidadesEquipamiento ${BASE()}`).get(...P);
 
     const evolucion = q(`
       SELECT strftime('%Y-%m', datetime(p.Fecha,'-3 hours')) AS mes,
@@ -953,6 +958,7 @@ function construirPanel(req) {
       SELECT CAST(p.ServicioID AS TEXT) AS id,
              COALESCE(NULLIF(TRIM(s.ServicioNombre),''), 'Sin servicio') AS nombre,
              COALESCE(SUM(i.Subtotal),0) AS monto, COALESCE(SUM(i.Cantidad),0) AS unidades,
+             COALESCE(SUM(i.MontoPrestado),0) AS equipamiento,
              COUNT(DISTINCT p.PedidoID) AS pedidos, COUNT(DISTINCT i.ProductoID) AS insumos
       ${BASE("LEFT JOIN Servicios s ON s.ServiciosID = p.ServicioID")}
       GROUP BY p.ServicioID ORDER BY monto DESC`);
@@ -1067,6 +1073,10 @@ function construirPanel(req) {
         monto: num(kpi.monto), unidades: num(kpi.unidades), pedidos: num(kpi.pedidos),
         servicios: num(kpi.servicios), insumos: num(kpi.insumos),
         promedioPorPedido: num(kpi.pedidos) ? num(kpi.monto) / num(kpi.pedidos) : 0,
+        // Equipamiento prestado que volvió: las unidades ya están en
+        // `unidades`, pero su plata NO está en `monto` porque no es consumo.
+        equipamiento: num(kpi.equipamiento),
+        unidadesEquipamiento: num(kpi.unidadesEquipamiento),
       },
       evolucion: evolucion.map((r) => ({ mes: r.mes, monto: num(r.monto), unidades: num(r.unidades), pedidos: num(r.pedidos) })),
       tendencia: tendencia.map((r) => ({ semana: r.semana, monto: num(r.monto), unidades: num(r.unidades), pedidos: num(r.pedidos) })),
