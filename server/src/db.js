@@ -1590,9 +1590,17 @@ function ensureDevolucionesViews() {
     }
 
     // Se recrean siempre, así un cambio de definición se aplica en el deploy.
-    db.exec(`DROP VIEW IF EXISTS v_pedidos_neto;`);
-    db.exec(`DROP VIEW IF EXISTS v_pedido_items_neto;`);
-    db.exec(`DROP VIEW IF EXISTS v_devoluciones_aprobadas;`);
+    //
+    // OJO: toda vista que se cree acá abajo tiene que estar en esta lista. Si
+    // falta, el segundo arranque falla con "view ... already exists", la
+    // excepción corta el resto del bloque y las vistas que venían DESPUÉS
+    // quedan sin crear. Pasó el 13/10/2026 con v_equipamiento_prestado:
+    // producción se quedó sin v_pedido_items_neto ni v_pedidos_neto, que son
+    // las que usan los informes y los totales de los pedidos.
+    for (const v of ["v_pedidos_neto", "v_pedido_items_neto",
+                     "v_equipamiento_prestado", "v_devoluciones_aprobadas"]) {
+      db.exec(`DROP VIEW IF EXISTS ${v};`);
+    }
 
     db.exec(`
       CREATE VIEW v_devoluciones_aprobadas AS
