@@ -1813,7 +1813,34 @@ router.put("/orders/:id/pickup", mustWarehouse, (req, res) => {
 
 const laEmpresa = (req) => getEmpresaId(req);
 
-router.get("/preparadores", mustWarehouse, (req, res) => {
+/**
+ * El operario de picking NO es del depósito.
+ *
+ * Todos los endpoints de este archivo comparten mustWarehouse, que habilita
+ * borrar pedidos, mover stock y cargar devoluciones. Darle eso a un operario
+ * para que pueda preparar sería regalarle media aplicación. Por eso las rutas
+ * de preparación tienen su propio guardia: depósito y admin siguen entrando,
+ * y además entra quien tenga rol Picking, pero SOLO acá.
+ */
+function requireDepositoOPicking(req, res, next) {
+  try {
+    if (!req.user?.id) return res.status(401).json({ ok: false, error: "No autenticado" });
+    const roles = (req.user.roles || getUserRoles(req.user.id) || []).map((r) => String(r).toLowerCase());
+    if (roles.includes("deposito") || roles.includes("admin")) return next();
+    if (roles.includes("picking")) { req.esOperario = true; return next(); }
+    return res.status(403).json({ ok: false, error: "Sin permiso" });
+  } catch { return res.status(403).json({ ok: false, error: "Error permisos" }); }
+}
+const mustPicking = [requireAuth, requireDepositoOPicking];
+
+/**
+ * A quién le corresponde ver esta cola.
+ * El operario ve lo suyo y nada más, sin poder pedir lo de otro por la URL.
+ */
+const preparadorDelPedido = (req) =>
+  req.esOperario ? req.user.id : (req.query?.preparadorId ?? null);
+
+router.get("/preparadores", mustPicking, (req, res) => {
   try {
     res.json({ preparadores: picking.listarPreparadores(db, laEmpresa(req)) });
   } catch (e) {
@@ -1822,34 +1849,26 @@ router.get("/preparadores", mustWarehouse, (req, res) => {
   }
 });
 
-router.post("/preparadores", mustWarehouse, (req, res) => {
+/** Los pendientes sin dueño, para que el jefe los reparta. */
+router.get("/preparacion/asignables", mustWarehouse, (req, res) => {
   try {
-    const r = picking.crearPreparador(db, { nombre: req.body?.nombre, empresaId: laEmpresa(req) });
-    if (!r.ok) return res.status(400).json(r);
-    res.status(201).json({ ...r, preparadores: picking.listarPreparadores(db, laEmpresa(req)) });
+    const pedidos = picking.pendientesParaAsignar(db, laEmpresa(req));
+    for (const p of pedidos) {
+      p.servicio = p.servicioId ? getServiceNameById(p.servicioId) : null;
+    }
+    res.json({ pedidos });
   } catch (e) {
-    console.error("[picking] crear preparador:", e);
-    res.status(500).json({ error: "No se pudo agregar el preparador" });
+    console.error("[picking] asignables:", e);
+    res.status(500).json({ error: "No se pudieron leer los pedidos pendientes" });
   }
 });
 
-router.delete("/preparadores/:id", mustWarehouse, (req, res) => {
-  try {
-    const r = picking.desactivarPreparador(db, { id: req.params.id, empresaId: laEmpresa(req) });
-    if (!r.ok) return res.status(404).json({ error: "Preparador no encontrado" });
-    res.json({ ...r, preparadores: picking.listarPreparadores(db, laEmpresa(req)) });
-  } catch (e) {
-    console.error("[picking] baja preparador:", e);
-    res.status(500).json({ error: "No se pudo dar de baja" });
-  }
-});
-
-/** La cola: lo asignado. Sin preparadorId, el jefe ve todo. */
-router.get("/preparacion", mustWarehouse, (req, res) => {
+/** La cola: lo asignado. El jefe ve todo; el operario, sólo lo suyo. */
+router.get("/preparacion", mustPicking, (req, res) => {
   try {
     const pedidos = picking.pedidosAsignados(db, {
       empresaId: laEmpresa(req),
-      preparadorId: req.query?.preparadorId ?? null,
+      preparadorId: preparadorDelPedido(req),
     });
     for (const p of pedidos) {
       p.servicio = p.servicioId ? getServiceNameById(p.servicioId) : null;
@@ -1888,19 +1907,34 @@ router.put("/orders/:id/desasignar", mustWarehouse, (req, res) => {
   }
 });
 
+/**
+ * El operario sólo puede meter mano en los pedidos que le asignaron. Si no,
+ * con cambiar el número en la URL prepararía el de cualquiera.
+ */
+function noEsSuyo(req, pedidoId) {
+  if (!req.esOperario) return false;
+  const dueno = db.prepare(`SELECT preparador_id FROM Pedidos WHERE PedidoID = ?`).get(Number(pedidoId));
+  return Number(dueno?.preparador_id) !== Number(req.user.id);
+}
+
 /** Lo que ve el preparador con el pedido abierto. */
-router.get("/orders/:id/picking", mustWarehouse, (req, res) => {
+router.get("/orders/:id/picking", mustPicking, (req, res) => {
   try {
     const id = Number(req.params.id);
+    if (noEsSuyo(req, id)) return res.status(404).json({ error: "Pedido no encontrado" });
+
     const pedido = db.prepare(
       `SELECT p.PedidoID AS id, p.Status AS status, p.ServicioID AS servicioId,
-              p.preparador_id AS preparadorId, pr.nombre AS preparador,
+              p.preparador_id AS preparadorId,
+              NULLIF(TRIM(COALESCE(e.Nombre,'') || ' ' || COALESCE(e.Apellido,'')), '') AS preparador,
+              e.username AS preparadorUsuario,
               p.preparacion_terminada_at AS terminadaAt
-         FROM Pedidos p LEFT JOIN preparadores pr ON pr.id = p.preparador_id
+         FROM Pedidos p LEFT JOIN Empleados e ON e.EmpleadosID = p.preparador_id
         WHERE p.PedidoID = ? AND p.empresa_id = ? AND p.deleted_at IS NULL`
     ).get(id, laEmpresa(req));
     if (!pedido) return res.status(404).json({ error: "Pedido no encontrado" });
 
+    pedido.preparador = pedido.preparador || pedido.preparadorUsuario;
     pedido.servicio = pedido.servicioId ? getServiceNameById(pedido.servicioId) : null;
     res.json({ pedido, lineas: picking.lineasDePicking(db, id), avance: picking.avance(db, id) });
   } catch (e) {
@@ -1910,9 +1944,10 @@ router.get("/orders/:id/picking", mustWarehouse, (req, res) => {
 });
 
 /** Un disparo de la pistola. */
-router.post("/orders/:id/picking/escanear", mustWarehouse, (req, res) => {
+router.post("/orders/:id/picking/escanear", mustPicking, (req, res) => {
   try {
     const id = Number(req.params.id);
+    if (noEsSuyo(req, id)) return res.status(404).json({ error: "Pedido no encontrado" });
     const r = picking.escanear(db, {
       pedidoId: id, codigoBarra: req.body?.codigoBarra, empresaId: laEmpresa(req),
     });
@@ -1926,9 +1961,10 @@ router.post("/orders/:id/picking/escanear", mustWarehouse, (req, res) => {
 });
 
 /** Carga a mano: bultos y lo que no tiene código de barras. */
-router.put("/orders/:id/picking", mustWarehouse, (req, res) => {
+router.put("/orders/:id/picking", mustPicking, (req, res) => {
   try {
     const id = Number(req.params.id);
+    if (noEsSuyo(req, id)) return res.status(404).json({ error: "Pedido no encontrado" });
     const r = picking.cargarManual(db, { pedidoId: id, items: req.body?.items ?? [] });
     res.json({ ...r, lineas: picking.lineasDePicking(db, id), avance: picking.avance(db, id) });
   } catch (e) {
@@ -1938,8 +1974,9 @@ router.put("/orders/:id/picking", mustWarehouse, (req, res) => {
 });
 
 /** "Terminé". No cierra el pedido: eso lo sigue haciendo el jefe. */
-router.put("/orders/:id/picking/terminar", mustWarehouse, (req, res) => {
+router.put("/orders/:id/picking/terminar", mustPicking, (req, res) => {
   try {
+    if (noEsSuyo(req, req.params.id)) return res.status(404).json({ error: "Pedido no encontrado" });
     const r = picking.terminar(db, {
       pedidoId: req.params.id, empresaId: laEmpresa(req), ahora: ahoraUtcSql(),
     });

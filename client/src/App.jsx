@@ -19,6 +19,7 @@ const Reports = lazy(() => import("./pages/Reports"));           // informe comp
 const ReportsSimple = lazy(() => import("./pages/ReportsSimple")); // informe simplificado (queda accesible en /reports/simple)
 const Informes = lazy(() => import("./pages/Informes"));           // informes nuevos: rankings y devoluciones (por defecto)
 const Deposito = lazy(() => import("./pages/Deposito"));
+import PreparacionDeposito from "./components/PreparacionDeposito";
 const MisPedidos = lazy(() => import("./pages/MisPedidos"));
 const ServiceBudgets = lazy(() => import("./pages/ServiceBudgets"));
 import ForgotPassword from "./pages/ForgotPassword";
@@ -62,6 +63,7 @@ function RoleIndexRedirect() {
   if (role === "administrativo") target = "products";
   else if (role === "supervisor") target = "services";
   else if (role === "deposito")   target = "deposito";
+  else if (role === "picking")    target = "preparacion";
   return <Navigate to={target} replace />;
 }
 
@@ -98,6 +100,8 @@ function Layout() {
   const isAdmin        = roles.includes("admin");
   const hasDeposito    = roles.includes("deposito");
   const isDepositoSolo = hasDeposito && roles.length === 1;
+  // El operario de picking sólo prepara: no pide insumos, así que no tiene carrito.
+  const isPickingSolo  = roles.includes("picking") && roles.length === 1;
 
   const userLabel =
     auth?.user?.username ||
@@ -183,9 +187,11 @@ function Layout() {
                 </NavLink>
               )}
 
-              <NavLink to={`${base}/cart`} className={navClass}>
-                Carrito <span className="count">{count}</span>
-              </NavLink>
+              {!isPickingSolo && (
+                <NavLink to={`${base}/cart`} className={navClass}>
+                  Carrito <span className="count">{count}</span>
+                </NavLink>
+              )}
               <NotificationBell />
               <button type="button" className="pill danger" onClick={handleLogout}>Salir</button>
             </>
@@ -228,6 +234,8 @@ export default function App() {
           <Route path="products"      element={<Products />} />
           <Route path="services"      element={<Services />} />
           <Route path="deposito"      element={<Deposito />} />
+          {/* El operario de picking entra acá y no ve el panel de Depósito. */}
+          <Route path="preparacion"   element={<PreparacionDeposito modo="operario" />} />
           <Route path="cart"          element={<Cart />} />
           <Route path="mis-pedidos"   element={<MisPedidos />} />
           <Route index                element={<RoleIndexRedirect />} />

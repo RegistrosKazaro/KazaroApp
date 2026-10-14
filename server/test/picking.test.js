@@ -52,8 +52,19 @@ function pedido(lineas) {
   return id;
 }
 
-const prepararA = (nombre) =>
-  picking.crearPreparador(db, { nombre, empresaId: EMPRESA }).id;
+const rolId = (nombre) =>
+  db.prepare(`SELECT RolID FROM Roles WHERE Nombre = ? COLLATE NOCASE`).get(nombre)?.RolID;
+
+/** Un operario: un empleado de verdad con rol Picking. */
+function prepararA(nombre, { empresaId = EMPRESA, rol = picking.ROL_PICKING, activo = 1 } = {}) {
+  const [n, a] = String(nombre).split(" ");
+  const id = Number(db.prepare(
+    `INSERT INTO Empleados (Nombre, Apellido, Email, username, is_active, empresa_id)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(n, a || "Picking", `p${unico()}@x.com`, `op.${unico()}`, activo, empresaId).lastInsertRowid);
+  if (rol) db.prepare(`INSERT INTO Roles_Empleados (EmpleadoID, RolID) VALUES (?, ?)`).run(id, rolId(rol));
+  return id;
+}
 
 const preparadaDe = (pedidoId, productoId) => db.prepare(
   `SELECT cantidad_preparada n FROM PedidoItems WHERE PedidoID = ? AND ProductoID = ?`
@@ -61,39 +72,46 @@ const preparadaDe = (pedidoId, productoId) => db.prepare(
 
 /* ========================= Preparadores ========================= */
 
-test("un preparador es un nombre, no un usuario con contraseña", () => {
+test("el rol Picking se crea solo al arrancar", () => {
   if (!hayBase) return;
-  const nombre = `Juan ${unico()}`;
-  const r = picking.crearPreparador(db, { nombre, empresaId: EMPRESA });
-  assert.equal(r.ok, true);
-  const lista = picking.listarPreparadores(db, EMPRESA);
-  assert.ok(lista.some((p) => p.nombre === nombre));
+  assert.ok(rolId(picking.ROL_PICKING), "deberia existir el rol Picking");
 });
 
-test("sin nombre no se crea", () => {
+test("preparador es un empleado con rol Picking, no cualquiera", () => {
   if (!hayBase) return;
-  assert.equal(picking.crearPreparador(db, { nombre: "   ", empresaId: EMPRESA }).ok, false);
+  const conRol = prepararA(`Juan ${unico()}`);
+  const sinRol = prepararA(`Pedro ${unico()}`, { rol: null });
+  const deDeposito = prepararA(`Jefe ${unico()}`, { rol: "Deposito" });
+
+  const ids = picking.listarPreparadores(db, EMPRESA).map((p) => p.id);
+  assert.ok(ids.includes(conRol));
+  assert.ok(!ids.includes(sinRol), "un empleado sin rol no prepara");
+  assert.ok(!ids.includes(deDeposito), "el jefe de deposito no es preparador");
 });
 
-test("dar de baja y volver a dar de alta a la misma persona funciona", () => {
+test("el empleado inactivo sale de la lista", () => {
   if (!hayBase) return;
-  const nombre = `Vuelve ${unico()}`;
-  const id = prepararA(nombre);
-  picking.desactivarPreparador(db, { id, empresaId: EMPRESA });
-  assert.ok(!picking.listarPreparadores(db, EMPRESA).some((p) => p.id === id), "seguia en la lista");
+  const id = prepararA(`Baja ${unico()}`, { activo: 0 });
+  assert.ok(!picking.listarPreparadores(db, EMPRESA).some((p) => p.id === id));
+});
 
-  const otra = picking.crearPreparador(db, { nombre, empresaId: EMPRESA });
-  assert.equal(otra.ok, true);
-  assert.equal(otra.id, id, "tendria que reactivar al mismo, no crear otro");
-  assert.equal(otra.reactivado, true);
+test("esPreparador contesta lo mismo que la lista", () => {
+  if (!hayBase) return;
+  const si = prepararA(`Si ${unico()}`);
+  const no = prepararA(`No ${unico()}`, { rol: null });
+  assert.equal(picking.esPreparador(db, { empleadoId: si, empresaId: EMPRESA }), true);
+  assert.equal(picking.esPreparador(db, { empleadoId: no, empresaId: EMPRESA }), false);
+  // Y el de la otra empresa no entra por la ventana.
+  assert.equal(picking.esPreparador(db, { empleadoId: si, empresaId: 2 }), false);
 });
 
 test("la lista es de cada empresa", () => {
   if (!hayBase) return;
-  const nombre = `Comun ${unico()}`;
-  prepararA(nombre);
-  picking.crearPreparador(db, { nombre, empresaId: 2 });
-  assert.equal(picking.listarPreparadores(db, 2).filter((p) => p.nombre === nombre).length, 1);
+  const mio = prepararA(`Comun ${unico()}`);
+  const ajeno = prepararA(`Ajeno ${unico()}`, { empresaId: 2 });
+  const ids = picking.listarPreparadores(db, EMPRESA).map((p) => p.id);
+  assert.ok(ids.includes(mio));
+  assert.ok(!ids.includes(ajeno));
 });
 
 /* ========================= Asignación ========================= */
@@ -148,12 +166,13 @@ test("un pedido cerrado no se asigna", () => {
   assert.equal(r.ok, false);
 });
 
-test("un preparador dado de baja no recibe pedidos", () => {
+test("no se le asigna un pedido a alguien sin rol Picking", () => {
   if (!hayBase) return;
   const id = pedido([[insumo(`E ${unico()}`), 1]]);
-  const prep = prepararA(`Se fue ${unico()}`);
-  picking.desactivarPreparador(db, { id: prep, empresaId: EMPRESA });
-  assert.equal(picking.asignar(db, { pedidoId: id, preparadorId: prep, empresaId: EMPRESA, ahora: AHORA }).ok, false);
+  const sinRol = prepararA(`Se fue ${unico()}`, { rol: null });
+  const r = picking.asignar(db, { pedidoId: id, preparadorId: sinRol, empresaId: EMPRESA, ahora: AHORA });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /permiso/i);
 });
 
 test("el preparador ve solo lo suyo", () => {
@@ -399,6 +418,79 @@ test("volver a asignar limpia el terminado", () => {
 
 /* ========================= Multiempresa ========================= */
 
+/* ========================= El reparto ========================= */
+
+test("para asignar se ofrecen los pendientes sin dueño", () => {
+  if (!hayBase) return;
+  const libre = pedido([[insumo(`Libre ${unico()}`), 2]]);
+  const tomado = pedido([[insumo(`Tomado ${unico()}`), 2]]);
+  picking.asignar(db, { pedidoId: tomado, preparadorId: prepararA(`Toma ${unico()}`),
+                        empresaId: EMPRESA, ahora: AHORA });
+
+  const ids = picking.pendientesParaAsignar(db, EMPRESA).map((p) => p.id);
+  assert.ok(ids.includes(libre));
+  assert.ok(!ids.includes(tomado), "el que ya tiene dueño no se vuelve a ofrecer");
+});
+
+test("lo que no esta en Pendientes no se ofrece", () => {
+  if (!hayBase) return;
+  const cerrado = pedido([[insumo(`Cerrado ${unico()}`), 1]]);
+  db.prepare(`UPDATE Pedidos SET Status = 'closed' WHERE PedidoID = ?`).run(cerrado);
+  const borrado = pedido([[insumo(`Borrado ${unico()}`), 1]]);
+  db.prepare(`UPDATE Pedidos SET deleted_at = ? WHERE PedidoID = ?`).run(AHORA, borrado);
+
+  const ids = picking.pendientesParaAsignar(db, EMPRESA).map((p) => p.id);
+  assert.ok(!ids.includes(cerrado));
+  assert.ok(!ids.includes(borrado));
+});
+
+test("el reparto trae lo de la empresa y nada mas", () => {
+  if (!hayBase) return;
+  const ajeno = Number(db.prepare(
+    `INSERT INTO Pedidos (EmpleadoID, Rol, Total, Status, empresa_id) VALUES (1,'supervisor',0,'open',2)`
+  ).run().lastInsertRowid);
+  assert.ok(!picking.pendientesParaAsignar(db, EMPRESA).map((p) => p.id).includes(ajeno));
+});
+
+/* ========================= El operario y lo ajeno ========================= */
+
+// Lo más importante de todo el picking: el operario entra con su usuario y
+// SOLO puede tocar lo que le asignaron. Si no, con cambiar el número en la URL
+// prepararía el pedido de cualquiera.
+test("el operario no puede abrir ni tocar un pedido que no es suyo", async () => {
+  if (!hayBase) return;
+  const router = (await import("../src/routes/deposito.js")).default;
+  const handler = (metodo, ruta) => router.stack
+    .find((l) => l.route?.path === ruta && l.route.methods[metodo]).route.stack.at(-1).handle;
+
+  const yo   = prepararA(`Yo op ${unico()}`);
+  const otro = prepararA(`Otro op ${unico()}`);
+  const art  = insumo(`Ajeno ${unico()}`, `779${unico()}`);
+  const suyo = pedido([[art, 5]]);
+  picking.asignar(db, { pedidoId: suyo, preparadorId: otro, empresaId: EMPRESA, ahora: AHORA });
+
+  const llamar = (metodo, ruta, body = {}, esOperario = true) => new Promise((resolve) => {
+    const req = { params: { id: String(suyo) }, body, query: {},
+                  esOperario, user: { id: yo, empresaId: EMPRESA, roles: ["picking"] } };
+    const res = { statusCode: 200, status(c) { this.statusCode = c; return this; },
+                  json(d) { resolve({ status: this.statusCode, body: d }); } };
+    Promise.resolve(handler(metodo, ruta)(req, res)).catch((e) => resolve({ status: 500, body: { error: e.message } }));
+  });
+
+  assert.equal((await llamar("get", "/orders/:id/picking")).status, 404, "pudo espiarlo");
+  assert.equal((await llamar("post", "/orders/:id/picking/escanear",
+                             { codigoBarra: `779${unico()}` })).status, 404, "pudo escanearlo");
+  assert.equal((await llamar("put", "/orders/:id/picking",
+                             { items: [{ productoId: art, cantidadPreparada: 5 }] })).status, 404, "pudo cargarlo");
+  assert.equal((await llamar("put", "/orders/:id/picking/terminar")).status, 404, "pudo terminarlo");
+
+  assert.equal(preparadaDe(suyo, art), 0, "no se tenia que mover nada");
+
+  // Control: el 404 de arriba tiene que venir de que el pedido es ajeno, no de
+  // que el handler esté roto. El jefe, sobre el mismo pedido, entra.
+  assert.equal((await llamar("get", "/orders/:id/picking", {}, false)).status, 200);
+});
+
 /* ========================= Las rutas ========================= */
 
 // deposito.js termina con router.put("/orders/:id/:action"), que es un comodín
@@ -429,7 +521,7 @@ test("estan todas las rutas que usa la pantalla", async () => {
     .some((l) => l.route?.path === ruta && l.route.methods[metodo]);
 
   for (const [m, r] of [
-    ["get", "/preparadores"], ["post", "/preparadores"], ["delete", "/preparadores/:id"],
+    ["get", "/preparadores"], ["get", "/preparacion/asignables"],
     ["get", "/preparacion"], ["get", "/orders/:id/picking"],
     ["post", "/orders/:id/picking/escanear"], ["put", "/orders/:id/picking"],
     ["put", "/orders/:id/picking/terminar"], ["put", "/orders/:id/picking/reabrir"],

@@ -5,7 +5,7 @@
 // dispare el escaneo, que el campo quede vacío para el siguiente, y que cuando
 // el código está mal se vea un cartel y no se sume nada.
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("../api/client", () => ({
@@ -41,11 +41,17 @@ const DETALLE = {
   avance: { lineas: 3, lineasCompletas: 1, unidadesPedidas: 20, unidadesPreparadas: 13, completo: false },
 };
 
+const ASIGNABLES = [
+  { id: 1400, servicio: "MIN SALUD - ADICCIONES", lineas: 7, unidades: 31 },
+  { id: 1401, servicio: "CLUB ATLETICO BELGRANO", lineas: 2, unidades: 4 },
+];
+
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
   api.get.mockImplementation((url) => {
     if (url === "/deposito/preparadores") return Promise.resolve({ data: { preparadores: PREPARADORES } });
+    if (url === "/deposito/preparacion/asignables") return Promise.resolve({ data: { pedidos: ASIGNABLES } });
     if (url === "/deposito/preparacion") return Promise.resolve({ data: { pedidos: COLA } });
     if (url.includes("/picking")) return Promise.resolve({ data: structuredClone(DETALLE) });
     return Promise.resolve({ data: {} });
@@ -68,47 +74,34 @@ describe("Preparación del depósito", () => {
   it("el jefe ve toda la cola con quién tiene cada pedido", async () => {
     render(<PreparacionDeposito />);
     await screen.findByText("#0001351");
-    // El nombre también está en el desplegable y en la lista de preparadores,
-    // así que se busca la fila entera.
     expect(screen.getByText(/REFINERIA DEL CENTRO S\.A · Carlos Gomez/)).toBeTruthy();
     expect(screen.getByText(/HOSPITAL EVA PERON · Luis Reyna/)).toBeTruthy();
-    expect(api.get).toHaveBeenCalledWith("/deposito/preparacion", { params: {} });
   });
 
-  it("al elegir un preparador pide sólo los pedidos de esa persona", async () => {
-    const user = userEvent.setup();
-    render(<PreparacionDeposito />);
+  it("el operario no manda a quién pedir: lo decide el servidor por su sesión", async () => {
+    // Si la pantalla mandara el preparadorId, con cambiarlo veria la cola de otro.
+    render(<PreparacionDeposito modo="operario" />);
     await screen.findByText("#0001351");
-
-    await user.selectOptions(screen.getByLabelText("¿Quién prepara?"), "1");
-    await waitFor(() => {
-      expect(api.get).toHaveBeenCalledWith("/deposito/preparacion", { params: { preparadorId: "1" } });
-    });
+    expect(api.get).toHaveBeenCalledWith("/deposito/preparacion");
+    const conParams = api.get.mock.calls.filter(([u, cfg]) => u === "/deposito/preparacion" && cfg);
+    expect(conParams).toHaveLength(0);
   });
 
-  it("el preparador no ve la gestión de preparadores ni los botones del jefe", async () => {
-    const user = userEvent.setup();
-    render(<PreparacionDeposito />);
+  it("el operario no ve nada del jefe ni elige quién es", async () => {
+    render(<PreparacionDeposito modo="operario" />);
     await screen.findByText("#0001351");
-    expect(screen.getByText("Asignar un pedido")).toBeTruthy();
-
-    await user.selectOptions(screen.getByLabelText("¿Quién prepara?"), "1");
-    await waitFor(() => expect(screen.queryByText("Asignar un pedido")).toBeNull());
+    expect(screen.queryByText("Asignar un pedido")).toBeNull();
     expect(screen.queryByRole("button", { name: "Desasignar" })).toBeNull();
+    expect(screen.queryByLabelText("¿Quién prepara?")).toBeNull();
+    expect(screen.getByText("Mis pedidos para preparar")).toBeTruthy();
+    // Y no se pide la lista de preparadores: no le sirve para nada.
+    expect(api.get).not.toHaveBeenCalledWith("/deposito/preparadores");
   });
 
-  it("se acuerda de quién eligió la última vez", async () => {
-    const user = userEvent.setup();
-    const { unmount } = render(<PreparacionDeposito />);
+  it("el operario tampoco ve de quién es cada pedido: todos son suyos", async () => {
+    render(<PreparacionDeposito modo="operario" />);
     await screen.findByText("#0001351");
-    await user.selectOptions(screen.getByLabelText("¿Quién prepara?"), "2");
-    await waitFor(() => expect(localStorage.getItem("kz_preparador")).toBe("2"));
-    unmount();
-
-    render(<PreparacionDeposito />);
-    await waitFor(() => {
-      expect(screen.getByLabelText("¿Quién prepara?").value).toBe("2");
-    });
+    expect(screen.queryByText(/· Carlos Gomez/)).toBeNull();
   });
 
   it("muestra las líneas con lo pedido y lo que ya se separó", async () => {
@@ -228,15 +221,18 @@ describe("Preparación del depósito", () => {
     confirmar.mockRestore();
   });
 
-  it("el jefe asigna un pedido por número", async () => {
+  it("el jefe elige el pedido de una lista, con el nombre del servicio", async () => {
     const user = userEvent.setup();
     api.put.mockResolvedValueOnce({ data: { ok: true, preparador: "Carlos Gomez" } });
     render(<PreparacionDeposito />);
     await screen.findByText("#0001351");
 
-    await user.type(screen.getByPlaceholderText("N° de pedido"), "1400");
-    await user.selectOptions(screen.getByRole("combobox", { name: "" }) ||
-                             screen.getAllByRole("combobox")[1], "1");
+    const lista = await screen.findByLabelText("Pedido a asignar");
+    // Se reconoce por el servicio, no por el número suelto.
+    expect(within(lista).getByText(/#0001400 · MIN SALUD - ADICCIONES/)).toBeTruthy();
+
+    await user.selectOptions(lista, "1400");
+    await user.selectOptions(screen.getByLabelText("Preparador"), "1");
     await user.click(screen.getByRole("button", { name: "Asignar" }));
 
     await waitFor(() => {
@@ -244,20 +240,31 @@ describe("Preparación del depósito", () => {
     });
   });
 
-  it("el jefe puede dar de alta un preparador", async () => {
+  it("al asignar, el pedido desaparece de los pendientes y se recarga la cola", async () => {
     const user = userEvent.setup();
-    api.post.mockResolvedValueOnce({ data: { ok: true, preparadores: [...PREPARADORES, { id: 3, nombre: "Ana Diaz", activo: 1 }] } });
+    api.put.mockResolvedValueOnce({ data: { ok: true, preparador: "Carlos Gomez" } });
     render(<PreparacionDeposito />);
     await screen.findByText("#0001351");
 
-    await user.type(screen.getByPlaceholderText("Nombre y apellido"), "Ana Diaz");
-    await user.click(screen.getByRole("button", { name: "Agregar" }));
+    await user.selectOptions(await screen.findByLabelText("Pedido a asignar"), "1400");
+    await user.selectOptions(screen.getByLabelText("Preparador"), "1");
+    const antes = api.get.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "Asignar" }));
 
-    await waitFor(() => {
-      expect(api.post).toHaveBeenCalledWith("/deposito/preparadores", { nombre: "Ana Diaz" });
+    await waitFor(() => expect(api.get.mock.calls.length).toBeGreaterThan(antes));
+    const urls = api.get.mock.calls.slice(antes).map(([u]) => u);
+    expect(urls).toContain("/deposito/preparacion/asignables");
+    expect(urls).toContain("/deposito/preparacion");
+  });
+
+  it("si no hay nadie con rol Picking, le dice al jefe qué hacer", async () => {
+    api.get.mockImplementation((url) => {
+      if (url === "/deposito/preparadores") return Promise.resolve({ data: { preparadores: [] } });
+      if (url === "/deposito/preparacion/asignables") return Promise.resolve({ data: { pedidos: ASIGNABLES } });
+      return Promise.resolve({ data: { pedidos: COLA } });
     });
-    // Aparece en la lista de chips y en el desplegable: con que esté, alcanza.
-    await waitFor(() => expect(screen.getAllByText("Ana Diaz").length).toBeGreaterThan(0));
+    render(<PreparacionDeposito />);
+    expect(await screen.findByText(/Creá el usuario del operario/)).toBeTruthy();
   });
 
   it("el pedido terminado se ve distinto y el jefe lo puede devolver", async () => {
@@ -272,14 +279,12 @@ describe("Preparación del depósito", () => {
     });
   });
 
-  it("sin pedidos asignados le dice al preparador qué hacer", async () => {
-    const user = userEvent.setup();
+  it("sin pedidos asignados le dice al operario qué hacer", async () => {
     api.get.mockImplementation((url) => {
       if (url === "/deposito/preparadores") return Promise.resolve({ data: { preparadores: PREPARADORES } });
       return Promise.resolve({ data: { pedidos: [] } });
     });
-    render(<PreparacionDeposito />);
-    await user.selectOptions(await screen.findByLabelText("¿Quién prepara?"), "1");
+    render(<PreparacionDeposito modo="operario" />);
     expect(await screen.findByText(/Pedile al jefe que te asigne/)).toBeTruthy();
   });
 });

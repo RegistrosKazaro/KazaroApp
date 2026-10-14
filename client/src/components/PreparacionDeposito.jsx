@@ -2,16 +2,16 @@
 //
 // Preparación de pedidos con pistola lectora.
 //
-// Dos pantallas en una, según quién esté adelante de la tablet:
+// Dos modos, según por dónde se entre:
 //
-//   - Sin preparador elegido: la vista del jefe. Ve toda la cola, quién tiene
-//     qué, y asigna pedidos. También da de alta y de baja preparadores.
-//   - Con preparador elegido: la vista del que junta. Sólo sus pedidos. Entra a
-//     uno y aparece el campo de escaneo, que se mantiene enfocado para que la
-//     pistola dispare sin tocar la pantalla.
+//   modo="jefe"      dentro del panel de Depósito. Ve toda la cola, quién tiene
+//                    qué, y reparte los pedidos pendientes.
+//   modo="operario"  el que entra con rol Picking. Cae acá directo, ve SÓLO sus
+//                    pedidos y no elige nada: la app ya sabe quién es.
 //
-// El preparador no es un usuario con contraseña: todo el depósito entra con la
-// misma cuenta. Elegir el nombre es cómo se identifica.
+// Cada preparador es un usuario con rol Picking, así que no hay ningún
+// desplegable de "quién sos": lo dice la sesión. Los endpoints también lo
+// resuelven del lado del servidor, no de lo que mande la pantalla.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 
@@ -86,51 +86,43 @@ function Linea({ linea, onCantidad, destacada }) {
   );
 }
 
-export default function PreparacionDeposito() {
+export default function PreparacionDeposito({ modo = "jefe" }) {
+  const soyJefe = modo !== "operario";
+
   const [preparadores, setPreparadores] = useState([]);
-  const [yo, setYo] = useState(() => localStorage.getItem("kz_preparador") || "");
   const [cola, setCola] = useState([]);
   const [abierto, setAbierto] = useState(null);     // { pedido, lineas, avance }
   const [aviso, setAviso] = useState(null);
   const [destacada, setDestacada] = useState(null); // productoId que acaba de sumar
   const [err, setErr] = useState("");
   const [cargando, setCargando] = useState(false);
-  const [nuevo, setNuevo] = useState("");
-  const [paraAsignar, setParaAsignar] = useState("");
   const escaneoRef = useRef(null);
-
-  const soyPreparador = !!yo;
 
   /* ---------- Carga ---------- */
 
   const cargarPreparadores = useCallback(async () => {
+    if (!soyJefe) return;
     try {
       const { data } = await api.get("/deposito/preparadores");
       setPreparadores(data?.preparadores ?? []);
     } catch (e) { setErr(e?.response?.data?.error || e.message); }
-  }, []);
+  }, [soyJefe]);
 
   const cargarCola = useCallback(async () => {
     setCargando(true);
     try {
-      const { data } = await api.get("/deposito/preparacion", {
-        params: yo ? { preparadorId: yo } : {},
-      });
+      // El operario no manda a quién pedir: el servidor usa su sesión. Si lo
+      // mandara, con cambiar el número vería la cola de otro.
+      const { data } = await api.get("/deposito/preparacion");
       setCola(data?.pedidos ?? []);
       setErr("");
     } catch (e) {
       setErr(e?.response?.data?.error || e.message);
     } finally { setCargando(false); }
-  }, [yo]);
+  }, []);
 
   useEffect(() => { cargarPreparadores(); }, [cargarPreparadores]);
   useEffect(() => { cargarCola(); }, [cargarCola]);
-
-  // El que eligió su nombre lo encuentra elegido la próxima vez.
-  useEffect(() => {
-    if (yo) localStorage.setItem("kz_preparador", String(yo));
-    else localStorage.removeItem("kz_preparador");
-  }, [yo]);
 
   /* ---------- Abrir un pedido ---------- */
 
@@ -210,23 +202,6 @@ export default function PreparacionDeposito() {
   };
 
   /* ---------- Jefe ---------- */
-
-  const agregarPreparador = async () => {
-    if (!nuevo.trim()) return;
-    try {
-      const { data } = await api.post("/deposito/preparadores", { nombre: nuevo });
-      setPreparadores(data?.preparadores ?? []);
-      setNuevo("");
-    } catch (e) { setErr(e?.response?.data?.error || e.message); }
-  };
-
-  const darDeBaja = async (id, nombre) => {
-    if (!window.confirm(`¿Dar de baja a ${nombre}? Los pedidos que preparó siguen figurando a su nombre.`)) return;
-    try {
-      const { data } = await api.delete(`/deposito/preparadores/${id}`);
-      setPreparadores(data?.preparadores ?? []);
-    } catch (e) { setErr(e?.response?.data?.error || e.message); }
-  };
 
   const desasignar = async (id) => {
     try {
@@ -308,15 +283,7 @@ export default function PreparacionDeposito() {
   return (
     <div className="srv-card">
       <div className="toolbar" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <label className="deposito-field">
-          <span>¿Quién prepara?</span>
-          <select className="select" value={yo} onChange={(e) => setYo(e.target.value)}>
-            <option value="">— Soy el jefe, ver todo —</option>
-            {preparadores.map((p) => (
-              <option key={p.id} value={p.id}>{p.nombre}</option>
-            ))}
-          </select>
-        </label>
+        <strong>{soyJefe ? "Preparación de pedidos" : "Mis pedidos para preparar"}</strong>
         <div style={{ flex: 1 }} />
         <button type="button" className="pill pill--ghost" onClick={cargarCola} disabled={cargando}>
           {cargando ? "Actualizando…" : "Actualizar"}
@@ -325,45 +292,14 @@ export default function PreparacionDeposito() {
 
       {err && <div className="state state--error" style={{ marginTop: 8 }}>{err}</div>}
 
-      {/* Alta y baja de preparadores: sólo le interesa al jefe. */}
-      {!soyPreparador && (
-        <div style={{ margin: "12px 0", padding: 12, background: "#f8fafc",
-                      borderRadius: 8, border: "1px solid #e5e7eb" }}>
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>Preparadores</div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            {preparadores.map((p) => (
-              <span key={p.id} className="pill pill--ghost" style={{ display: "inline-flex", gap: 6 }}>
-                {p.nombre}
-                <button type="button" onClick={() => darDeBaja(p.id, p.nombre)}
-                        title="Dar de baja"
-                        style={{ border: 0, background: "transparent", cursor: "pointer", color: "#b91c1c" }}>
-                  ×
-                </button>
-              </span>
-            ))}
-            {!preparadores.length && <span className="muted">Todavía no hay ninguno.</span>}
-          </div>
-          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-            <input className="input" placeholder="Nombre y apellido" value={nuevo}
-                   onChange={(e) => setNuevo(e.target.value)}
-                   onKeyDown={(e) => { if (e.key === "Enter") agregarPreparador(); }} />
-            <button type="button" className="pill" onClick={agregarPreparador}>Agregar</button>
-          </div>
-        </div>
-      )}
-
-      {/* Asignar un pedido: el jefe pega el número y elige a quién. */}
-      {!soyPreparador && (
-        <AsignarPedido preparadores={preparadores} onListo={cargarCola}
-                       valor={paraAsignar} setValor={setParaAsignar} />
-      )}
+      {soyJefe && <AsignarPedido preparadores={preparadores} onListo={cargarCola} />}
 
       <div style={{ marginTop: 12 }}>
         {!cola.length && !cargando && (
           <div className="state">
-            {soyPreparador
-              ? "No tenés pedidos asignados. Pedile al jefe que te asigne."
-              : "No hay pedidos asignados todavía."}
+            {soyJefe
+              ? "No hay pedidos asignados todavía."
+              : "No tenés pedidos asignados. Pedile al jefe que te asigne."}
           </div>
         )}
 
@@ -381,7 +317,7 @@ export default function PreparacionDeposito() {
                 </div>
                 <div className="muted" style={{ fontSize: 13 }}>
                   {p.servicio || "Sin servicio"}
-                  {!soyPreparador && ` · ${p.preparador}`}
+                  {soyJefe && ` · ${p.preparador}`}
                 </div>
               </div>
               <div style={{ textAlign: "right" }}>
@@ -395,7 +331,7 @@ export default function PreparacionDeposito() {
               <button type="button" className="pill" onClick={() => abrir(p.id)}>
                 {terminado ? "Ver" : "Preparar"}
               </button>
-              {!soyPreparador && (
+              {soyJefe && (
                 <>
                   {terminado && (
                     <button type="button" className="pill pill--ghost" onClick={() => devolver(p.id)}>
@@ -415,18 +351,33 @@ export default function PreparacionDeposito() {
   );
 }
 
-/** El jefe asigna: número de pedido + preparador. */
-function AsignarPedido({ preparadores, onListo, valor, setValor }) {
+/**
+ * El jefe reparte. La lista son los pedidos de la solapa Pendientes que
+ * todavía no tienen dueño; al asignar uno, pasa solo a En preparación y
+ * desaparece de acá.
+ */
+function AsignarPedido({ preparadores, onListo }) {
+  const [pendientes, setPendientes] = useState([]);
+  const [cual, setCual] = useState("");
   const [quien, setQuien] = useState("");
   const [msg, setMsg] = useState("");
 
-  const asignar = async () => {
-    const id = Number(String(valor).replace(/\D/g, ""));
-    if (!id || !quien) { setMsg("Poné el número de pedido y elegí a quién."); return; }
+  const cargar = useCallback(async () => {
     try {
-      const { data } = await api.put(`/deposito/orders/${id}/asignar`, { preparadorId: Number(quien) });
-      setMsg(`Pedido ${nro(id)} asignado a ${data.preparador}.`);
-      setValor("");
+      const { data } = await api.get("/deposito/preparacion/asignables");
+      setPendientes(data?.pedidos ?? []);
+    } catch (e) { setMsg(e?.response?.data?.error || e.message); }
+  }, []);
+
+  useEffect(() => { cargar(); }, [cargar]);
+
+  const asignar = async () => {
+    if (!cual || !quien) { setMsg("Elegí el pedido y a quién se lo asignás."); return; }
+    try {
+      const { data } = await api.put(`/deposito/orders/${cual}/asignar`, { preparadorId: Number(quien) });
+      setMsg(`Pedido ${nro(cual)} asignado a ${data.preparador}.`);
+      setCual("");
+      cargar();
       onListo();
     } catch (e) { setMsg(e?.response?.data?.error || e.message); }
   };
@@ -434,18 +385,33 @@ function AsignarPedido({ preparadores, onListo, valor, setValor }) {
   return (
     <div style={{ margin: "12px 0", padding: 12, background: "#f8fafc",
                   borderRadius: 8, border: "1px solid #e5e7eb" }}>
-      <div style={{ fontWeight: 600, marginBottom: 8 }}>Asignar un pedido</div>
+      <div style={{ fontWeight: 600, marginBottom: 8 }}>
+        Asignar un pedido <span className="muted">({pendientes.length} pendientes)</span>
+      </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <input className="input" placeholder="N° de pedido" value={valor} style={{ width: 150 }}
-               onChange={(e) => setValor(e.target.value)}
-               onKeyDown={(e) => { if (e.key === "Enter") asignar(); }} />
-        <select className="select" value={quien} onChange={(e) => setQuien(e.target.value)}>
+        <select className="select" value={cual} onChange={(e) => setCual(e.target.value)}
+                aria-label="Pedido a asignar" style={{ minWidth: 320 }}>
+          <option value="">— Elegí el pedido —</option>
+          {pendientes.map((p) => (
+            <option key={p.id} value={p.id}>
+              {nro(p.id)} · {p.servicio || "Sin servicio"} ({p.lineas} insumos)
+            </option>
+          ))}
+        </select>
+        <select className="select" value={quien} onChange={(e) => setQuien(e.target.value)}
+                aria-label="Preparador">
           <option value="">— Elegí preparador —</option>
           {preparadores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
         </select>
         <button type="button" className="pill" onClick={asignar}>Asignar</button>
         {msg && <span className="muted">{msg}</span>}
       </div>
+      {!preparadores.length && (
+        <div className="muted" style={{ marginTop: 8 }}>
+          No hay nadie con rol Picking. Creá el usuario del operario en Empleados
+          y asignale ese rol.
+        </div>
+      )}
     </div>
   );
 }

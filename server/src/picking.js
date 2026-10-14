@@ -6,11 +6,10 @@
 //
 // Decisiones que explican la forma de esto:
 //
-// - Los preparadores NO son usuarios. Hoy todo el depósito entra con una sola
-//   cuenta compartida ("Deposito"), y dar de alta cuentas y contraseñas para
-//   gente que comparte una tablet es fricción pura. Son nombres en una tabla y
-//   la persona elige el suyo al entrar. La trazabilidad queda mejor que hoy,
-//   que es no saber nada.
+// - Cada preparador es un usuario con rol Picking. Entra con lo suyo y la app
+//   ya sabe quién es: no elige nada de una lista, y nadie puede figurar como
+//   otro. Ese rol da permiso SOLO para preparar: no para borrar pedidos, tocar
+//   stock ni cargar devoluciones, que es lo que puede el rol Depósito.
 //
 // - No hay estado nuevo. El picking pasa dentro de "preparing", que ya existe.
 //   Un pedido con preparacion_terminada_at cargado es uno que el preparador ya
@@ -27,19 +26,21 @@ export const MOTIVOS = {
   YA_COMPLETO: "ya_completo",     // la línea ya está en la cantidad pedida
 };
 
+/** El rol que habilita a preparar, y sólo a eso. */
+export const ROL_PICKING = "Picking";
+
 export function ensureTablas(db) {
   try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS preparadores (
-        id         INTEGER PRIMARY KEY AUTOINCREMENT,
-        nombre     TEXT    NOT NULL,
-        empresa_id INTEGER NOT NULL,
-        activo     INTEGER NOT NULL DEFAULT 1,
-        creado_at  TEXT    NOT NULL DEFAULT (datetime('now'))
-      );
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_prep_nombre
-        ON preparadores(empresa_id, nombre);
-    `);
+    db.prepare(`INSERT INTO Roles (Nombre) SELECT ?
+                 WHERE NOT EXISTS (SELECT 1 FROM Roles WHERE Nombre = ? COLLATE NOCASE)`)
+      .run(ROL_PICKING, ROL_PICKING);
+
+    // La tabla preparadores duró un día: los preparadores pasaron a ser
+    // usuarios con rol Picking. Se borra sólo si nadie llegó a cargar nada.
+    try {
+      const quedo = db.prepare(`SELECT COUNT(*) n FROM preparadores`).get();
+      if (quedo && Number(quedo.n) === 0) db.exec(`DROP TABLE preparadores`);
+    } catch { /* no existe: mejor */ }
 
     const cols = (t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name.toLowerCase());
 
@@ -68,42 +69,36 @@ export function ensureTablas(db) {
 
 /* ========================= Preparadores ========================= */
 
-export function listarPreparadores(db, empresaId, { incluirInactivos = false } = {}) {
-  return db.prepare(
-    `SELECT id, nombre, activo FROM preparadores
-      WHERE empresa_id = ? ${incluirInactivos ? "" : "AND activo = 1"}
-      ORDER BY nombre COLLATE NOCASE`
-  ).all(Number(empresaId));
-}
-
-export function crearPreparador(db, { nombre, empresaId }) {
-  const limpio = String(nombre ?? "").trim();
-  if (!limpio) return { ok: false, error: "Poné un nombre." };
-
-  // Si ya existía pero estaba desactivado, se reactiva en vez de chocar contra
-  // el único: dar de baja y de alta a la misma persona es normal.
-  const previo = db.prepare(
-    `SELECT id, activo FROM preparadores WHERE empresa_id = ? AND nombre = ? COLLATE NOCASE`
-  ).get(Number(empresaId), limpio);
-  if (previo) {
-    if (!previo.activo) db.prepare(`UPDATE preparadores SET activo = 1 WHERE id = ?`).run(previo.id);
-    return { ok: true, id: previo.id, reactivado: !previo.activo };
-  }
-
-  const info = db.prepare(
-    `INSERT INTO preparadores (nombre, empresa_id) VALUES (?, ?)`
-  ).run(limpio, Number(empresaId));
-  return { ok: true, id: Number(info.lastInsertRowid) };
-}
+const NOMBRE_SQL = `TRIM(COALESCE(e.Nombre,'') || ' ' || COALESCE(e.Apellido,''))`;
 
 /**
- * Baja lógica: los pedidos que esa persona preparó siguen diciendo quién fue.
+ * Los que pueden preparar: empleados activos con rol Picking.
+ * Se dan de alta y de baja desde el ABM de empleados, como cualquier usuario.
  */
-export function desactivarPreparador(db, { id, empresaId }) {
-  const info = db.prepare(
-    `UPDATE preparadores SET activo = 0 WHERE id = ? AND empresa_id = ?`
-  ).run(Number(id), Number(empresaId));
-  return { ok: info.changes > 0 };
+export function listarPreparadores(db, empresaId) {
+  return db.prepare(
+    `SELECT e.EmpleadosID AS id,
+            NULLIF(${NOMBRE_SQL}, '') AS nombre,
+            e.username AS username
+       FROM Empleados e
+       JOIN Roles_Empleados re ON re.EmpleadoID = e.EmpleadosID
+       JOIN Roles r ON r.RolID = re.RolID
+      WHERE e.empresa_id = ? AND COALESCE(e.is_active, 1) = 1
+        AND r.Nombre = ? COLLATE NOCASE
+      ORDER BY nombre COLLATE NOCASE`
+  ).all(Number(empresaId), ROL_PICKING)
+   .map((p) => ({ ...p, nombre: p.nombre || p.username }));
+}
+
+/** ¿Este usuario puede preparar? Lo usa el guardia de las rutas. */
+export function esPreparador(db, { empleadoId, empresaId }) {
+  return !!db.prepare(
+    `SELECT 1 FROM Empleados e
+       JOIN Roles_Empleados re ON re.EmpleadoID = e.EmpleadosID
+       JOIN Roles r ON r.RolID = re.RolID
+      WHERE e.EmpleadosID = ? AND e.empresa_id = ?
+        AND COALESCE(e.is_active, 1) = 1 AND r.Nombre = ? COLLATE NOCASE`
+  ).get(Number(empleadoId), Number(empresaId), ROL_PICKING);
 }
 
 /* ========================= Asignación ========================= */
@@ -125,14 +120,12 @@ export function asignar(db, { pedidoId, preparadorId, empresaId, ahora }) {
     return { ok: false, error: "Ese pedido ya está cerrado." };
   }
   if (pedido.preparador_id && Number(pedido.preparador_id) !== Number(preparadorId)) {
-    const otro = db.prepare(`SELECT nombre FROM preparadores WHERE id = ?`).get(pedido.preparador_id);
+    const otro = listarPreparadores(db, empresaId).find((p) => p.id === Number(pedido.preparador_id));
     return { ok: false, error: `Ese pedido ya lo está preparando ${otro?.nombre || "otra persona"}. Desasignalo primero.` };
   }
 
-  const prep = db.prepare(
-    `SELECT id, nombre FROM preparadores WHERE id = ? AND empresa_id = ? AND activo = 1`
-  ).get(Number(preparadorId), Number(empresaId));
-  if (!prep) return { ok: false, error: "Ese preparador no existe o está dado de baja." };
+  const prep = listarPreparadores(db, empresaId).find((p) => p.id === Number(preparadorId));
+  if (!prep) return { ok: false, error: "Esa persona no tiene permiso para preparar pedidos." };
 
   db.prepare(
     `UPDATE Pedidos
@@ -168,7 +161,8 @@ export function pedidosAsignados(db, { empresaId, preparadorId = null }) {
             p.Fecha                 AS fecha,
             p.ServicioID            AS servicioId,
             p.preparador_id         AS preparadorId,
-            pr.nombre               AS preparador,
+            NULLIF(${NOMBRE_SQL}, '') AS preparador,
+            e.username              AS preparadorUsuario,
             p.preparacion_asignada_at  AS asignadaAt,
             p.preparacion_terminada_at AS terminadaAt,
             COUNT(pi.PedidoItemID)                      AS lineas,
@@ -176,14 +170,36 @@ export function pedidosAsignados(db, { empresaId, preparadorId = null }) {
             COALESCE(SUM(pi.cantidad_preparada), 0)     AS unidadesPreparadas,
             SUM(CASE WHEN COALESCE(pi.cantidad_preparada,0) >= pi.Cantidad THEN 1 ELSE 0 END) AS lineasCompletas
        FROM Pedidos p
-       JOIN preparadores pr ON pr.id = p.preparador_id
+       JOIN Empleados e ON e.EmpleadosID = p.preparador_id
        LEFT JOIN PedidoItems pi ON pi.PedidoID = p.PedidoID
       WHERE p.empresa_id = @empresaId AND p.deleted_at IS NULL
         AND p.preparador_id IS NOT NULL
         AND (@preparadorId = 0 OR p.preparador_id = @preparadorId)
       GROUP BY p.PedidoID
       ORDER BY p.preparacion_asignada_at`
-  ).all({ empresaId: Number(empresaId), preparadorId: Number(preparadorId) || 0 });
+  ).all({ empresaId: Number(empresaId), preparadorId: Number(preparadorId) || 0 })
+   .map((p) => ({ ...p, preparador: p.preparador || p.preparadorUsuario }));
+}
+
+/**
+ * Los pedidos que el jefe puede repartir: los de la solapa Pendientes que
+ * todavía no tienen dueño. Con el nombre del servicio, que es como los
+ * reconoce.
+ */
+export function pendientesParaAsignar(db, empresaId) {
+  return db.prepare(
+    `SELECT p.PedidoID AS id, p.Fecha AS fecha, p.ServicioID AS servicioId,
+            COUNT(pi.PedidoItemID) AS lineas,
+            COALESCE(SUM(pi.Cantidad), 0) AS unidades
+       FROM Pedidos p
+       LEFT JOIN PedidoItems pi ON pi.PedidoID = p.PedidoID
+      WHERE p.empresa_id = ? AND p.deleted_at IS NULL
+        AND p.preparador_id IS NULL
+        AND LOWER(COALESCE(p.Status, '')) = 'open'
+      GROUP BY p.PedidoID
+      ORDER BY p.PedidoID DESC
+      LIMIT 200`
+  ).all(Number(empresaId));
 }
 
 /* ========================= El picking ========================= */

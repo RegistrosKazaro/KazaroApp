@@ -29,6 +29,9 @@ export default function RoleSelect() {
       } else if (r.includes("deposito")) {
         // Depósito
         nav("/app/deposito", { replace: true });
+      } else if (r.includes("picking")) {
+        // El operario que prepara: entra derecho al picking, no ve el panel.
+        nav("/app/picking/preparacion", { replace: true });
       } else {
         // Cualquier otro (administrativo, etc.)
         nav("/app/administrativo/products", { replace: true });
@@ -84,6 +87,17 @@ export default function RoleSelect() {
           >
             <div>Depósito</div>
             <small>Ver panel de depósito</small>
+          </button>
+        )}
+
+        {rolesLower.some((r) => r.includes("picking")) && (
+          <button
+            type="button"
+            className="service-card"
+            onClick={() => nav("/app/picking/preparacion")}
+          >
+            <div>Preparación</div>
+            <small>Preparar pedidos con la pistola</small>
           </button>
         )}
       </div>
