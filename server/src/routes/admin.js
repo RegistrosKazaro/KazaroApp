@@ -2444,7 +2444,7 @@ router.put("/employees/:id", mustBeAdmin, async (req, res) => {
     const id = Number(req.params.id);
     if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
 
-    const { nombre, apellido, email, username, password, rolIds, isActive } = req.body ?? {};
+    const { nombre, apellido, email, username, password, rolIds, isActive, recibeMail } = req.body ?? {};
     if (!nombre?.trim() || !apellido?.trim()) return res.status(400).json({ ok: false, error: "Nombre y Apellido son obligatorios" });
     if (!username?.trim()) return res.status(400).json({ ok: false, error: "El username es obligatorio" });
     if (!email?.trim()) return res.status(400).json({ ok: false, error: "El email es obligatorio" });
@@ -2488,6 +2488,12 @@ router.put("/employees/:id", mustBeAdmin, async (req, res) => {
     if (ld) {
       db.prepare(`UPDATE Empleados SET legajo = ?, dni = ? WHERE EmpleadosID = ?`).run(ld.legajo, ld.dni, id);
     }
+    // Excepción de avisos por mail. Sólo se toca si vino en el pedido, para
+    // no pisarla sin querer desde una pantalla que no la conoce.
+    if (recibeMail !== undefined) {
+      db.prepare(`UPDATE Empleados SET recibe_mail = ? WHERE EmpleadosID = ?`)
+        .run(recibeMail === null ? null : (recibeMail ? 1 : 0), id);
+    }
 
     db.prepare(`DELETE FROM Roles_Empleados WHERE EmpleadoID = ?`).run(id);
     if (Array.isArray(rolIds) && rolIds.length > 0) {
@@ -2511,7 +2517,7 @@ router.get("/employees", mustBeAdmin, (req, res) => {
     const rows = db.prepare(`
       SELECT e.EmpleadosID AS id, TRIM(e.Nombre) AS nombre, TRIM(e.Apellido) AS apellido,
         TRIM(e.Email) AS email, TRIM(e.username) AS username, e.is_active, e.password_hash, e.password_plain,
-        TRIM(e.legajo) AS legajo, TRIM(e.dni) AS dni,
+        TRIM(e.legajo) AS legajo, TRIM(e.dni) AS dni, e.recibe_mail,
         GROUP_CONCAT(re.RolID) AS rolIds, GROUP_CONCAT(r.Nombre) AS rolNombres
       FROM Empleados e
       LEFT JOIN Roles_Empleados re ON re.EmpleadoID = e.EmpleadosID
@@ -2527,6 +2533,8 @@ router.get("/employees", mustBeAdmin, (req, res) => {
         id: r.id, nombre: r.nombre ?? "", apellido: r.apellido ?? "", email: r.email ?? "", username: r.username ?? "",
         legajo: r.legajo ?? "", dni: r.dni ?? "",
         isActive: r.is_active !== 0 && r.is_active !== "0",
+        // null = lo que corresponda a su empresa; 1 = sí; 0 = no.
+        recibeMail: r.recibe_mail == null ? null : (Number(r.recibe_mail) === 1),
         tieneHash: !!r.password_hash, tienePlain: !!r.password_plain,
         passwordPendiente: !r.password_hash && !!r.password_plain,
         roles: r.rolIds ? r.rolIds.split(",").map((id, i) => ({ id: Number(id), nombre: r.rolNombres?.split(",")[i] ?? "" })) : [],

@@ -84,6 +84,26 @@ const getVal = (obj, keys) => {
 const pad7 = (v) => String(v ?? "").padStart(7, "0");
 
 /* ========================= Email de pedido listo ========================= */
+
+/** Empresas cuyos usuarios tienen mails ficticios y por eso no reciben avisos. */
+const EMPRESAS_SIN_MAIL = new Set([2]);   // Pazar
+
+/**
+ * ¿A este empleado se le manda el aviso?
+ *
+ * En Pazar los mails son de relleno: formato válido, casilla inexistente. Por
+ * eso Pazar no recibe. Pero hay excepciones reales —German Marín— y antes no
+ * había forma de decirlo: el bloqueo era por empresa entera y se comía también
+ * a los que sí tienen casilla.
+ *
+ * `recibeMail` manda sobre la empresa: 1 = sí, 0 = no, null = lo que
+ * corresponda a su empresa.
+ */
+export function debeRecibirMail({ recibeMail = null, empresaId = null } = {}) {
+  if (recibeMail === 1 || recibeMail === true) return true;
+  if (recibeMail === 0 || recibeMail === false) return false;
+  return !EMPRESAS_SIN_MAIL.has(Number(empresaId));
+}
 // Aviso de "listo para retirar": va ÚNICAMENTE al supervisor que hizo el pedido
 // (además de la notificación in-app). Sin copias a nadie más.
 async function notifyOrderReady(orderId, closedAt) {
@@ -106,11 +126,8 @@ async function notifyOrderReady(orderId, closedAt) {
       empresaId = row?.empresa_id ?? null;
     } catch {}
 
-    // Pazar (empresa 2) carga emails de usuario de relleno (no válidos), así que
-    // el aviso rebotaría. No mandamos mail: el supervisor de Pazar se entera por
-    // la notificación in-app (campana), que se crea aparte al cerrar el pedido.
-    if (Number(empresaId) === 2) {
-      console.log(`[deposito] Pazar: "listo para retirar" sin mail (solo campana) — pedido #${pad7(pedido.id)}`);
+    if (!debeRecibirMail({ recibeMail: empleado?.recibe_mail, empresaId })) {
+      console.log(`[deposito] ${empleadoId} no recibe avisos por mail — pedido #${pad7(pedido.id)} (se entera por la campana)`);
       return;
     }
 

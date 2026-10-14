@@ -265,6 +265,7 @@ export function getUserById(id) {
         ${emailCol ? `TRIM(${emailCol})` : "NULL"} AS email,
         ${nombre   ? `TRIM(${nombre})`   : "NULL"} AS Nombre,
         ${apellido ? `TRIM(${apellido})` : "NULL"} AS Apellido,
+        ${eInfo.some((c) => c.name.toLowerCase() === "recibe_mail") ? "recibe_mail" : "NULL"} AS recibe_mail,
         1 AS is_active
       FROM Empleados
       WHERE ${idCol} = ?
@@ -1113,6 +1114,30 @@ ensurePendientesColumn();
 /* ============ Legajo y DNI de los empleados ============
    Los carga el admin en el formulario de usuarios. El legajo es la clave con
    la que 360 identifica al supervisor de un servicio (integracion360.js). */
+/**
+ * ¿Este empleado recibe los avisos por mail?
+ *
+ * En Pazar los mails de los usuarios son ficticios: tienen formato válido pero
+ * no son casillas de verdad, así que mandarles rebotaría. Por eso Pazar no
+ * recibe avisos. Pero hay excepciones —German Marín tiene casilla real—, y
+ * antes eso no se podía expresar: el bloqueo era por empresa entera.
+ *
+ *   NULL → lo que corresponda a su empresa (Kazaro sí, Pazar no)
+ *      1 → sí, aunque sea de Pazar
+ *      0 → no, aunque sea de Kazaro
+ */
+export function ensureEmpleadosRecibeMail() {
+  try {
+    const cols = tinfo("Empleados").map((c) => c.name.toLowerCase());
+    if (!cols.includes("recibe_mail")) {
+      db.exec(`ALTER TABLE Empleados ADD COLUMN recibe_mail INTEGER DEFAULT NULL`);
+    }
+  } catch (e) {
+    console.error("[db] ensureEmpleadosRecibeMail error:", e?.message || e);
+  }
+}
+ensureEmpleadosRecibeMail();
+
 function ensureEmpleadosLegajoDni() {
   try {
     const cols = db.prepare(`PRAGMA table_info(Empleados)`).all().map((c) => c.name.toLowerCase());

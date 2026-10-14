@@ -46,6 +46,7 @@ const EMPTY_FORM = {
   dni: "",
   password: "",
   isActive: true,
+  recibeMail: null,   // null = lo que corresponda a su empresa
   rolIds: [],
 };
 
@@ -127,6 +128,7 @@ export default function EmployeesSection() {
       dni:      emp.dni || "",
       password: "",
       isActive: emp.isActive,
+      recibeMail: emp.recibeMail ?? null,
       rolIds:   emp.roles.map((r) => r.id),
     });
     setEditing({ mode: "edit", emp });
@@ -152,7 +154,7 @@ export default function EmployeesSection() {
   // ── Guardar ───────────────────────────────────────────────
   const handleSave = async () => {
     setFormErr("");
-    const { nombre, apellido, email, username, legajo, dni, password, isActive, rolIds } = form;
+    const { nombre, apellido, email, username, legajo, dni, password, isActive, recibeMail, rolIds } = form;
 
     if (!nombre.trim())    return setFormErr("El nombre es obligatorio");
     if (!apellido.trim())  return setFormErr("El apellido es obligatorio");
@@ -168,7 +170,7 @@ export default function EmployeesSection() {
 
     setSaving(true);
     try {
-      const payload = { nombre, apellido, email, username, legajo: legajo.trim(), dni: dniNum, isActive, rolIds };
+      const payload = { nombre, apellido, email, username, legajo: legajo.trim(), dni: dniNum, isActive, recibeMail, rolIds };
       if (password.trim()) payload.password = password.trim();
 
       if (editing.mode === "create") {
@@ -394,6 +396,25 @@ export default function EmployeesSection() {
                 placeholder="juan.pereyra@kazaro.com.ar"
                 autoComplete="off"
               />
+            </div>
+
+            {/* Avisos por mail. En Pazar los mails son ficticios y por eso no
+                se manda nada; esto sirve para la excepcion de quien si tiene
+                casilla real. */}
+            <div className="select-row">
+              <label className="muted">Avisos por mail</label>
+              <select
+                className="select"
+                value={form.recibeMail === null ? "" : (form.recibeMail ? "1" : "0")}
+                onChange={(e) =>
+                  setField("recibeMail", e.target.value === "" ? null : e.target.value === "1")
+                }
+                aria-label="Avisos por mail"
+              >
+                <option value="">Lo que corresponda a su empresa</option>
+                <option value="1">Si, mandarle siempre</option>
+                <option value="0">No mandarle nunca</option>
+              </select>
             </div>
 
             {/* Username */}
