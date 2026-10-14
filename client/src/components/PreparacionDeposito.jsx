@@ -12,76 +12,39 @@
 // Cada preparador es un usuario con rol Picking, así que no hay ningún
 // desplegable de "quién sos": lo dice la sesión. Los endpoints también lo
 // resuelven del lado del servidor, no de lo que mande la pantalla.
+//
+// Sobre los estilos: esta pantalla se usa adentro del panel Y sola, en su
+// propia ruta. Todo el diseño del depósito cuelga de .admin-panel y
+// .deposito-page, así que las hojas se importan acá y el contenedor lleva esas
+// clases. Si no, fuera del panel los botones quedan blancos sobre blanco.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import "../styles/admin-panel.css";
+import "../styles/deposito.css";
 
 const nro = (id) => `#${String(id).padStart(7, "0")}`;
 
-/** Lo que se muestra cuando un escaneo no entra. */
+/** Lo que se muestra cuando un escaneo entra o rebota. */
 function Cartel({ aviso, onCerrar }) {
   if (!aviso) return null;
-  const ok = aviso.ok;
   return (
-    <div
-      role="status"
-      style={{
-        padding: "10px 12px", borderRadius: 8, marginBottom: 10,
-        background: ok ? "#dcfce7" : "#fee2e2",
-        color: ok ? "#166534" : "#b91c1c",
-        border: `1px solid ${ok ? "#86efac" : "#fca5a5"}`,
-        display: "flex", alignItems: "center", gap: 10,
-      }}
-    >
-      <strong style={{ fontSize: 18 }}>{ok ? "✔" : "✕"}</strong>
+    <div role="status" className={`state deposito-state${aviso.ok ? "" : " error"}`}
+         style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <strong style={{ fontSize: 18 }}>{aviso.ok ? "✔" : "✕"}</strong>
       <span style={{ flex: 1 }}>{aviso.texto}</span>
       <button type="button" className="pill pill--ghost" onClick={onCerrar}>Cerrar</button>
     </div>
   );
 }
 
-/** Una línea del pedido. La cantidad también se escribe a mano. */
-function Linea({ linea, onCantidad, destacada }) {
-  const completa = Number(linea.preparada) >= Number(linea.pedida);
-  const pct = linea.pedida > 0 ? Math.min(100, (linea.preparada / linea.pedida) * 100) : 0;
-
+/** La barra de avance de una línea, con los mismos bloques que el panel. */
+function Barra({ hecho, total }) {
+  const pct = total > 0 ? Math.min(100, (hecho / total) * 100) : 0;
+  const completa = hecho >= total;
   return (
-    <div
-      style={{
-        padding: "10px 12px", borderBottom: "1px solid #e5e7eb",
-        background: destacada ? "#fef9c3" : completa ? "#f0fdf4" : "transparent",
-        transition: "background .4s",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 600 }}>{linea.nombre}</div>
-          <div className="muted" style={{ fontSize: 12 }}>
-            {linea.codigo ? `Cód. ${linea.codigo}` : "Sin código"}
-            {!linea.codigoBarra && (
-              <span title="Este insumo no tiene código de barras: cargalo a mano">
-                {" · "}✋ a mano
-              </span>
-            )}
-          </div>
-        </div>
-        <input
-          type="number"
-          className="input"
-          min={0}
-          max={linea.pedida}
-          value={linea.preparada}
-          onChange={(e) => onCantidad(linea.productoId, e.target.value)}
-          style={{ width: 80, textAlign: "right", fontWeight: 700 }}
-          aria-label={`Preparado de ${linea.nombre}`}
-        />
-        <div style={{ width: 54, textAlign: "left" }} className="muted">
-          / {linea.pedida}
-        </div>
-      </div>
-      <div style={{ height: 4, background: "#e5e7eb", borderRadius: 2, marginTop: 8 }}>
-        <div style={{ height: "100%", width: `${pct}%`, borderRadius: 2,
-                      background: completa ? "#16a34a" : "#2563eb", transition: "width .3s" }} />
-      </div>
+    <div className="deposito-stockbar" title={`${hecho} de ${total}`}>
+      <div className="deposito-stockbar-fill"
+           style={{ width: `${pct}%`, background: completa ? "#16a34a" : "#2563eb" }} />
     </div>
   );
 }
@@ -222,27 +185,37 @@ export default function PreparacionDeposito({ modo = "jefe" }) {
   if (abierto) {
     const { pedido, lineas, avance } = abierto;
     return (
-      <div className="srv-card">
-        <div className="toolbar" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <button type="button" className="pill pill--ghost" onClick={cerrarPedido}>← Volver</button>
-          <strong>{nro(pedido.id)}</strong>
-          <span className="muted">{pedido.servicio || "Sin servicio"}</span>
-          <div style={{ flex: 1 }} />
-          <strong style={{ fontSize: 18 }}>
-            {avance.unidadesPreparadas} / {avance.unidadesPedidas}
-          </strong>
-          <span className="muted">
-            {avance.lineasCompletas} de {avance.lineas} insumos
-          </span>
+      <section className="admin-panel deposito-page">
+        <div className="dep-topbar">
+          <h1 className="deposito-title">
+            {nro(pedido.id)} · {pedido.servicio || "Sin servicio"}
+          </h1>
+          <button type="button" className="pill pill--ghost" onClick={cerrarPedido}>
+            ← Volver a la lista
+          </button>
         </div>
 
-        <div style={{ padding: "10px 0" }}>
+        <div className="dep-order-kpis">
+          <div className="dep-order-kpi dep-order-kpi--prep">
+            <span className="dep-order-kpi-num">{avance.unidadesPreparadas}</span>
+            <span className="dep-order-kpi-lbl">de {avance.unidadesPedidas} unidades</span>
+          </div>
+          <div className={`dep-order-kpi ${avance.completo ? "dep-order-kpi--closed" : "dep-order-kpi--open"}`}>
+            <span className="dep-order-kpi-num">{avance.lineasCompletas}</span>
+            <span className="dep-order-kpi-lbl">de {avance.lineas} insumos</span>
+          </div>
+        </div>
+
+        <label className="deposito-field" style={{ margin: "12px 0" }}>
+          <span>Escaneá el insumo con la pistola</span>
           <input
             ref={escaneoRef}
-            className="input"
-            placeholder="Escaneá el insumo con la pistola…"
+            className="deposito-search"
+            placeholder="Apuntá y dispará…"
             autoFocus
-            style={{ width: "100%", fontSize: 18, padding: "12px 14px" }}
+            // .deposito-search viene con max-width 220px, pensado para los
+            // filtros. Acá es el campo principal: tiene que ocupar todo.
+            style={{ width: "100%", maxWidth: "none", fontSize: 18, padding: "12px 14px" }}
             // La pistola escribe el código y manda Enter. No usamos un <form>
             // para que ese Enter no dispare nada más.
             onKeyDown={(e) => {
@@ -255,18 +228,64 @@ export default function PreparacionDeposito({ modo = "jefe" }) {
             // facilísimo perderlo y que los escaneos se pierdan en el aire.
             onBlur={(e) => { if (!e.relatedTarget) setTimeout(() => escaneoRef.current?.focus(), 150); }}
           />
-        </div>
+        </label>
 
         <Cartel aviso={aviso} onCerrar={() => setAviso(null)} />
 
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
-          {lineas.map((l) => (
-            <Linea key={l.productoId} linea={l} destacada={destacada === l.productoId}
-                   onCantidad={cambiarCantidad} />
-          ))}
+        <div className="deposito-table-wrapper">
+          <table className="deposito-table" aria-label="Insumos del pedido">
+            <thead>
+              <tr>
+                <th scope="col">Insumo</th>
+                <th scope="col" className="deposito-th--numeric">Preparado</th>
+                <th scope="col" className="deposito-th--numeric">Pedido</th>
+                <th scope="col" style={{ width: 160 }}>Avance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lineas.map((l) => {
+                const completa = Number(l.preparada) >= Number(l.pedida);
+                return (
+                  <tr key={l.productoId} className="deposito-row"
+                      style={{
+                        // Ámbar: el flash de la línea que acaba de sumar.
+                        // Verde: ya está completa.
+                        background: destacada === l.productoId ? "#fef3c7"
+                                  : completa ? "#f0fdf4" : undefined,
+                        transition: "background .4s",
+                      }}>
+                    <td>
+                      <div className="deposito-product-cell">
+                        <span className="deposito-product-name">{l.nombre}</span>
+                        <span className="deposito-product-code">
+                          {l.codigo ? `Cód. ${l.codigo}` : "Sin código"}
+                          {!l.codigoBarra && " · ✋ cargar a mano"}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="deposito-td--numeric">
+                      <input
+                        type="number"
+                        className="deposito-search"
+                        min={0}
+                        max={l.pedida}
+                        value={l.preparada}
+                        onChange={(e) => cambiarCantidad(l.productoId, e.target.value)}
+                        style={{ width: 90, minWidth: 0, textAlign: "right",
+                                 fontWeight: 700, fontSize: 16 }}
+                        aria-label={`Preparado de ${l.nombre}`}
+                      />
+                    </td>
+                    <td className="deposito-td--numeric">{l.pedida}</td>
+                    <td><Barra hecho={Number(l.preparada) || 0} total={Number(l.pedida)} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
 
-        <div className="toolbar" style={{ marginTop: 12, gap: 8, justifyContent: "flex-end" }}>
+        <div className="deposito-header-actions" style={{ marginTop: 12, justifyContent: "flex-end" }}>
           <button type="button" className="pill pill--ghost" onClick={guardarManual}>
             Guardar cantidades
           </button>
@@ -274,80 +293,95 @@ export default function PreparacionDeposito({ modo = "jefe" }) {
             {avance.completo ? "Terminé, está completo" : "Terminé (incompleto)"}
           </button>
         </div>
-      </div>
+      </section>
     );
   }
 
   /* ================= La cola ================= */
 
   return (
-    <div className="srv-card">
-      <div className="toolbar" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <strong>{soyJefe ? "Preparación de pedidos" : "Mis pedidos para preparar"}</strong>
-        <div style={{ flex: 1 }} />
+    <section className="admin-panel deposito-page">
+      <div className="dep-topbar">
+        <h1 className="deposito-title">
+          {soyJefe ? "Preparación de pedidos" : "Mis pedidos para preparar"}
+        </h1>
         <button type="button" className="pill pill--ghost" onClick={cargarCola} disabled={cargando}>
           {cargando ? "Actualizando…" : "Actualizar"}
         </button>
       </div>
 
-      {err && <div className="state state--error" style={{ marginTop: 8 }}>{err}</div>}
+      {err && <div className="state error deposito-state">{err}</div>}
 
       {soyJefe && <AsignarPedido preparadores={preparadores} onListo={cargarCola} />}
 
-      <div style={{ marginTop: 12 }}>
-        {!cola.length && !cargando && (
-          <div className="state">
-            {soyJefe
-              ? "No hay pedidos asignados todavía."
-              : "No tenés pedidos asignados. Pedile al jefe que te asigne."}
-          </div>
-        )}
-
-        {cola.map((p) => {
-          const terminado = !!p.terminadaAt;
-          return (
-            <div key={p.id} style={{
-              display: "flex", alignItems: "center", gap: 12, padding: "12px 14px",
-              border: "1px solid #e5e7eb", borderRadius: 8, marginBottom: 8,
-              background: terminado ? "#f0fdf4" : "#fff",
-            }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 700 }}>
-                  {nro(p.id)} {terminado && <span style={{ color: "#166534" }}>· terminado</span>}
-                </div>
-                <div className="muted" style={{ fontSize: 13 }}>
-                  {p.servicio || "Sin servicio"}
-                  {soyJefe && ` · ${p.preparador}`}
-                </div>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontWeight: 600 }}>
-                  {p.unidadesPreparadas} / {p.unidadesPedidas}
-                </div>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  {p.lineasCompletas} de {p.lineas} insumos
-                </div>
-              </div>
-              <button type="button" className="pill" onClick={() => abrir(p.id)}>
-                {terminado ? "Ver" : "Preparar"}
-              </button>
-              {soyJefe && (
-                <>
-                  {terminado && (
-                    <button type="button" className="pill pill--ghost" onClick={() => devolver(p.id)}>
-                      Devolver
-                    </button>
-                  )}
-                  <button type="button" className="pill pill--ghost" onClick={() => desasignar(p.id)}>
-                    Desasignar
-                  </button>
-                </>
-              )}
-            </div>
-          );
-        })}
+      <div className="deposito-table-wrapper">
+        <table className="deposito-table" aria-label="Pedidos en preparación">
+          <thead>
+            <tr>
+              <th scope="col">Pedido</th>
+              <th scope="col">Servicio</th>
+              {soyJefe && <th scope="col">Preparador</th>}
+              <th scope="col" className="deposito-th--numeric">Avance</th>
+              <th scope="col" style={{ width: 280 }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {!cola.length && !cargando && (
+              <tr>
+                <td colSpan={soyJefe ? 5 : 4} className="deposito-empty">
+                  {soyJefe
+                    ? "No hay pedidos asignados todavía. Elegí uno de la lista de arriba y repartilo."
+                    : "No tenés pedidos asignados. Pedile al jefe que te asigne."}
+                </td>
+              </tr>
+            )}
+            {cola.map((p) => {
+              const terminado = !!p.terminadaAt;
+              return (
+                <tr key={p.id} className="deposito-row"
+                    style={terminado ? { background: "#f0fdf4" } : undefined}>
+                  <td>
+                    <span className="deposito-code">{nro(p.id)}</span>
+                    {terminado && (
+                      <div className="deposito-retirado-tag">terminado</div>
+                    )}
+                  </td>
+                  <td className="deposito-service-name">{p.servicio || "Sin servicio"}</td>
+                  {soyJefe && <td>{p.preparador}</td>}
+                  <td className="deposito-td--numeric">
+                    <div style={{ fontWeight: 700 }}>
+                      {p.unidadesPreparadas} / {p.unidadesPedidas}
+                    </div>
+                    <div className="deposito-subtext">
+                      {p.lineasCompletas} de {p.lineas} insumos
+                    </div>
+                  </td>
+                  <td>
+                    <div className="deposito-header-actions" style={{ justifyContent: "flex-end" }}>
+                      <button type="button" className="pill" onClick={() => abrir(p.id)}>
+                        {terminado ? "Ver" : "Preparar"}
+                      </button>
+                      {soyJefe && terminado && (
+                        <button type="button" className="pill pill--ghost" onClick={() => devolver(p.id)}
+                                title="Devolvérselo al preparador para que lo siga">
+                          Devolver
+                        </button>
+                      )}
+                      {soyJefe && (
+                        <button type="button" className="pill pill--ghost" onClick={() => desasignar(p.id)}
+                                title="Sacárselo para dárselo a otro. Lo que ya separó no se pierde.">
+                          Desasignar
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -383,14 +417,10 @@ function AsignarPedido({ preparadores, onListo }) {
   };
 
   return (
-    <div style={{ margin: "12px 0", padding: 12, background: "#f8fafc",
-                  borderRadius: 8, border: "1px solid #e5e7eb" }}>
-      <div style={{ fontWeight: 600, marginBottom: 8 }}>
-        Asignar un pedido <span className="muted">({pendientes.length} pendientes)</span>
-      </div>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <select className="select" value={cual} onChange={(e) => setCual(e.target.value)}
-                aria-label="Pedido a asignar" style={{ minWidth: 320 }}>
+    <div className="filters deposito-filters">
+      <label className="deposito-field" style={{ minWidth: 320, flex: "1 1 320px" }}>
+        <span>Pedido a asignar ({pendientes.length} pendientes)</span>
+        <select className="deposito-select" value={cual} onChange={(e) => setCual(e.target.value)}>
           <option value="">— Elegí el pedido —</option>
           {pendientes.map((p) => (
             <option key={p.id} value={p.id}>
@@ -398,16 +428,23 @@ function AsignarPedido({ preparadores, onListo }) {
             </option>
           ))}
         </select>
-        <select className="select" value={quien} onChange={(e) => setQuien(e.target.value)}
-                aria-label="Preparador">
+      </label>
+
+      <label className="deposito-field" style={{ minWidth: 220 }}>
+        <span>Preparador</span>
+        <select className="deposito-select" value={quien} onChange={(e) => setQuien(e.target.value)}>
           <option value="">— Elegí preparador —</option>
           {preparadores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
         </select>
+      </label>
+
+      <div className="deposito-header-actions">
         <button type="button" className="pill" onClick={asignar}>Asignar</button>
-        {msg && <span className="muted">{msg}</span>}
       </div>
+
+      {msg && <div className="deposito-footnote" style={{ flexBasis: "100%" }}>{msg}</div>}
       {!preparadores.length && (
-        <div className="muted" style={{ marginTop: 8 }}>
+        <div className="deposito-footnote" style={{ flexBasis: "100%" }}>
           No hay nadie con rol Picking. Creá el usuario del operario en Empleados
           y asignale ese rol.
         </div>

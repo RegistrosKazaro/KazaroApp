@@ -65,17 +65,20 @@ const abrirPedido = async (user) => {
   render(<PreparacionDeposito />);
   const fila = await screen.findByText("#0001351");
   await user.click(screen.getAllByRole("button", { name: "Preparar" })[0]);
-  await screen.findByPlaceholderText(/Escaneá el insumo/);
+  await screen.findByLabelText(/Escaneá el insumo/);
   expect(fila).toBeTruthy();
-  return screen.getByPlaceholderText(/Escaneá el insumo/);
+  return screen.getByLabelText(/Escaneá el insumo/);
 };
 
 describe("Preparación del depósito", () => {
   it("el jefe ve toda la cola con quién tiene cada pedido", async () => {
     render(<PreparacionDeposito />);
-    await screen.findByText("#0001351");
-    expect(screen.getByText(/REFINERIA DEL CENTRO S\.A · Carlos Gomez/)).toBeTruthy();
-    expect(screen.getByText(/HOSPITAL EVA PERON · Luis Reyna/)).toBeTruthy();
+    const fila = (await screen.findByText("#0001351")).closest("tr");
+    expect(within(fila).getByText("REFINERIA DEL CENTRO S.A")).toBeTruthy();
+    expect(within(fila).getByText("Carlos Gomez")).toBeTruthy();
+
+    const otra = screen.getByText("#0001352").closest("tr");
+    expect(within(otra).getByText("Luis Reyna")).toBeTruthy();
   });
 
   it("el operario no manda a quién pedir: lo decide el servidor por su sesión", async () => {
@@ -101,7 +104,8 @@ describe("Preparación del depósito", () => {
   it("el operario tampoco ve de quién es cada pedido: todos son suyos", async () => {
     render(<PreparacionDeposito modo="operario" />);
     await screen.findByText("#0001351");
-    expect(screen.queryByText(/· Carlos Gomez/)).toBeNull();
+    expect(screen.queryByText("Carlos Gomez")).toBeNull();
+    expect(screen.queryByText("Preparador")).toBeNull();
   });
 
   it("muestra las líneas con lo pedido y lo que ya se separó", async () => {
@@ -109,7 +113,8 @@ describe("Preparación del depósito", () => {
     await abrirPedido(user);
     expect(screen.getByText("DETERGENTE KAZARO X 10 LTS")).toBeTruthy();
     expect(screen.getByLabelText("Preparado de DETERGENTE KAZARO X 10 LTS").value).toBe("3");
-    expect(screen.getByText("13 / 20")).toBeTruthy();
+    expect(screen.getByText("13")).toBeTruthy();
+    expect(screen.getByText("de 20 unidades")).toBeTruthy();
   });
 
   it("marca el insumo que no tiene código de barras", async () => {
@@ -140,7 +145,7 @@ describe("Preparación del depósito", () => {
     await waitFor(() => {
       expect(screen.getByLabelText("Preparado de DETERGENTE KAZARO X 10 LTS").value).toBe("4");
     });
-    expect(screen.getByText("14 / 20")).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("14")).toBeTruthy());
   });
 
   it("si el insumo no está en el pedido, lo dice y no suma nada", async () => {
@@ -227,7 +232,7 @@ describe("Preparación del depósito", () => {
     render(<PreparacionDeposito />);
     await screen.findByText("#0001351");
 
-    const lista = await screen.findByLabelText("Pedido a asignar");
+    const lista = await screen.findByLabelText(/Pedido a asignar/);
     // Se reconoce por el servicio, no por el número suelto.
     expect(within(lista).getByText(/#0001400 · MIN SALUD - ADICCIONES/)).toBeTruthy();
 
@@ -246,7 +251,7 @@ describe("Preparación del depósito", () => {
     render(<PreparacionDeposito />);
     await screen.findByText("#0001351");
 
-    await user.selectOptions(await screen.findByLabelText("Pedido a asignar"), "1400");
+    await user.selectOptions(await screen.findByLabelText(/Pedido a asignar/), "1400");
     await user.selectOptions(screen.getByLabelText("Preparador"), "1");
     const antes = api.get.mock.calls.length;
     await user.click(screen.getByRole("button", { name: "Asignar" }));
