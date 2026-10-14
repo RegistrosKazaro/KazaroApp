@@ -26,6 +26,7 @@ import {
 import { sendMail } from "../utils/mailer.js";
 import { fmtAr, ahoraUtcSql } from "../utils/fechas.js";
 import { sinAcentosSql, normalizarBusqueda } from "../utils/busqueda.js";
+import * as picking from "../picking.js";
 
 const router = Router();
 console.log("[deposito] Router cargado: Modo Seguro (JS JOIN)");
@@ -1799,6 +1800,166 @@ router.put("/orders/:id/pickup", mustWarehouse, (req, res) => {
   } catch (e) {
     console.error("[deposito] pickup error:", e);
     res.status(500).json({ error: e.message });
+  }
+});
+
+/* ===================================================================
+   Preparación de pedidos con pistola lectora
+   ===================================================================
+   OJO: todo esto tiene que quedar ARRIBA de router.put("/orders/:id/:action"),
+   que es un comodín y se come cualquier PUT de dos segmentos. Si se mueven
+   abajo, /orders/5/asignar deja de funcionar y contesta "Sin columnas de
+   estado", que no le dice nada a nadie.                                   */
+
+const laEmpresa = (req) => getEmpresaId(req);
+
+router.get("/preparadores", mustWarehouse, (req, res) => {
+  try {
+    res.json({ preparadores: picking.listarPreparadores(db, laEmpresa(req)) });
+  } catch (e) {
+    console.error("[picking] listar preparadores:", e);
+    res.status(500).json({ error: "No se pudo leer la lista de preparadores" });
+  }
+});
+
+router.post("/preparadores", mustWarehouse, (req, res) => {
+  try {
+    const r = picking.crearPreparador(db, { nombre: req.body?.nombre, empresaId: laEmpresa(req) });
+    if (!r.ok) return res.status(400).json(r);
+    res.status(201).json({ ...r, preparadores: picking.listarPreparadores(db, laEmpresa(req)) });
+  } catch (e) {
+    console.error("[picking] crear preparador:", e);
+    res.status(500).json({ error: "No se pudo agregar el preparador" });
+  }
+});
+
+router.delete("/preparadores/:id", mustWarehouse, (req, res) => {
+  try {
+    const r = picking.desactivarPreparador(db, { id: req.params.id, empresaId: laEmpresa(req) });
+    if (!r.ok) return res.status(404).json({ error: "Preparador no encontrado" });
+    res.json({ ...r, preparadores: picking.listarPreparadores(db, laEmpresa(req)) });
+  } catch (e) {
+    console.error("[picking] baja preparador:", e);
+    res.status(500).json({ error: "No se pudo dar de baja" });
+  }
+});
+
+/** La cola: lo asignado. Sin preparadorId, el jefe ve todo. */
+router.get("/preparacion", mustWarehouse, (req, res) => {
+  try {
+    const pedidos = picking.pedidosAsignados(db, {
+      empresaId: laEmpresa(req),
+      preparadorId: req.query?.preparadorId ?? null,
+    });
+    for (const p of pedidos) {
+      p.servicio = p.servicioId ? getServiceNameById(p.servicioId) : null;
+    }
+    res.json({ pedidos });
+  } catch (e) {
+    console.error("[picking] cola:", e);
+    res.status(500).json({ error: "No se pudo leer la cola de preparación" });
+  }
+});
+
+router.put("/orders/:id/asignar", mustWarehouse, (req, res) => {
+  try {
+    const r = picking.asignar(db, {
+      pedidoId: req.params.id,
+      preparadorId: req.body?.preparadorId,
+      empresaId: laEmpresa(req),
+      ahora: ahoraUtcSql(),
+    });
+    if (!r.ok) return res.status(400).json(r);
+    res.json(r);
+  } catch (e) {
+    console.error("[picking] asignar:", e);
+    res.status(500).json({ error: "No se pudo asignar" });
+  }
+});
+
+router.put("/orders/:id/desasignar", mustWarehouse, (req, res) => {
+  try {
+    const r = picking.desasignar(db, { pedidoId: req.params.id, empresaId: laEmpresa(req) });
+    if (!r.ok) return res.status(404).json(r);
+    res.json(r);
+  } catch (e) {
+    console.error("[picking] desasignar:", e);
+    res.status(500).json({ error: "No se pudo desasignar" });
+  }
+});
+
+/** Lo que ve el preparador con el pedido abierto. */
+router.get("/orders/:id/picking", mustWarehouse, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const pedido = db.prepare(
+      `SELECT p.PedidoID AS id, p.Status AS status, p.ServicioID AS servicioId,
+              p.preparador_id AS preparadorId, pr.nombre AS preparador,
+              p.preparacion_terminada_at AS terminadaAt
+         FROM Pedidos p LEFT JOIN preparadores pr ON pr.id = p.preparador_id
+        WHERE p.PedidoID = ? AND p.empresa_id = ? AND p.deleted_at IS NULL`
+    ).get(id, laEmpresa(req));
+    if (!pedido) return res.status(404).json({ error: "Pedido no encontrado" });
+
+    pedido.servicio = pedido.servicioId ? getServiceNameById(pedido.servicioId) : null;
+    res.json({ pedido, lineas: picking.lineasDePicking(db, id), avance: picking.avance(db, id) });
+  } catch (e) {
+    console.error("[picking] detalle:", e);
+    res.status(500).json({ error: "No se pudo abrir el pedido" });
+  }
+});
+
+/** Un disparo de la pistola. */
+router.post("/orders/:id/picking/escanear", mustWarehouse, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const r = picking.escanear(db, {
+      pedidoId: id, codigoBarra: req.body?.codigoBarra, empresaId: laEmpresa(req),
+    });
+    // Un escaneo fallido no es un error del sistema: es parte del trabajo.
+    // Va con 200 y el motivo, para que la pantalla muestre el cartel y siga.
+    res.json({ ...r, avance: picking.avance(db, id) });
+  } catch (e) {
+    console.error("[picking] escanear:", e);
+    res.status(500).json({ error: "No se pudo registrar el escaneo" });
+  }
+});
+
+/** Carga a mano: bultos y lo que no tiene código de barras. */
+router.put("/orders/:id/picking", mustWarehouse, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const r = picking.cargarManual(db, { pedidoId: id, items: req.body?.items ?? [] });
+    res.json({ ...r, lineas: picking.lineasDePicking(db, id), avance: picking.avance(db, id) });
+  } catch (e) {
+    console.error("[picking] carga manual:", e);
+    res.status(500).json({ error: "No se pudo guardar" });
+  }
+});
+
+/** "Terminé". No cierra el pedido: eso lo sigue haciendo el jefe. */
+router.put("/orders/:id/picking/terminar", mustWarehouse, (req, res) => {
+  try {
+    const r = picking.terminar(db, {
+      pedidoId: req.params.id, empresaId: laEmpresa(req), ahora: ahoraUtcSql(),
+    });
+    if (!r.ok) return res.status(400).json(r);
+    res.json(r);
+  } catch (e) {
+    console.error("[picking] terminar:", e);
+    res.status(500).json({ error: "No se pudo marcar como terminado" });
+  }
+});
+
+/** El jefe lo devuelve al preparador. */
+router.put("/orders/:id/picking/reabrir", mustWarehouse, (req, res) => {
+  try {
+    const r = picking.reabrir(db, { pedidoId: req.params.id, empresaId: laEmpresa(req) });
+    if (!r.ok) return res.status(404).json(r);
+    res.json(r);
+  } catch (e) {
+    console.error("[picking] reabrir:", e);
+    res.status(500).json({ error: "No se pudo devolver el pedido" });
   }
 });
 

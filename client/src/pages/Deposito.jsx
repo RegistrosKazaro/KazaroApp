@@ -11,6 +11,7 @@ import DevolucionesDeposito from "../components/DevolucionesDeposito";
 import ControlDespachos from "../components/ControlDespachos";
 import PapeleraPedidos from "../components/PapeleraPedidos";
 import Trazabilidad from "../components/Trazabilidad";
+import PreparacionDeposito from "../components/PreparacionDeposito";
 
 function isoToday() { return new Date().toISOString().slice(0, 10); }
 function isoFirstOfMonth() {
@@ -1541,6 +1542,7 @@ export default function Deposito() {
         <div className="dep-vistas" role="tablist" aria-label="Vista del panel">
           {[
             ["pedidos", "Pedidos"],
+            ["preparacion", "Preparación"],
             ["devoluciones", "Devoluciones"],
             ["despachos", "Control de despachos"],
             ["trazabilidad", "Trazabilidad"],
@@ -1853,6 +1855,13 @@ export default function Deposito() {
       {activeView === "pedidos" && (
         <div style={{ marginTop: 16 }}>
           <DepositoOrdersPanel pedidosPorDia={[]} />
+        </div>
+      )}
+
+      {/* ===== PREPARACIÓN (picking con pistola) ===== */}
+      {activeView === "preparacion" && (
+        <div style={{ marginTop: 16 }}>
+          <PreparacionDeposito />
         </div>
       )}
 

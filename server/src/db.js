@@ -7,6 +7,7 @@ import { env } from "./utils/env.js";
 // Crea las tablas del mapeo servicio->depósito y de la cola de movimientos a
 // Flexxus. Nada se envía todavía: por ahora sólo existen, vacías.
 import { ensureTablas as ensureFlexxusOutbox } from "./integrations/flexxusOutbox.js";
+import { ensureTablas as ensurePicking } from "./picking.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -488,6 +489,12 @@ export function ensureProductoRetornable() {
     if (!cols.includes("pregunta_estado")) {
       db.exec(`ALTER TABLE Productos ADD COLUMN pregunta_estado INTEGER NOT NULL DEFAULT 0`);
     }
+    if (!cols.includes("codigo_barra")){
+      db.exec(`ALTER TABLE Productos ADD COLUMN codigo_barra TEXT`);
+    }
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_prod_codbarra
+      ON Productos(empresa_id, codigo_barra)
+      WHERE codigo_barra IS NOT NULL AND codigo_barra <> ''`);
   } catch (e) {
     console.error("[db] ensureProductoRetornable error:", e?.message || e);
   }
@@ -1732,6 +1739,7 @@ ensureVisibilitySchema();
 ensureServiceProductsPivot();
 ensureIncomingStockTable();
 ensureFlexxusOutbox(db);
+ensurePicking(db);
 
 export function getProductById(productId) {
   const sch = discoverCatalogSchema();
@@ -3221,6 +3229,7 @@ export function adminGetProductById(id, empresaId) {
       ${codeExpr},
       ${catExpr}
       ${prodCols.includes("retornable") ? ", COALESCE(p.retornable, 0) AS retornable" : ""}
+      ${prodCols.includes("codigo_barra") ? ", p.codigo_barra AS codigoBarra" : ""}
     FROM ${products} p
     WHERE (CAST(p.${prodId} AS TEXT) = CAST(@id AS TEXT) OR rowid = @id) ${empresaFilter}
     LIMIT 1

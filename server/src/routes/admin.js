@@ -156,12 +156,14 @@ router.get("/products", mustBeAdmin, (req, res) => {
     const prodCols   = db.prepare(`PRAGMA table_info(${products})`).all().map(c => c.name.toLowerCase());
     const hasEmpresa = prodCols.includes("empresa_id");
     const hasIsActive= prodCols.includes("is_active");
+    const hasCodBarra = prodCols.includes("codigo_barra");
     const eFilter    = hasEmpresa ? `AND empresa_id = ${Number(empresaId)}` : "";
 
     const where = q
       ? `WHERE (${sinAcentosSql(C_NAME)} LIKE @like
                ${C_CODE ? `OR ${sinAcentosSql(C_CODE)} LIKE @like` : ""}
-               OR CAST(${C_ID} AS TEXT) LIKE @like)
+                OR CAST(${C_ID} AS TEXT) LIKE @like
+               ${hasCodBarra ? "OR codigo_barra LIKE @like" : ""})
                ${eFilter}`
       : hasEmpresa ? `WHERE empresa_id = ${Number(empresaId)}` : "";
 
@@ -170,6 +172,7 @@ router.get("/products", mustBeAdmin, (req, res) => {
              ${C_NAME} AS name
              ${hasIsActive ? ", COALESCE(is_active, 1) AS is_active" : ""}
              ${prodCols.includes("retornable") ? ", COALESCE(retornable, 0) AS retornable" : ""}
+             ${hasCodBarra ? ", codigo_barra AS codigoBarra" : ""}
              ${C_CAT     ? `, ${C_CAT}     AS categoryId`   : ""}
              ${C_CATNAME ? `, ${C_CATNAME} AS categoryName` : ""}
              ${C_CODE    ? `, ${C_CODE}    AS code`         : ""}
@@ -565,7 +568,26 @@ function avisarCodigoRepetido(e, res, { codigo, empresaId, excluirId = null }) {
   });
   return true;
 }
+function avisarBarraRepetido(e, res, { codigoBarra, empresaId}){
+  const msg = String(e?.message || "");
+  if (!/UNIQUE constraint failed/i.test(msg) || !/codigo_barra/i.test(msg)) return false;
 
+  const codigo = String(codigoBarra ?? "").trim();
+  let duenio = null;
+  try{
+    duenio = db.prepare(
+      `SELECT ProductName AS nombre FROM Productos
+        WHERE codigo_barra = ? AND empresa_id = ? LIMIT 1`
+    ).get(codigo, Number(empresaId));
+  } catch {}
+  res.status(409).json({
+    error: duenio 
+    ? `El código de barras ${codigo} ya lo tiene "${duenio.nombre}". Escaneá ese insumo para editarlo.`
+    : `Ese código de barras ya lo tiene otro insumo.`,
+    codigoBarra: codigo,
+  });
+  return true;
+}
 router.post("/products", mustBeAdmin, (req, res) => {
   try {
     const sch = prodSchemaOrThrow();
@@ -618,12 +640,17 @@ router.post("/products", mustBeAdmin, (req, res) => {
       cols.push('"empresa_id"');
       vals.push(Number(empresaId));
     }
-
+    if (req.body?.codigoBarra !== undefined && prodCols.includes("codigo_barra")){
+      cols.push('"codigo_barra"');
+      vals.push(String(req.body.codigoBarra ?? "").trim() || null);
+    }
     const placeholders = cols.map(() => "?").join(", ");
     const info = db.prepare(`INSERT INTO ${T} (${cols.join(", ")}) VALUES (${placeholders})`).run(...vals);
-
     res.status(201).json({ ok: true, id: info.lastInsertRowid });
   } catch (e) {
+    if (avisarBarraRepetido(e, res, {
+      codigoBarra: req.body?.codigoBarra, empresaId: req.user?.empresaId ?? 1,
+    })) return;
     if (avisarCodigoRepetido(e, res, {
       codigo: req.body?.code, empresaId: req.user?.empresaId ?? 1,
     })) return;
@@ -686,6 +713,10 @@ router.put("/products/:id", mustBeAdmin, (req, res) => {
     if (req.body?.retornable !== undefined && prodCols.includes("retornable")) {
       sets.push(`"retornable" = ?`); vals.push(req.body.retornable ? 1 : 0);
     }
+    if (req.body?.codigoBarra !== undefined && prodCols.includes("codigo_barra")){
+      sets.push(`"codigo_barra" = ?`);
+      vals.push(String(req.body.codigoBarra ?? "").trim() || null);
+    }
     if (req.body?.imageUrl !== undefined) {
       const iu = String(req.body.imageUrl ?? "").trim();
       if (iu && iu !== "undefined" && iu !== "null") {
@@ -719,6 +750,9 @@ router.put("/products/:id", mustBeAdmin, (req, res) => {
 
     res.json({ ok: true, product: updated });
   } catch (e) {
+     if (avisarBarraRepetido(e, res, {
+      codigoBarra: req.body?.codigoBarra, empresaId: req.user?.empresaId ?? 1,
+    })) return;
     if (avisarCodigoRepetido(e, res, {
       codigo: req.body?.code, empresaId: req.user?.empresaId ?? 1, excluirId: req.params?.id,
     })) return;

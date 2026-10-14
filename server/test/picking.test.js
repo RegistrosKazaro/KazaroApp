@@ -1,0 +1,452 @@
+// Preparación de pedidos con pistola lectora.
+//
+// La pistola es un teclado: escanea, escribe el código y manda Enter. Lo que se
+// prueba acá es que cada disparo caiga en la línea correcta, que no se pueda
+// preparar de más, y que "terminé" NO cierre el pedido (cerrar dispara el mail
+// al supervisor y el descuento de stock, y eso lo sigue decidiendo el jefe).
+import { test, after } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const tmp = path.join(os.tmpdir(), `kz_picking_${Date.now()}.db`);
+const origen = path.resolve(import.meta.dirname, "../Kazaro.db");
+const hayBase = fs.existsSync(origen);
+if (hayBase) { fs.copyFileSync(origen, tmp); process.env.DB_PATH = tmp; }
+
+const picking = await import("../src/picking.js");
+const { db } = await import("../src/db.js");
+
+after(() => {
+  for (const ext of ["", "-wal", "-shm"]) { try { fs.unlinkSync(tmp + ext); } catch {} }
+});
+
+const AHORA = "2026-10-14 12:00:00";
+const EMPRESA = 1;
+let seq = 0;
+const unico = () => `${Date.now()}${(seq += 1).toString().padStart(3, "0")}`;
+
+/** Un insumo del catálogo, con o sin código de barras. */
+function insumo(nombre, codigoBarra = null) {
+  const id = db.prepare(
+    `INSERT INTO Productos (ProductName, Precio, Stock, empresa_id, codigo_barra, is_active)
+     VALUES (?, 100, 999, ?, ?, 1)`
+  ).run(nombre, EMPRESA, codigoBarra).lastInsertRowid;
+  return Number(id);
+}
+
+/** Un pedido con sus líneas: [[productoId, cantidad], …] */
+function pedido(lineas) {
+  const id = Number(db.prepare(
+    `INSERT INTO Pedidos (EmpleadoID, Rol, Total, Status, empresa_id)
+     VALUES (1, 'supervisor', 0, 'open', ?)`
+  ).run(EMPRESA).lastInsertRowid);
+  for (const [productoId, cantidad] of lineas) {
+    const p = db.prepare(`SELECT ProductName FROM Productos WHERE ProductID = ?`).get(productoId);
+    db.prepare(
+      `INSERT INTO PedidoItems (PedidoID, ProductoID, Nombre, Precio, Cantidad, Subtotal)
+       VALUES (?, ?, ?, 100, ?, 0)`
+    ).run(id, productoId, p.ProductName, cantidad);
+  }
+  return id;
+}
+
+const prepararA = (nombre) =>
+  picking.crearPreparador(db, { nombre, empresaId: EMPRESA }).id;
+
+const preparadaDe = (pedidoId, productoId) => db.prepare(
+  `SELECT cantidad_preparada n FROM PedidoItems WHERE PedidoID = ? AND ProductoID = ?`
+).get(pedidoId, productoId).n;
+
+/* ========================= Preparadores ========================= */
+
+test("un preparador es un nombre, no un usuario con contraseña", () => {
+  if (!hayBase) return;
+  const nombre = `Juan ${unico()}`;
+  const r = picking.crearPreparador(db, { nombre, empresaId: EMPRESA });
+  assert.equal(r.ok, true);
+  const lista = picking.listarPreparadores(db, EMPRESA);
+  assert.ok(lista.some((p) => p.nombre === nombre));
+});
+
+test("sin nombre no se crea", () => {
+  if (!hayBase) return;
+  assert.equal(picking.crearPreparador(db, { nombre: "   ", empresaId: EMPRESA }).ok, false);
+});
+
+test("dar de baja y volver a dar de alta a la misma persona funciona", () => {
+  if (!hayBase) return;
+  const nombre = `Vuelve ${unico()}`;
+  const id = prepararA(nombre);
+  picking.desactivarPreparador(db, { id, empresaId: EMPRESA });
+  assert.ok(!picking.listarPreparadores(db, EMPRESA).some((p) => p.id === id), "seguia en la lista");
+
+  const otra = picking.crearPreparador(db, { nombre, empresaId: EMPRESA });
+  assert.equal(otra.ok, true);
+  assert.equal(otra.id, id, "tendria que reactivar al mismo, no crear otro");
+  assert.equal(otra.reactivado, true);
+});
+
+test("la lista es de cada empresa", () => {
+  if (!hayBase) return;
+  const nombre = `Comun ${unico()}`;
+  prepararA(nombre);
+  picking.crearPreparador(db, { nombre, empresaId: 2 });
+  assert.equal(picking.listarPreparadores(db, 2).filter((p) => p.nombre === nombre).length, 1);
+});
+
+/* ========================= Asignación ========================= */
+
+test("asignar deja el pedido en preparacion y con dueño", () => {
+  if (!hayBase) return;
+  const id = pedido([[insumo(`A ${unico()}`), 5]]);
+  const prep = prepararA(`Jefe asigna ${unico()}`);
+
+  const r = picking.asignar(db, { pedidoId: id, preparadorId: prep, empresaId: EMPRESA, ahora: AHORA });
+  assert.equal(r.ok, true);
+
+  const p = db.prepare(`SELECT Status, preparador_id, preparacion_asignada_at FROM Pedidos WHERE PedidoID = ?`).get(id);
+  assert.equal(p.Status, "preparing");
+  assert.equal(p.preparador_id, prep);
+  assert.equal(p.preparacion_asignada_at, AHORA);
+});
+
+test("no se le roba un pedido a otro preparador sin desasignar", () => {
+  if (!hayBase) return;
+  const id = pedido([[insumo(`B ${unico()}`), 2]]);
+  const uno = prepararA(`Primero ${unico()}`);
+  const dos = prepararA(`Segundo ${unico()}`);
+
+  picking.asignar(db, { pedidoId: id, preparadorId: uno, empresaId: EMPRESA, ahora: AHORA });
+  const r = picking.asignar(db, { pedidoId: id, preparadorId: dos, empresaId: EMPRESA, ahora: AHORA });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /Primero/, "tendria que decir quien lo tiene");
+
+  // Pero desasignando sí.
+  picking.desasignar(db, { pedidoId: id, empresaId: EMPRESA });
+  assert.equal(picking.asignar(db, { pedidoId: id, preparadorId: dos, empresaId: EMPRESA, ahora: AHORA }).ok, true);
+});
+
+test("lo que ya se separo no se pierde al reasignar", () => {
+  if (!hayBase) return;
+  const art = insumo(`C ${unico()}`, `779${unico()}`);
+  const id = pedido([[art, 10]]);
+  const uno = prepararA(`Arranca ${unico()}`);
+  picking.asignar(db, { pedidoId: id, preparadorId: uno, empresaId: EMPRESA, ahora: AHORA });
+  picking.cargarManual(db, { pedidoId: id, items: [{ productoId: art, cantidadPreparada: 4 }] });
+
+  picking.desasignar(db, { pedidoId: id, empresaId: EMPRESA });
+  assert.equal(preparadaDe(id, art), 4, "el que sigue no arranca de cero");
+});
+
+test("un pedido cerrado no se asigna", () => {
+  if (!hayBase) return;
+  const id = pedido([[insumo(`D ${unico()}`), 1]]);
+  db.prepare(`UPDATE Pedidos SET Status = 'closed' WHERE PedidoID = ?`).run(id);
+  const r = picking.asignar(db, { pedidoId: id, preparadorId: prepararA(`X ${unico()}`), empresaId: EMPRESA, ahora: AHORA });
+  assert.equal(r.ok, false);
+});
+
+test("un preparador dado de baja no recibe pedidos", () => {
+  if (!hayBase) return;
+  const id = pedido([[insumo(`E ${unico()}`), 1]]);
+  const prep = prepararA(`Se fue ${unico()}`);
+  picking.desactivarPreparador(db, { id: prep, empresaId: EMPRESA });
+  assert.equal(picking.asignar(db, { pedidoId: id, preparadorId: prep, empresaId: EMPRESA, ahora: AHORA }).ok, false);
+});
+
+test("el preparador ve solo lo suyo", () => {
+  if (!hayBase) return;
+  const mio  = pedido([[insumo(`F ${unico()}`), 1]]);
+  const otro = pedido([[insumo(`G ${unico()}`), 1]]);
+  const yo   = prepararA(`Yo ${unico()}`);
+  const vos  = prepararA(`Vos ${unico()}`);
+  picking.asignar(db, { pedidoId: mio,  preparadorId: yo,  empresaId: EMPRESA, ahora: AHORA });
+  picking.asignar(db, { pedidoId: otro, preparadorId: vos, empresaId: EMPRESA, ahora: AHORA });
+
+  const mios = picking.pedidosAsignados(db, { empresaId: EMPRESA, preparadorId: yo }).map((p) => p.id);
+  assert.ok(mios.includes(mio));
+  assert.ok(!mios.includes(otro), "no tendria que ver el pedido del otro");
+
+  // El jefe, sin filtro, ve los dos.
+  const todos = picking.pedidosAsignados(db, { empresaId: EMPRESA }).map((p) => p.id);
+  assert.ok(todos.includes(mio) && todos.includes(otro));
+});
+
+/* ========================= El escaneo ========================= */
+
+test("un disparo de la pistola suma uno", () => {
+  if (!hayBase) return;
+  const barra = `779${unico()}`;
+  const art = insumo(`Detergente ${unico()}`, barra);
+  const id = pedido([[art, 5]]);
+
+  const r = picking.escanear(db, { pedidoId: id, codigoBarra: barra, empresaId: EMPRESA });
+  assert.equal(r.ok, true);
+  assert.equal(r.linea.preparada, 1);
+  picking.escanear(db, { pedidoId: id, codigoBarra: barra, empresaId: EMPRESA });
+  assert.equal(preparadaDe(id, art), 2);
+});
+
+test("la pistola manda espacios de mas y hay que aguantarlos", () => {
+  if (!hayBase) return;
+  const barra = `779${unico()}`;
+  const art = insumo(`Espacios ${unico()}`, barra);
+  const id = pedido([[art, 3]]);
+  assert.equal(picking.escanear(db, { pedidoId: id, codigoBarra: ` ${barra} `, empresaId: EMPRESA }).ok, true);
+  assert.equal(preparadaDe(id, art), 1);
+});
+
+test("un codigo que no es de ningun insumo avisa y no suma", () => {
+  if (!hayBase) return;
+  const art = insumo(`Solo ${unico()}`, `779${unico()}`);
+  const id = pedido([[art, 5]]);
+  const r = picking.escanear(db, { pedidoId: id, codigoBarra: "0000000000000", empresaId: EMPRESA });
+  assert.equal(r.ok, false);
+  assert.equal(r.motivo, picking.MOTIVOS.NO_EXISTE);
+  assert.equal(preparadaDe(id, art), 0);
+});
+
+test("un insumo que no esta en el pedido avisa con nombre y apellido", () => {
+  if (!hayBase) return;
+  // El error mas comun del deposito: agarrar del estante de al lado.
+  const pedido1 = insumo(`Pedido ${unico()}`, `779${unico()}`);
+  const vecino  = `779${unico()}`;
+  insumo(`EL DE AL LADO ${unico()}`, vecino);
+  const id = pedido([[pedido1, 5]]);
+
+  const r = picking.escanear(db, { pedidoId: id, codigoBarra: vecino, empresaId: EMPRESA });
+  assert.equal(r.ok, false);
+  assert.equal(r.motivo, picking.MOTIVOS.NO_ESTA_EN_PEDIDO);
+  assert.match(r.error, /EL DE AL LADO/);
+  assert.equal(preparadaDe(id, pedido1), 0);
+});
+
+test("no se puede preparar mas de lo que se pidio", () => {
+  if (!hayBase) return;
+  const barra = `779${unico()}`;
+  const art = insumo(`Tope ${unico()}`, barra);
+  const id = pedido([[art, 2]]);
+
+  picking.escanear(db, { pedidoId: id, codigoBarra: barra, empresaId: EMPRESA });
+  picking.escanear(db, { pedidoId: id, codigoBarra: barra, empresaId: EMPRESA });
+  const r = picking.escanear(db, { pedidoId: id, codigoBarra: barra, empresaId: EMPRESA });
+
+  assert.equal(r.ok, false);
+  assert.equal(r.motivo, picking.MOTIVOS.YA_COMPLETO);
+  assert.equal(preparadaDe(id, art), 2, "no tendria que haber pasado de 2");
+});
+
+test("el codigo de barras de otra empresa no sirve aca", () => {
+  if (!hayBase) return;
+  const barra = `779${unico()}`;
+  const ajeno = Number(db.prepare(
+    `INSERT INTO Productos (ProductName, Precio, Stock, empresa_id, codigo_barra, is_active)
+     VALUES (?, 100, 10, 2, ?, 1)`
+  ).run(`Ajeno ${unico()}`, barra).lastInsertRowid);
+  const id = pedido([[insumo(`Propio ${unico()}`), 5]]);
+
+  const r = picking.escanear(db, { pedidoId: id, codigoBarra: barra, empresaId: EMPRESA });
+  assert.equal(r.ok, false);
+  assert.equal(r.motivo, picking.MOTIVOS.NO_EXISTE);
+  assert.ok(ajeno > 0);
+});
+
+/* ========================= Carga a mano ========================= */
+
+test("los bultos se cargan a mano de una", () => {
+  if (!hayBase) return;
+  const art = insumo(`Bulto ${unico()}`);  // sin codigo de barras
+  const id = pedido([[art, 12]]);
+  const r = picking.cargarManual(db, { pedidoId: id, items: [{ productoId: art, cantidadPreparada: 12 }] });
+  assert.equal(r.ok, true);
+  assert.equal(preparadaDe(id, art), 12);
+});
+
+test("a mano tampoco se puede pasar de lo pedido", () => {
+  if (!hayBase) return;
+  const art = insumo(`Pasado ${unico()}`);
+  const id = pedido([[art, 3]]);
+  const r = picking.cargarManual(db, { pedidoId: id, items: [{ productoId: art, cantidadPreparada: 99 }] });
+  assert.equal(r.ok, false);
+  assert.equal(preparadaDe(id, art), 0);
+});
+
+test("se puede corregir a la baja, incluso a cero", () => {
+  if (!hayBase) return;
+  const art = insumo(`Corrige ${unico()}`);
+  const id = pedido([[art, 10]]);
+  picking.cargarManual(db, { pedidoId: id, items: [{ productoId: art, cantidadPreparada: 7 }] });
+  picking.cargarManual(db, { pedidoId: id, items: [{ productoId: art, cantidadPreparada: 0 }] });
+  assert.equal(preparadaDe(id, art), 0);
+});
+
+test("una linea mala no arruina las buenas del mismo envio", () => {
+  if (!hayBase) return;
+  const bueno = insumo(`Bueno ${unico()}`);
+  const malo  = insumo(`Malo ${unico()}`);
+  const id = pedido([[bueno, 5], [malo, 5]]);
+  const r = picking.cargarManual(db, {
+    pedidoId: id,
+    items: [{ productoId: bueno, cantidadPreparada: 5 }, { productoId: malo, cantidadPreparada: 50 }],
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.errores.length, 1);
+  assert.equal(preparadaDe(id, bueno), 5, "lo que estaba bien tenia que quedar");
+  assert.equal(preparadaDe(id, malo), 0);
+});
+
+/* ========================= Las líneas y el avance ========================= */
+
+test("las lineas dicen cual no tiene codigo de barras", () => {
+  if (!hayBase) return;
+  const conBarra = insumo(`Con ${unico()}`, `779${unico()}`);
+  const sinBarra = insumo(`Sin ${unico()}`);
+  const id = pedido([[conBarra, 2], [sinBarra, 3]]);
+
+  const lineas = picking.lineasDePicking(db, id);
+  assert.equal(lineas.length, 2);
+  assert.ok(lineas.find((l) => l.productoId === conBarra).codigoBarra);
+  assert.equal(lineas.find((l) => l.productoId === sinBarra).codigoBarra, null);
+});
+
+test("el contador de arriba dice cuanto falta", () => {
+  if (!hayBase) return;
+  const uno = insumo(`U1 ${unico()}`);
+  const dos = insumo(`U2 ${unico()}`);
+  const id = pedido([[uno, 4], [dos, 6]]);
+
+  let a = picking.avance(db, id);
+  assert.deepEqual(
+    [a.lineas, a.lineasCompletas, a.unidadesPedidas, a.unidadesPreparadas, a.completo],
+    [2, 0, 10, 0, false]
+  );
+
+  picking.cargarManual(db, { pedidoId: id, items: [
+    { productoId: uno, cantidadPreparada: 4 }, { productoId: dos, cantidadPreparada: 6 },
+  ]});
+  a = picking.avance(db, id);
+  assert.equal(a.lineasCompletas, 2);
+  assert.equal(a.unidadesPreparadas, 10);
+  assert.equal(a.completo, true);
+});
+
+/* ========================= Terminar ========================= */
+
+test("terminar NO cierra el pedido: eso lo hace el jefe", () => {
+  if (!hayBase) return;
+  // Cerrar dispara el mail al supervisor y el descuento de stock.
+  const art = insumo(`Fin ${unico()}`);
+  const id = pedido([[art, 2]]);
+  const prep = prepararA(`Termina ${unico()}`);
+  picking.asignar(db, { pedidoId: id, preparadorId: prep, empresaId: EMPRESA, ahora: AHORA });
+  picking.cargarManual(db, { pedidoId: id, items: [{ productoId: art, cantidadPreparada: 2 }] });
+
+  const r = picking.terminar(db, { pedidoId: id, empresaId: EMPRESA, ahora: AHORA });
+  assert.equal(r.ok, true);
+
+  const p = db.prepare(`SELECT Status, cerrado, closedat, preparacion_terminada_at FROM Pedidos WHERE PedidoID = ?`).get(id);
+  assert.equal(p.Status, "preparing", "tiene que seguir en preparacion");
+  assert.ok(!p.closedat, "no se tenia que cerrar");
+  assert.equal(p.preparacion_terminada_at, AHORA);
+});
+
+test("se puede terminar incompleto: puede no haber stock", () => {
+  if (!hayBase) return;
+  const art = insumo(`Falta ${unico()}`);
+  const id = pedido([[art, 10]]);
+  const prep = prepararA(`Incompleto ${unico()}`);
+  picking.asignar(db, { pedidoId: id, preparadorId: prep, empresaId: EMPRESA, ahora: AHORA });
+  picking.cargarManual(db, { pedidoId: id, items: [{ productoId: art, cantidadPreparada: 3 }] });
+
+  const r = picking.terminar(db, { pedidoId: id, empresaId: EMPRESA, ahora: AHORA });
+  assert.equal(r.ok, true);
+  assert.equal(r.avance.completo, false);
+  assert.equal(r.avance.unidadesPreparadas, 3);
+});
+
+test("un pedido sin asignar no se puede terminar", () => {
+  if (!hayBase) return;
+  const id = pedido([[insumo(`Huerfano ${unico()}`), 1]]);
+  assert.equal(picking.terminar(db, { pedidoId: id, empresaId: EMPRESA, ahora: AHORA }).ok, false);
+});
+
+test("el jefe puede devolverselo al preparador", () => {
+  if (!hayBase) return;
+  const id = pedido([[insumo(`Devuelto ${unico()}`), 1]]);
+  const prep = prepararA(`Devuelve ${unico()}`);
+  picking.asignar(db, { pedidoId: id, preparadorId: prep, empresaId: EMPRESA, ahora: AHORA });
+  picking.terminar(db, { pedidoId: id, empresaId: EMPRESA, ahora: AHORA });
+
+  assert.equal(picking.reabrir(db, { pedidoId: id, empresaId: EMPRESA }).ok, true);
+  const p = db.prepare(`SELECT preparacion_terminada_at t, preparador_id FROM Pedidos WHERE PedidoID = ?`).get(id);
+  assert.equal(p.t, null);
+  assert.equal(p.preparador_id, prep, "sigue siendo del mismo");
+});
+
+test("volver a asignar limpia el terminado", () => {
+  if (!hayBase) return;
+  const id = pedido([[insumo(`Reasigna ${unico()}`), 1]]);
+  const prep = prepararA(`Reasigna ${unico()}`);
+  picking.asignar(db, { pedidoId: id, preparadorId: prep, empresaId: EMPRESA, ahora: AHORA });
+  picking.terminar(db, { pedidoId: id, empresaId: EMPRESA, ahora: AHORA });
+  picking.asignar(db, { pedidoId: id, preparadorId: prep, empresaId: EMPRESA, ahora: AHORA });
+
+  const p = db.prepare(`SELECT preparacion_terminada_at t FROM Pedidos WHERE PedidoID = ?`).get(id);
+  assert.equal(p.t, null);
+});
+
+/* ========================= Multiempresa ========================= */
+
+/* ========================= Las rutas ========================= */
+
+// deposito.js termina con router.put("/orders/:id/:action"), que es un comodín
+// y se come cualquier PUT de dos segmentos. Si una ruta del picking queda
+// DEBAJO, deja de existir sin que nadie se entere: contesta 500 "Sin columnas
+// de estado". Esto es lo único que lo detecta.
+test("las rutas del picking ganan contra el comodin de estados", async () => {
+  if (!hayBase) return;
+  const router = (await import("../src/routes/deposito.js")).default;
+
+  const primera = (metodo, ruta) => router.stack
+    .findIndex((l) => l.route?.path === ruta && l.route.methods[metodo]);
+  const comodin = primera("put", "/orders/:id/:action");
+  assert.ok(comodin > 0, "no se encontro el comodin: cambio de nombre?");
+
+  for (const ruta of ["/orders/:id/asignar", "/orders/:id/desasignar",
+                      "/orders/:id/picking"]) {
+    const i = primera("put", ruta);
+    assert.ok(i >= 0, `falta la ruta ${ruta}`);
+    assert.ok(i < comodin, `${ruta} quedo DEBAJO del comodin y nunca se va a ejecutar`);
+  }
+});
+
+test("estan todas las rutas que usa la pantalla", async () => {
+  if (!hayBase) return;
+  const router = (await import("../src/routes/deposito.js")).default;
+  const hay = (metodo, ruta) => router.stack
+    .some((l) => l.route?.path === ruta && l.route.methods[metodo]);
+
+  for (const [m, r] of [
+    ["get", "/preparadores"], ["post", "/preparadores"], ["delete", "/preparadores/:id"],
+    ["get", "/preparacion"], ["get", "/orders/:id/picking"],
+    ["post", "/orders/:id/picking/escanear"], ["put", "/orders/:id/picking"],
+    ["put", "/orders/:id/picking/terminar"], ["put", "/orders/:id/picking/reabrir"],
+    ["put", "/orders/:id/asignar"], ["put", "/orders/:id/desasignar"],
+  ]) {
+    assert.ok(hay(m, r), `falta ${m.toUpperCase()} ${r}`);
+  }
+});
+
+test("no se toca un pedido de otra empresa", () => {
+  if (!hayBase) return;
+  const id = Number(db.prepare(
+    `INSERT INTO Pedidos (EmpleadoID, Rol, Total, Status, empresa_id) VALUES (1,'supervisor',0,'open',2)`
+  ).run().lastInsertRowid);
+  const prep = prepararA(`Curioso ${unico()}`);
+
+  assert.equal(picking.asignar(db, { pedidoId: id, preparadorId: prep, empresaId: EMPRESA, ahora: AHORA }).ok, false);
+  assert.equal(picking.desasignar(db, { pedidoId: id, empresaId: EMPRESA }).ok, false);
+  assert.equal(picking.terminar(db, { pedidoId: id, empresaId: EMPRESA, ahora: AHORA }).ok, false);
+});

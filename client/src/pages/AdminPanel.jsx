@@ -78,7 +78,8 @@ function ProductsSection() {
     name: "",
     price: "",
     stock: "",
-    code: "",
+    code:"",
+    codigoBarra:"",
     catId: "",
     imageUrl: "",
     retornable: false,
@@ -172,7 +173,8 @@ function ProductsSection() {
     name: "",
     price: "",
     stock: "",
-    code: "",
+    code:"",
+    codigoBarra:"",
     catId: "",
     retornable: false,
   });
@@ -195,6 +197,7 @@ const onEdit = async (row) => {
     price: row.price ?? "",
     stock: row.stock ?? "",
     code: row.code ?? "",
+    codigoBarra: row.codigoBarra ?? "",
     catId: "",
     retornable: Number(row.retornable ?? 0) === 1,
   });
@@ -229,6 +232,7 @@ const onEdit = async (row) => {
       price: data?.price ?? prev.price ?? "",
       stock: data?.stock ?? prev.stock ?? "",
       code: data?.code ?? prev.code ?? "",
+      codigoBarra: data?.codigoBarra ?? prev.codigoBarra ?? "",
       catId,
       retornable: Number(data?.retornable ?? 0) === 1,
     }));
@@ -243,7 +247,7 @@ const onEdit = async (row) => {
   const onCancel = () => {
     setEditingId(null);
     setCatTouched(false);
-    setDraft({ name: "", price: "", stock: "", code: "", catId: "", imageUrl: "", retornable: false });
+    setDraft({ name: "", price: "", stock: "", code: "", codigoBarra: "", catId: "", imageUrl: "", retornable: false });
     setStatusMsg("");
     setErr("");
   };
@@ -257,6 +261,7 @@ const onEdit = async (row) => {
     price: draft.price === "" || draft.price === null ? null : Number(draft.price),
     stock: draft.stock === "" || draft.stock === null ? null : Number(draft.stock),
     code: draft.code === "" || draft.code === null ? null : String(draft.code),
+    codigoBarra: String(draft.codigoBarra || "").trim(),
     imageUrl: draft.imageUrl === "" || draft.imageUrl === null ? null : String(draft.imageUrl).trim(),
     retornable: !!draft.retornable,
   };
@@ -642,6 +647,19 @@ const onEdit = async (row) => {
                 }
               />
             </label>
+            <label>
+              <span>Codigo de barras</span>
+              <input
+                className="input"
+                inputMode="numeric"
+                placeholder="Escanea con la pistola"
+                value={draft.codigoBarra}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, codigoBarra: e.target.value.trim() }))
+                }
+              />
+            </label>
+
             <label>
               <span>URL de foto (opcional)</span>
               <input
