@@ -4458,7 +4458,7 @@ export default function AdminPanel() {
   const { role } = useParams();
   const base = `/app/${role}`;
   const { user, loading } = useAuth();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
 
   const roles = useMemo(
     () => (user?.roles || []).map((r) => String(r).toLowerCase()),
@@ -4466,25 +4466,19 @@ export default function AdminPanel() {
   );
   const isAdmin = roles.includes("admin");
 
-  const initialTab = (() => {
-    const t = searchParams.get("tab");
-    return t || "products";
-  })();
-
-  const [tab, setTab] = useState(initialTab);
+  // Se LEE al entrar pero no se escribe: moverse entre secciones no ensucia la
+  // dirección con ?tab=. Leerlo sigue haciendo falta para dos cosas: abrir una
+  // sección en otra pestaña desde el menú (son enlaces de verdad) y entrar a
+  // las secciones de NAV_OCULTOS, que no tienen otra puerta.
+  //
+  // El permiso nunca dependió de esto: lo decide el rol, que el servidor lee
+  // de la base en cada pedido. Ver server/test/permisosRutas.test.js.
+  const [tab, setTab] = useState(() => searchParams.get("tab") || "products");
 
   useEffect(() => {
     if (loading) return;
     if (!user || !isAdmin) nav("/app");
   }, [user, loading, isAdmin, nav]);
-
-  useEffect(() => {
-    setSearchParams((prev) => {
-      const p = new URLSearchParams(prev);
-      p.set("tab", tab);
-      return p;
-    });
-  }, [tab, setSearchParams]);
 
   if (loading) return <div className="state">Cargando…</div>;
   if (!isAdmin) return null;
