@@ -17,8 +17,32 @@ import { formatNumber } from "../utils/format";
 const soloNumeros = (v) => String(v ?? "").replace(/\D/g, "");
 const unidades = (n) => `${formatNumber(n)} ${n === 1 ? "unidad" : "unidades"}`;
 
+/**
+ * Qué se le pregunta a cada insumo al devolverlo. El número lo manda el
+ * servidor en `preguntaEstado` y sale de `Productos.pregunta_estado`.
+ *
+ * A un líquido se le pregunta CUÁNTO QUEDA, no si se abrió: un bidón de 5
+ * litros al que le falta uno está abierto pero prácticamente entero, y
+ * cobrarlo completo era lo que trababa estas devoluciones.
+ *
+ * A una herramienta se le pregunta en qué estado volvió: si vuelve sana es
+ * como si nunca hubiera salido, y si vuelve rota la paga el que la rompió.
+ */
+const OPCIONES = {
+  1: [
+    ["sin_abrir",  "Sin abrir",      "Entra al stock y se le descuenta el consumo al servicio"],
+    ["casi_lleno", "Más de ¾ lleno", "Va a remanentes, pero igual se le descuenta el consumo"],
+    ["usado",      "Usado",          "Va a remanentes y el servicio lo paga: ya lo gastó"],
+  ],
+  2: [
+    ["buen_estado", "En buen estado",    "Entra al stock y no se le cobra nada: volvió como salió"],
+    ["roto",        "Roto o inservible", "Va a remanentes y lo paga el servicio, que lo rompió"],
+  ],
+};
+
 export default function DevolucionesDeposito() {
-  const [estados, setEstados] = useState({});   // productoId -> "sin_abrir" | "usado"
+  // productoId -> "sin_abrir" | "casi_lleno" | "usado" | "buen_estado" | "roto"
+  const [estados, setEstados] = useState({});
   const [numero, setNumero] = useState("");
   const [buscando, setBuscando] = useState(false);
   const [remito, setRemito] = useState(null);
@@ -73,19 +97,25 @@ export default function DevolucionesDeposito() {
     .map((i) => ({ item: i, cantidad: Number(cant[i.productoId] || 0) }))
     .filter((x) => x.cantidad > 0), [items, cant]);
 
-  // La pregunta es CUÁNTO QUEDA, no si se abrió. Un bidón de 5 litros al que
-  // le falta uno está abierto pero prácticamente entero, y cobrarlo completo
-  // era lo que trababa las devoluciones de líquidos.
-  //
-  // Sólo "usado" le cobra el consumo al servicio; "sin abrir" y "casi lleno"
-  // se lo descuentan. Arranca en "sin abrir", que es lo más frecuente.
-  const volvioUsado = (item) => item.preguntaEstado && estados[item.productoId] === "usado";
-  const estadoDe = (item) => estados[item.productoId] || "sin_abrir";
+  // Al servicio se le cobra lo que gastó o lo que rompió. Lo demás se le
+  // descuenta, aunque vuelva abierto: dónde entra la mercadería y a quién se
+  // le cobra son dos preguntas distintas.
+  const SE_COBRAN = new Set(["usado", "roto"]);
+  // Y lo que no vuelve como nuevo no entra al stock general: espera en
+  // remanentes a que alguien lo revise.
+  const A_REMANENTES = new Set(["casi_lleno", "usado", "roto"]);
+
+  const porDefecto = (item) => (Number(item.preguntaEstado) === 2 ? "buen_estado" : "sin_abrir");
+  const estadoDe = (item) => estados[item.productoId] || porDefecto(item);
+  const volvioUsado = (item) => Number(item.preguntaEstado) > 0 && SE_COBRAN.has(estadoDe(item));
+  const vaARemanentes = (item) =>
+    !item.retornable && Number(item.preguntaEstado) > 0 && A_REMANENTES.has(estadoDe(item));
 
   const sumar = (filtro) => elegidos.filter(filtro).reduce((a, x) => a + x.cantidad, 0);
   const uRetornables = sumar((x) => x.item.retornable);
   const uUsados = sumar((x) => !x.item.retornable && volvioUsado(x.item));
   const uDescuentan = sumar((x) => !x.item.retornable && !volvioUsado(x.item));
+  const uRemanentes = sumar((x) => vaARemanentes(x.item));
 
   const confirmar = async () => {
     if (!elegidos.length) return;
@@ -207,14 +237,10 @@ export default function DevolucionesDeposito() {
                             </div>
                             {it.preguntaEstado && Number(valor) > 0 && (
                               <div className="dev-estado" role="radiogroup"
-                                aria-label={`¿Cuánto queda de ${it.nombre}?`}>
-                                {[
-                                  ["sin_abrir", "Sin abrir", "Se le descuenta el consumo al servicio"],
-                                  ["casi_lleno", "Más de ¾ lleno",
-                                   "Abierto pero prácticamente entero: también se le descuenta el consumo"],
-                                  ["usado", "Usado",
-                                   "Vuelve al stock, pero el servicio ya lo gastó: se le cobra igual"],
-                                ].map(([valorEstado, etiqueta, ayuda]) => (
+                                aria-label={Number(it.preguntaEstado) === 2
+                                  ? `¿En qué estado volvió ${it.nombre}?`
+                                  : `¿Cuánto queda de ${it.nombre}?`}>
+                                {OPCIONES[Number(it.preguntaEstado)].map(([valorEstado, etiqueta, ayuda]) => (
                                   <label key={valorEstado} title={ayuda}>
                                     <input type="radio" name={`estado-${it.productoId}`}
                                       checked={estadoDe(it) === valorEstado}
@@ -257,9 +283,13 @@ export default function DevolucionesDeposito() {
                     ? "Cargá las cantidades que volvieron."
                     : (
                       <>
-                        Vuelven <strong>{unidades(uDescuentan + uRetornables + uUsados)}</strong> al stock
+                        Vuelven <strong>{unidades(uDescuentan + uRetornables + uUsados)}</strong>
+                        {uRemanentes > 0
+                          ? <> · {formatNumber(uDescuentan + uRetornables + uUsados - uRemanentes)} al stock
+                              y {formatNumber(uRemanentes)} a remanentes, para revisar</>
+                          : <> al stock</>}
                         {uDescuentan > 0 && <> · se le descuentan {formatNumber(uDescuentan)} al consumo del servicio</>}
-                        {uUsados > 0 && <> · {formatNumber(uUsados)} volvieron abiertas o usadas: se le cobran igual</>}
+                        {uUsados > 0 && <> · {formatNumber(uUsados)} se le cobran igual: las gastó o las rompió</>}
                         {uRetornables > 0 && <> · {formatNumber(uRetornables)} de los que van y vuelven: el consumo no cambia</>}
                       </>
                     )}

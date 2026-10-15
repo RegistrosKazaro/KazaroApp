@@ -482,12 +482,20 @@ export function ensureProductoRetornable() {
     if (!cols.includes("retornable")) {
       db.exec(`ALTER TABLE Productos ADD COLUMN retornable INTEGER NOT NULL DEFAULT 0`);
     }
-    // Insumos a los que el depósito tiene que preguntar si volvieron abiertos
-    // o usados: líquidos y textiles. Un bidón empezado o una rejilla sucia
-    // vuelven al stock, pero el servicio ya los gastó. Arranca en 0 para
-    // todos: hasta que se marquen, nada cambia. Ver ensureDevolucionesViews.
+    // A qué insumos el depósito tiene que preguntarles cómo volvieron, y qué
+    // pregunta se le hace:
+    //   0  nada, vuelve al stock y se descuenta (el caso normal)
+    //   1  líquidos y textiles → "¿cuánto queda?"  (sin abrir / más de ¾ / usado)
+    //   2  herramientas        → "¿en qué estado?" (buen estado / roto)
+    // Arranca en 0 para todos: hasta que se marquen, nada cambia.
     if (!cols.includes("pregunta_estado")) {
       db.exec(`ALTER TABLE Productos ADD COLUMN pregunta_estado INTEGER NOT NULL DEFAULT 0`);
+    }
+    // Lo que volvió abierto, usado o roto no entra al stock general: queda
+    // aparte hasta que alguien lo revise y lo pase al stock o lo descarte. Si
+    // entrara al stock general, medio bidón figuraría como un bidón lleno.
+    if (!cols.includes("stock_remanente")) {
+      db.exec(`ALTER TABLE Productos ADD COLUMN stock_remanente INTEGER NOT NULL DEFAULT 0`);
     }
     if (!cols.includes("codigo_barra")){
       db.exec(`ALTER TABLE Productos ADD COLUMN codigo_barra TEXT`);
@@ -1639,7 +1647,11 @@ function ensureDevolucionesViews() {
         SELECT pedido_id, producto_id, COALESCE(SUM(cantidad),0) AS devuelto
         FROM devoluciones
         WHERE LOWER(COALESCE(estado,'')) = 'aprobada'
-          AND LOWER(COALESCE(tipo,'no_usado')) NOT IN ('retornable', 'usado')
+          -- Lo que NO está acá se le cobra al servicio: 'usado' lo gastó y
+          -- 'roto' lo rompió. 'casi_lleno' sí descuenta aunque vaya a
+          -- remanentes: dónde entra la mercadería y a quién se le cobra son
+          -- dos cosas distintas.
+          AND LOWER(COALESCE(tipo,'no_usado')) NOT IN ('retornable', 'usado', 'roto')
         GROUP BY pedido_id, producto_id;
     `);
 

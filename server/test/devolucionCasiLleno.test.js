@@ -89,25 +89,51 @@ const tipoGuardado = (pedidoId) =>
 const stockDe = (productoId) =>
   db.prepare(`SELECT Stock s FROM Productos WHERE ProductID = ?`).get(productoId).s;
 
+const remanenteDe = (productoId) =>
+  db.prepare(`SELECT COALESCE(stock_remanente,0) r FROM Productos WHERE ProductID = ?`).get(productoId).r;
+
+/** Saca unidades del remanente: al stock o al tacho de basura. */
+const moverRemanente = (productoId, body) =>
+  new Promise((resolve) => {
+    const req = { params: { productoId: String(productoId) }, query: {}, body,
+                  user: { id: 1, empresaId: 1, roles: ["deposito"], username: "test" } };
+    const res = { statusCode: 200, status(c) { this.statusCode = c; return this; },
+                  json(d) { resolve({ status: this.statusCode, body: d }); } };
+    Promise.resolve(handler("put", "/remanentes/:productoId")(req, res))
+      .catch((e) => resolve({ status: 500, body: { error: e.message } }));
+  });
+
+const listarRemanentes = () =>
+  new Promise((resolve) => {
+    const req = { params: {}, query: {}, body: {},
+                  user: { id: 1, empresaId: 1, roles: ["deposito"], username: "test" } };
+    const res = { statusCode: 200, status(c) { this.statusCode = c; return this; },
+                  json(d) { resolve({ status: this.statusCode, body: d }); } };
+    Promise.resolve(handler("get", "/remanentes")(req, res))
+      .catch((e) => resolve({ status: 500, body: { error: e.message } }));
+  });
+
 const neto = (pedidoId) =>
   db.prepare(`SELECT * FROM v_pedido_items_neto WHERE PedidoID = ?`).get(pedidoId);
 
 /* ===================== El caso que trababa todo ===================== */
 
-test("el bidon casi lleno vuelve al stock Y se le descuenta el consumo", async () => {
+test("el bidon casi lleno va a REMANENTES y se le descuenta el consumo", async () => {
   if (sinBase()) return;
   // 5 litros y se uso 1: casi ni se distingue. Antes se le cobraba entero.
+  // Y no entra al stock general: medio abierto no es un bidon lleno.
   const { pedidoId, productoId, cantidad } = bidonEntregado({ cantidad: 10 });
   const antes = stockDe(productoId);
 
   const r = await devolver(pedidoId, productoId, 4, "casi_lleno");
   assert.equal(r.status, 200);
   assert.equal(tipoGuardado(pedidoId), "casi_lleno");
-  assert.equal(stockDe(productoId), antes + 4, "tenia que volver al stock");
-  assert.equal(neto(pedidoId).Cantidad, cantidad - 4, "y descontarse del consumo");
+  assert.equal(stockDe(productoId), antes, "el stock general NO se tenia que mover");
+  assert.equal(remanenteDe(productoId), 4, "tenia que entrar a remanentes");
+  assert.equal(neto(pedidoId).Cantidad, cantidad - 4, "y descontarse del consumo igual");
 });
 
-test("el bidon por la mitad vuelve al stock pero se le cobra igual", async () => {
+test("el bidon por la mitad va a remanentes y se le cobra igual", async () => {
   if (sinBase()) return;
   const { pedidoId, productoId, cantidad } = bidonEntregado({ cantidad: 10 });
   const antes = stockDe(productoId);
@@ -115,16 +141,64 @@ test("el bidon por la mitad vuelve al stock pero se le cobra igual", async () =>
   const r = await devolver(pedidoId, productoId, 4, "usado");
   assert.equal(r.status, 200);
   assert.equal(tipoGuardado(pedidoId), "usado");
-  assert.equal(stockDe(productoId), antes + 4, "igual vuelve al stock");
-  assert.equal(neto(pedidoId).Cantidad, cantidad, "pero el consumo no baja");
+  assert.equal(stockDe(productoId), antes, "el stock general NO se mueve");
+  assert.equal(remanenteDe(productoId), 4);
+  assert.equal(neto(pedidoId).Cantidad, cantidad, "y el consumo no baja");
 });
 
-test("sin abrir sigue funcionando como siempre", async () => {
+test("sin abrir sigue yendo al stock general, como siempre", async () => {
   if (sinBase()) return;
   const { pedidoId, productoId, cantidad } = bidonEntregado({ cantidad: 10 });
+  const antes = stockDe(productoId);
   await devolver(pedidoId, productoId, 3, "sin_abrir");
   assert.equal(tipoGuardado(pedidoId), "no_usado");
+  assert.equal(stockDe(productoId), antes + 3, "cerrado va al stock de siempre");
+  assert.equal(remanenteDe(productoId), 0);
   assert.equal(neto(pedidoId).Cantidad, cantidad - 3);
+});
+
+/* ============ Herramientas: la misma mecánica, otra pregunta ============ */
+
+test("la herramienta que vuelve en buen estado es como si nunca hubiera salido", async () => {
+  if (sinBase()) return;
+  // Un embudo que sale y vuelve intacto no se consumio: ni unidades ni plata.
+  const { pedidoId, productoId, cantidad } = bidonEntregado({ cantidad: 6, preguntaEstado: 2 });
+  const antes = stockDe(productoId);
+
+  const r = await devolver(pedidoId, productoId, 6, "buen_estado");
+  assert.equal(r.status, 200);
+  assert.equal(tipoGuardado(pedidoId), "no_usado");
+  assert.equal(stockDe(productoId), antes + 6, "vuelve al stock general");
+  assert.equal(remanenteDe(productoId), 0);
+  assert.equal(neto(pedidoId).Cantidad, cantidad - 6, "no consumio nada");
+  assert.equal(neto(pedidoId).Subtotal, 0);
+});
+
+test("la herramienta rota se le cobra al servicio y no entra al stock general", async () => {
+  if (sinBase()) return;
+  const { pedidoId, productoId, cantidad, precio } = bidonEntregado({ cantidad: 6, preguntaEstado: 2 });
+  const antes = stockDe(productoId);
+
+  const r = await devolver(pedidoId, productoId, 2, "roto");
+  assert.equal(r.status, 200);
+  assert.equal(tipoGuardado(pedidoId), "roto");
+  assert.equal(stockDe(productoId), antes, "rota no vuelve al stock");
+  assert.equal(remanenteDe(productoId), 2, "queda en remanentes para descartar");
+  assert.equal(neto(pedidoId).Cantidad, cantidad, "se le cobra: la rompio el");
+  assert.equal(neto(pedidoId).Subtotal, cantidad * precio);
+});
+
+test("a un 'va y vuelve' no se le pregunta y entra al stock general", async () => {
+  if (sinBase()) return;
+  // El tacho vuelve entero y se presta de nuevo: no es un remanente.
+  const { pedidoId, productoId } = bidonEntregado({ cantidad: 5, preguntaEstado: 1 });
+  db.prepare(`UPDATE Productos SET retornable = 1 WHERE ProductID = ?`).run(productoId);
+  const antes = stockDe(productoId);
+
+  await devolver(pedidoId, productoId, 5, "usado");
+  assert.equal(tipoGuardado(pedidoId), "retornable");
+  assert.equal(stockDe(productoId), antes + 5);
+  assert.equal(remanenteDe(productoId), 0);
 });
 
 test("casi lleno y sin abrir caen en el mismo lado de la plata", async () => {
@@ -166,13 +240,113 @@ test("sin estado (pantalla vieja) tampoco rompe", async () => {
   assert.equal(neto(pedidoId).Cantidad, cantidad - 2);
 });
 
-test("la vista de neto no necesito cambiar: excluye solo retornable y usado", () => {
+test("la vista excluye lo que se le cobra al servicio, y solo eso", () => {
   if (sinBase()) return;
+  // Si alguien toca este NOT IN, casi_lleno deja de descontar —o roto empieza
+  // a descontar— sin que nadie se entere. Por eso el test mira el texto.
   const sql = db.prepare(
     `SELECT sql FROM sqlite_master WHERE type='view' AND name='v_devoluciones_aprobadas'`
   ).get().sql;
-  assert.match(sql, /NOT IN \('retornable', 'usado'\)/,
-    "si esto cambia, casi_lleno deja de descontar sin que nadie se entere");
+  assert.match(sql, /NOT IN \('retornable', 'usado', 'roto'\)/);
+});
+
+/* ========================= Remanentes ========================= */
+
+test("el remanente aparece en la lista, con su plata", async () => {
+  if (sinBase()) return;
+  const { pedidoId, productoId, precio } = bidonEntregado({ cantidad: 10, precio: 500 });
+  await devolver(pedidoId, productoId, 3, "usado");
+
+  const r = await listarRemanentes();
+  assert.equal(r.status, 200);
+  const fila = r.body.rows.find((x) => String(x.productoId) === String(productoId));
+  assert.ok(fila, "tenia que estar en la lista");
+  assert.equal(fila.remanente, 3);
+  assert.equal(fila.precio, precio);
+});
+
+test("pasarlo al stock lo saca de remanentes y lo suma al general", async () => {
+  if (sinBase()) return;
+  const { pedidoId, productoId } = bidonEntregado({ cantidad: 10 });
+  await devolver(pedidoId, productoId, 5, "usado");
+  const antes = stockDe(productoId);
+
+  const r = await moverRemanente(productoId, { accion: "al_stock", cantidad: 3 });
+  assert.equal(r.status, 200);
+  assert.equal(remanenteDe(productoId), 2, "quedan los que no se pasaron");
+  assert.equal(stockDe(productoId), antes + 3);
+});
+
+test("descartar lo saca de remanentes y no lo suma a ningun lado", async () => {
+  if (sinBase()) return;
+  const { pedidoId, productoId } = bidonEntregado({ cantidad: 10 });
+  await devolver(pedidoId, productoId, 4, "roto");
+  const antes = stockDe(productoId);
+
+  const r = await moverRemanente(productoId, { accion: "descartar", cantidad: 4, motivo: "vencido" });
+  assert.equal(r.status, 200);
+  assert.equal(remanenteDe(productoId), 0);
+  assert.equal(stockDe(productoId), antes, "descartar no suma stock");
+});
+
+test("no se puede sacar mas de lo que hay", async () => {
+  if (sinBase()) return;
+  const { pedidoId, productoId } = bidonEntregado({ cantidad: 10 });
+  await devolver(pedidoId, productoId, 2, "usado");
+
+  const r = await moverRemanente(productoId, { accion: "al_stock", cantidad: 5 });
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /Sólo hay 2/);
+  assert.equal(remanenteDe(productoId), 2, "no se tenia que mover nada");
+});
+
+test("descartar sin decir por que no se puede: se pierde plata", async () => {
+  if (sinBase()) return;
+  const { pedidoId, productoId } = bidonEntregado({ cantidad: 10 });
+  await devolver(pedidoId, productoId, 2, "usado");
+
+  const r = await moverRemanente(productoId, { accion: "descartar", cantidad: 2, motivo: "  " });
+  assert.equal(r.status, 400);
+  assert.equal(remanenteDe(productoId), 2);
+});
+
+test("cantidades invalidas y acciones raras no hacen nada", async () => {
+  if (sinBase()) return;
+  const { pedidoId, productoId } = bidonEntregado({ cantidad: 10 });
+  await devolver(pedidoId, productoId, 3, "usado");
+
+  for (const body of [
+    { accion: "al_stock", cantidad: 0 },
+    { accion: "al_stock", cantidad: -2 },
+    { accion: "al_stock", cantidad: "hola" },
+    { accion: "regalar", cantidad: 1 },
+  ]) {
+    const r = await moverRemanente(productoId, body);
+    assert.equal(r.status, 400, JSON.stringify(body));
+  }
+  assert.equal(remanenteDe(productoId), 3);
+});
+
+test("mover el remanente NO cambia el consumo del servicio", async () => {
+  if (sinBase()) return;
+  // Eso ya se decidio al devolver. Pasarlo al stock despues no se lo perdona.
+  const { pedidoId, productoId, cantidad } = bidonEntregado({ cantidad: 10 });
+  await devolver(pedidoId, productoId, 4, "usado");
+  assert.equal(neto(pedidoId).Cantidad, cantidad);
+
+  await moverRemanente(productoId, { accion: "al_stock", cantidad: 4 });
+  assert.equal(neto(pedidoId).Cantidad, cantidad, "el consumo no se toca");
+});
+
+test("no se toca el remanente de otra empresa", async () => {
+  if (sinBase()) return;
+  const { pedidoId, productoId } = bidonEntregado({ cantidad: 10 });
+  await devolver(pedidoId, productoId, 3, "usado");
+  db.prepare(`UPDATE Productos SET empresa_id = 2 WHERE ProductID = ?`).run(productoId);
+
+  const r = await moverRemanente(productoId, { accion: "al_stock", cantidad: 3 });
+  assert.equal(r.status, 404);
+  assert.equal(remanenteDe(productoId), 3);
 });
 
 test("el resumen cuenta casi_lleno del lado que descuenta", async () => {

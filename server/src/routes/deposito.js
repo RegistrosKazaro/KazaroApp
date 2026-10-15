@@ -1190,7 +1190,7 @@ function lineasDevolubles(pedidoId) {
   const marcas = new Map(
     db.prepare(`SELECT ProductID AS id, COALESCE(retornable, 0) AS r,
                        COALESCE(pregunta_estado, 0) AS pe FROM Productos`).all()
-      .map((p) => [String(p.id), { retornable: Number(p.r) === 1, preguntaEstado: Number(p.pe) === 1 }])
+      .map((p) => [String(p.id), { retornable: Number(p.r) === 1, preguntaEstado: Number(p.pe) || 0 }])
   );
 
   return items.map((it) => {
@@ -1207,8 +1207,10 @@ function lineasDevolubles(pedidoId) {
       devuelto,
       disponible: Math.max(0, entregado - devuelto),
       retornable: marca.retornable === true,
+      // 0 = no se pregunta, 1 = líquido ("¿cuánto queda?"),
+      // 2 = herramienta ("¿en qué estado volvió?").
       // A un "va y vuelve" no se le pregunta nada: ya se sabe que se usó.
-      preguntaEstado: marca.retornable !== true && marca.preguntaEstado === true,
+      preguntaEstado: marca.retornable === true ? 0 : marca.preguntaEstado,
     };
   }).filter((l) => l.entregado > 0);
 }
@@ -1254,6 +1256,121 @@ router.get("/devoluciones/remito/:numero", mustWarehouse, (req, res) => {
 });
 
 // Registrar la devolución: suma stock y, si corresponde, descuenta el consumo.
+/* ===================== Remanentes =====================
+   Lo que volvió abierto, usado o roto espera acá a que alguien lo revise, en
+   vez de mezclarse con el stock general. De acá sale por dos puertas: al
+   stock (sirve, se reutiliza) o descartado (se venció, se rompió, se tira).
+   Sin estas dos puertas sería un pozo donde todo entra y nada sale.          */
+
+router.get("/remanentes", mustWarehouse, (req, res) => {
+  try {
+    const rows = db.prepare(
+      `SELECT ProductID AS productoId, ProductName AS nombre, Code AS codigo,
+              COALESCE(stock_remanente, 0) AS remanente,
+              COALESCE(Stock, 0) AS stock, COALESCE(Precio, 0) AS precio
+         FROM Productos
+        WHERE empresa_id = ? AND COALESCE(stock_remanente, 0) > 0
+        ORDER BY ProductName COLLATE NOCASE`
+    ).all(getEmpresaId(req));
+    res.json({
+      rows,
+      unidades: rows.reduce((a, r) => a + r.remanente, 0),
+      monto: rows.reduce((a, r) => a + r.remanente * r.precio, 0),
+    });
+  } catch (e) {
+    console.error("[deposito/remanentes]", e?.message || e);
+    res.status(500).json({ error: "No se pudieron leer los remanentes" });
+  }
+});
+
+/**
+ * Saca unidades del remanente. `accion` decide a dónde van.
+ * No toca el consumo del servicio: eso ya se decidió al devolver.
+ */
+router.put("/remanentes/:productoId", mustWarehouse, (req, res) => {
+  try {
+    const empresaId = getEmpresaId(req);
+    const productoId = req.params.productoId;
+    const accion = String(req.body?.accion ?? "");
+    if (!["al_stock", "descartar"].includes(accion)) {
+      return res.status(400).json({ error: "Acción inválida" });
+    }
+
+    const prod = db.prepare(
+      `SELECT ProductID AS id, ProductName AS nombre, Code AS codigo,
+              COALESCE(Stock,0) AS stock, COALESCE(stock_remanente,0) AS remanente
+         FROM Productos WHERE ProductID = ? AND empresa_id = ?`
+    ).get(productoId, empresaId);
+    if (!prod) return res.status(404).json({ error: "Insumo no encontrado" });
+
+    const cant = Math.trunc(Number(req.body?.cantidad));
+    if (!Number.isFinite(cant) || cant <= 0) {
+      return res.status(400).json({ error: "Poné cuántas unidades." });
+    }
+    if (cant > prod.remanente) {
+      return res.status(400).json({ error: `Sólo hay ${prod.remanente} en remanentes.` });
+    }
+
+    const motivo = String(req.body?.motivo ?? "").trim();
+    if (accion === "descartar" && !motivo) {
+      return res.status(400).json({ error: "Poné por qué se descarta." });
+    }
+
+    db.transaction(() => {
+      db.prepare(`UPDATE Productos SET stock_remanente = COALESCE(stock_remanente,0) - ? WHERE ProductID = ?`)
+        .run(cant, prod.id);
+      if (accion === "al_stock") {
+        db.prepare(`UPDATE Productos SET Stock = COALESCE(Stock,0) + ? WHERE ProductID = ?`).run(cant, prod.id);
+        registrarCambioProducto({
+          productId: prod.id, nombre: prod.nombre, codigo: prod.codigo, campo: "stock",
+          anterior: prod.stock, nuevo: prod.stock + cant,
+          tipo: "remanente", usuario: req.user?.username || req.user?.email || null,
+        });
+      }
+    })();
+
+    audit({
+      empresaId, usuario: req.user?.username || req.user?.email || null,
+      accion: "update", entidad: "Remanente", entidadId: String(prod.id),
+      detalle: accion === "al_stock"
+        ? `${cant} u. de "${prod.nombre}" pasaron de remanentes al stock${motivo ? ` — ${motivo}` : ""}`
+        : `${cant} u. de "${prod.nombre}" se descartaron de remanentes — ${motivo}`,
+    });
+
+    res.json({
+      ok: true, productoId: String(prod.id), accion, cantidad: cant,
+      remanenteNuevo: prod.remanente - cant,
+      stockNuevo: prod.stock + (accion === "al_stock" ? cant : 0),
+    });
+  } catch (e) {
+    console.error("[deposito/remanentes PUT]", e?.message || e);
+    res.status(500).json({ error: "No se pudo mover el remanente" });
+  }
+});
+
+/**
+ * Qué pasa con cada línea según lo que contestó el depósito.
+ *
+ * La regla es una sola: lo que vuelve COMO NUEVO entra al stock general;
+ * cualquier otra cosa va a remanentes y espera que alguien la revise. Si
+ * medio bidón entrara al stock general figuraría como un bidón lleno.
+ *
+ * Y la plata se decide aparte: sólo se le cobra al servicio lo que gastó
+ * ('usado') o lo que rompió ('roto'). Un bidón abierto pero casi entero va a
+ * remanentes y aun así se le descuenta: dónde entra la mercadería y a quién
+ * se le cobra son dos preguntas distintas.
+ *
+ * Los textos de la pantalla salen de acá: líquidos (pregunta_estado = 1)
+ * contestan cuánto queda, herramientas (= 2) en qué estado volvieron.
+ */
+const DESTINOS = {
+  sin_abrir:   { tipo: "no_usado",   aRemanente: false, cobra: false },
+  buen_estado: { tipo: "no_usado",   aRemanente: false, cobra: false },
+  casi_lleno:  { tipo: "casi_lleno", aRemanente: true,  cobra: false },
+  usado:       { tipo: "usado",      aRemanente: true,  cobra: true  },
+  roto:        { tipo: "roto",       aRemanente: true,  cobra: true  },
+};
+
 router.post("/devoluciones", mustWarehouse, (req, res) => {
   try {
     const empresaId = getEmpresaId(req);
@@ -1283,19 +1400,9 @@ router.post("/devoluciones", mustWarehouse, (req, res) => {
       if (cant > linea.disponible) {
         return res.status(400).json({ error: `De ${linea.nombre} sólo se pueden devolver ${linea.disponible}` });
       }
-      // El depósito dice CUÁNTO QUEDA, no si se abrió. Un bidón de 5 litros al
-      // que le falta uno está abierto, pero prácticamente entero: cobrarlo
-      // completo era el agujero que trababa las devoluciones de líquidos.
-      //
-      //   sin_abrir    → se descuenta el consumo
-      //   casi_lleno   → se descuenta el consumo (más de 3/4, decidido 15/10/2026)
-      //   usado        → vuelve al stock pero el consumo se le cobra igual
-      //
-      // No se fracciona: media carga se paga entera, porque llevar fracciones
-      // de bidón en el stock era peor que el problema que resuelve.
       const estado = linea.preguntaEstado ? String(p?.estado ?? "") : "";
-      const usado = estado === "usado";
-      validadas.push({ ...linea, cantidad: cant, usado, casiLleno: estado === "casi_lleno" });
+      const { tipo, aRemanente, cobra } = DESTINOS[estado] ?? DESTINOS.sin_abrir;
+      validadas.push({ ...linea, cantidad: cant, tipo, aRemanente, usado: cobra });
     }
     if (!validadas.length) return res.status(400).json({ error: "No hay nada para devolver" });
 
@@ -1303,28 +1410,42 @@ router.post("/devoluciones", mustWarehouse, (req, res) => {
       INSERT INTO devoluciones (pedido_id, producto_id, cantidad, motivo, empresa_id, solicitante_id, aprobador_id, estado, tipo, fecha_resolucion)
       VALUES (?, ?, ?, ?, ?, ?, ?, 'aprobada', ?, datetime('now'))
     `);
-    const stockActual = db.prepare(`SELECT COALESCE(Stock, 0) AS s, ProductName AS n, Code AS c FROM Productos WHERE ProductID = ?`);
+    const stockActual = db.prepare(
+      `SELECT COALESCE(Stock, 0) AS s, COALESCE(stock_remanente, 0) AS rem,
+              ProductName AS n, Code AS c FROM Productos WHERE ProductID = ?`);
     const subirStock = db.prepare(`UPDATE Productos SET Stock = COALESCE(Stock, 0) + ? WHERE ProductID = ?`);
+    const subirRemanente = db.prepare(
+      `UPDATE Productos SET stock_remanente = COALESCE(stock_remanente, 0) + ? WHERE ProductID = ?`);
 
     const hecho = db.transaction(() => {
       const salida = [];
       for (const v of validadas) {
         const antes = stockActual.get(v.productoId);
-        subirStock.run(v.cantidad, v.productoId);
-        // "casi_lleno" se guarda aparte para poder contar después cuántos
-        // envases abiertos entraron. La vista de neto excluye sólo
-        // ('retornable','usado'), así que cae del lado que descuenta sin
-        // tocar una línea de SQL.
+        // Un "va y vuelve" entra al stock general aunque se haya usado: el
+        // tacho vuelve entero y se presta de nuevo.
+        const aRemanente = v.aRemanente && !v.retornable;
+
+        if (aRemanente) subirRemanente.run(v.cantidad, v.productoId);
+        else subirStock.run(v.cantidad, v.productoId);
+
         ins.run(id, v.productoId, v.cantidad, motivo, empresaId, req.user.id, req.user.id,
-          v.retornable ? "retornable"
-            : v.usado ? "usado"
-            : v.casiLleno ? "casi_lleno" : "no_usado");
-        registrarCambioProducto({
-          productId: v.productoId, nombre: antes?.n ?? v.nombre, codigo: antes?.c ?? v.codigo,
-          campo: "stock", anterior: Number(antes?.s ?? 0), nuevo: Number(antes?.s ?? 0) + v.cantidad,
-          tipo: "devolucion", usuario: req.user?.username || req.user?.email || null,
+          v.retornable ? "retornable" : v.tipo);
+
+        // El historial del producto es el del stock general. Lo que entra a
+        // remanentes no se registra ahí porque el stock no se movió; queda en
+        // la auditoría y en la fila de `devoluciones`.
+        if (!aRemanente) {
+          registrarCambioProducto({
+            productId: v.productoId, nombre: antes?.n ?? v.nombre, codigo: antes?.c ?? v.codigo,
+            campo: "stock", anterior: Number(antes?.s ?? 0), nuevo: Number(antes?.s ?? 0) + v.cantidad,
+            tipo: "devolucion", usuario: req.user?.username || req.user?.email || null,
+          });
+        }
+        salida.push({
+          ...v, aRemanente,
+          stockNuevo: Number(antes?.s ?? 0) + (aRemanente ? 0 : v.cantidad),
+          remanenteNuevo: Number(antes?.rem ?? 0) + (aRemanente ? v.cantidad : 0),
         });
-        salida.push({ ...v, stockNuevo: Number(antes?.s ?? 0) + v.cantidad });
       }
       return salida;
     })();
@@ -1333,12 +1454,14 @@ router.post("/devoluciones", mustWarehouse, (req, res) => {
     const retornables = hecho.filter((h) => h.retornable);
     const usados = hecho.filter((h) => !h.retornable && h.usado);
     const descuentan = hecho.filter((h) => !h.retornable && !h.usado);
+    const aRemanentes = hecho.filter((h) => h.aRemanente);
     audit({
       empresaId, usuario: req.user?.username || req.user?.email || null,
       accion: "update", entidad: "Devolucion", entidadId: String(id),
       detalle: `Remito #${String(id).padStart(7, "0")}: ${hecho.length} insumo(s) devueltos`
         + ` (${unidades(descuentan)} u. que se descuentan del consumo`
-        + `, ${unidades(usados)} u. que volvieron abiertas o usadas y se le cobran igual`
+        + `, ${unidades(usados)} u. que se le cobran igual`
+        + `, ${unidades(aRemanentes)} u. que fueron a remanentes`
         + ` y ${unidades(retornables)} u. retornables)`
         + ` — ${motivo}`,
     });
@@ -1349,10 +1472,12 @@ router.post("/devoluciones", mustWarehouse, (req, res) => {
       devueltos: hecho.map((h) => ({
         productoId: h.productoId, nombre: h.nombre, cantidad: h.cantidad,
         retornable: h.retornable, usado: h.usado === true, stockNuevo: h.stockNuevo,
+        aRemanente: h.aRemanente === true, remanenteNuevo: h.remanenteNuevo,
       })),
       unidadesDescontadas: unidades(descuentan),
       unidadesRetornables: unidades(retornables),
       unidadesUsadas: unidades(usados),
+      unidadesARemanentes: unidades(aRemanentes),
     });
   } catch (e) {
     console.error("[deposito/devoluciones POST]", e?.message || e);

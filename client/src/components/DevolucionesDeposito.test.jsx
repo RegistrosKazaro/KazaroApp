@@ -16,7 +16,9 @@ const REMITO = {
     { productoId: "10", nombre: "BOLSA NEGRA 80*100", codigo: "004", entregado: 500, devuelto: 0, disponible: 500, retornable: false },
     { productoId: "20", nombre: "TACHO 120 LTS C/RUEDAS", codigo: "231", entregado: 2, devuelto: 0, disponible: 2, retornable: true },
     { productoId: "30", nombre: "PAPEL HIGIENICO", codigo: "092", entregado: 10, devuelto: 10, disponible: 0, retornable: false },
-    { productoId: "40", nombre: "DETERGENTE KAZARO X 5 LTS", codigo: "100000032", entregado: 3, devuelto: 0, disponible: 3, retornable: false, preguntaEstado: true },
+    { productoId: "40", nombre: "DETERGENTE KAZARO X 5 LTS", codigo: "100000032", entregado: 3, devuelto: 0, disponible: 3, retornable: false, preguntaEstado: 1 },
+    // Herramienta: otra pregunta, misma mecánica.
+    { productoId: "50", nombre: "JARRA MEDIDORA 1 LTS", codigo: "01481", entregado: 2, devuelto: 0, disponible: 2, retornable: false, preguntaEstado: 2 },
   ],
 };
 
@@ -178,8 +180,21 @@ describe("¿Cuánto queda? (líquidos)", () => {
 
     await marcar(user, "Usado");
     const resumen = document.querySelector(".dev-efecto").textContent;
-    expect(resumen).toMatch(/2 volvieron abiertas o usadas: se le cobran igual/);
+    expect(resumen).toMatch(/2 se le cobran igual/);
+    expect(resumen).toMatch(/2 a remanentes/);
     expect(resumen).not.toMatch(/se le descuentan 2 al consumo/);
+  });
+
+  it("'más de ¾' va a remanentes aunque se le descuente la plata", async () => {
+    // Está abierto: físicamente es un remanente. Que se le devuelva la plata
+    // al servicio es otra cosa.
+    const user = userEvent.setup({ delay: null });
+    await buscar(user);
+    await user.type(screen.getByLabelText(/Cantidad que vuelve de DETERGENTE/), "2");
+    await marcar(user, "Más de ¾ lleno");
+    const resumen = document.querySelector(".dev-efecto").textContent;
+    expect(resumen).toMatch(/2 a remanentes/);
+    expect(resumen).toMatch(/se le descuentan 2 al consumo/);
   });
 
   it("manda el estado de cada línea, y sólo de las que corresponde", async () => {
@@ -206,6 +221,51 @@ describe("¿Cuánto queda? (líquidos)", () => {
     await waitFor(() => expect(api.post).toHaveBeenCalled());
     const [, body] = api.post.mock.calls[0];
     expect(body.items.find((i) => i.productoId === "40").estado).toBe("sin_abrir");
+  });
+
+  it("a una herramienta se le pregunta el estado, no cuánto queda", async () => {
+    const user = userEvent.setup({ delay: null });
+    await buscar(user);
+    await user.type(screen.getByLabelText(/Cantidad que vuelve de JARRA/), "2");
+
+    const grupo = screen.getByLabelText(/En qué estado volvió JARRA/);
+    const opciones = within(grupo).getAllByRole("radio");
+    expect(opciones).toHaveLength(2);
+    expect(within(grupo).getByRole("radio", { name: "En buen estado" })).toBeChecked();
+    // Y no le ofrece las de los líquidos.
+    expect(within(grupo).queryByRole("radio", { name: "Más de ¾ lleno" })).toBeNull();
+  });
+
+  it("la herramienta en buen estado se descuenta entera y va al stock", async () => {
+    const user = userEvent.setup({ delay: null });
+    await buscar(user);
+    await user.type(screen.getByLabelText(/Cantidad que vuelve de JARRA/), "2");
+
+    const resumen = document.querySelector(".dev-efecto").textContent;
+    expect(resumen).toMatch(/se le descuentan 2 al consumo/);
+    expect(resumen).not.toMatch(/remanentes/);
+
+    await user.click(screen.getByRole("button", { name: "Registrar devolución" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalled());
+    const [, body] = api.post.mock.calls[0];
+    expect(body.items.find((i) => i.productoId === "50").estado).toBe("buen_estado");
+  });
+
+  it("la herramienta rota se le cobra y va a remanentes", async () => {
+    const user = userEvent.setup({ delay: null });
+    await buscar(user);
+    await user.type(screen.getByLabelText(/Cantidad que vuelve de JARRA/), "2");
+    await user.click(within(screen.getByLabelText(/En qué estado volvió JARRA/))
+      .getByRole("radio", { name: "Roto o inservible" }));
+
+    const resumen = document.querySelector(".dev-efecto").textContent;
+    expect(resumen).toMatch(/2 se le cobran igual/);
+    expect(resumen).toMatch(/2 a remanentes/);
+
+    await user.click(screen.getByRole("button", { name: "Registrar devolución" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalled());
+    const [, body] = api.post.mock.calls[0];
+    expect(body.items.find((i) => i.productoId === "50").estado).toBe("roto");
   });
 
   it("al 'va y vuelve' no se le pregunta: ya se sabe que se usó", async () => {
