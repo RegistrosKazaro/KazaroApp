@@ -1730,16 +1730,20 @@ function ensureDevolucionesViews() {
             SELECT SUM(i.MontoPrestado) FROM v_pedido_items_neto i
             WHERE i.PedidoID = p.PedidoID
           ),0) AS EquipamientoPrestado,
-          MAX(0, COALESCE(p.Total,0) - COALESCE((
-            SELECT SUM(d.devuelto * COALESCE(i.Precio,0))
-            FROM v_devoluciones_aprobadas d
-            JOIN v_pedido_items_neto i
-              ON i.PedidoID = d.pedido_id AND i.ProductoID = d.producto_id
-            WHERE d.pedido_id = p.PedidoID
-          ),0) - COALESCE((
-            SELECT SUM(i.MontoPrestado) FROM v_pedido_items_neto i
+          -- Sumado desde los ítems, no restado de Pedidos.Total.
+          --
+          -- Restando se olvidaba lo PENDIENTE de entregar: el total informaba
+          -- mercadería que nunca salió del depósito, mientras los ítems sí la
+          -- descontaban. El total no cerraba con la suma de sus propias
+          -- líneas. Medido el 15/10/2026 en producción: 17 pedidos de 1137 y
+          -- $1.141.913 de más, el peor informaba $616.526 contra $273.590.
+          --
+          -- Subtotal ya viene neto de pendiente, devoluciones y equipamiento,
+          -- así que sumarlo deja todo coherente de una.
+          COALESCE((
+            SELECT SUM(i.Subtotal) FROM v_pedido_items_neto i
             WHERE i.PedidoID = p.PedidoID
-          ),0)) AS TotalNeto
+          ),0) AS TotalNeto
         FROM Pedidos p;
     `);
   } catch (e) {

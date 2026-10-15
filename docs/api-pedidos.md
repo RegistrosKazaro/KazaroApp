@@ -138,14 +138,19 @@ curl -H "Authorization: Bearer <token>" \
       "rol": "supervisor",
       "estado": "cerrado",
       "nota": null,
-      "total": 41917.19,
+      "total": 29940.85,
+      "totalPedido": 41917.19,
+      "montoDevuelto": 11976.34,
+      "tuvoDevolucion": true,
       "items": [
         {
           "codigo": "100000218",
           "insumo": "ACEITE 10W30",
-          "cantidad": 7,
+          "cantidad": 5,
+          "cantidadPedida": 7,
+          "devuelto": 2,
           "precioUnitario": 5988.17,
-          "subtotal": 41917.19
+          "subtotal": 29940.85
         }
       ]
     }
@@ -166,8 +171,44 @@ curl -H "Authorization: Bearer <token>" \
 | `solicitante` | Nombre de quien hizo el pedido. |
 | `rol` | Rol con el que se hizo: `supervisor` o `administrativo`. |
 | `estado` | `cerrado` o `abierto`. |
-| `total` | Total del pedido. Coincide con la suma de los `subtotal`. |
+| `total` | Total **neto**: lo que el servicio realmente consumió. Coincide siempre con la suma de los `subtotal`. **Es el valor a usar.** |
+| `totalPedido` | Total originalmente pedido, antes de descontar nada. |
+| `montoDevuelto` | Importe de lo devuelto que se le descontó al servicio. |
+| `tuvoDevolucion` | `true` si al pedido se le descontó alguna devolución. |
 | `items[]` | Insumos del pedido. |
+| `items[].cantidad` | Cantidad **neta**: lo que quedó efectivamente consumido. |
+| `items[].cantidadPedida` | Cantidad originalmente pedida. |
+| `items[].devuelto` | Unidades devueltas que se le descontaron. |
+| `items[].subtotal` | Subtotal **neto** (`cantidad` × `precioUnitario`). |
+
+### Qué descuenta el `total`
+
+`total` no es `totalPedido - montoDevuelto`: hay **tres** cosas que se descuentan,
+y `montoDevuelto` es sólo una. Para conciliar, usá siempre la suma de los
+`subtotal`, que es exactamente lo que da `total`.
+
+1. **Lo devuelto sin usar.** Salieron 500 bolsas, volvieron 200 cerradas: consumió 300.
+2. **Lo pendiente de entregar.** Si el depósito entregó 7 de 10, las 3 que nunca
+   salieron no se consumieron. No aparecen en `montoDevuelto`.
+3. **El equipamiento prestado.** Tachos, cestos y contenedores que se prestan para
+   un evento y vuelven. Las **unidades** siguen contando (el servicio los usó esos
+   días), pero su **importe** no es consumo: el equipamiento es nuestro y volvió.
+   Tampoco aparece en `montoDevuelto`.
+
+### Lo que el `total` NO descuenta, a propósito
+
+Cuando el depósito recibe algo **abierto, usado o roto**, sube el stock pero el
+importe se le cobra igual al servicio, porque lo gastó o lo rompió. Esas
+devoluciones **no bajan el `total`** y tampoco se reflejan en `devuelto` ni en
+`tuvoDevolucion`: desde la API el pedido se ve como si no hubiera vuelto nada.
+Es correcto para facturar; si necesitás el detalle físico de qué volvió, está en
+el panel del depósito, no acá.
+
+### Qué pedidos se exponen
+
+Sólo los **contabilizados**. Mientras el depósito está preparando o todavía no se
+retiró la mercadería, el pedido no aparece en la API. Por eso un pedido puede
+existir en el sistema y no verse acá todavía.
 
 ### Dos aclaraciones importantes sobre los datos
 
