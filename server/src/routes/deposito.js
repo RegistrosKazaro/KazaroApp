@@ -1283,11 +1283,19 @@ router.post("/devoluciones", mustWarehouse, (req, res) => {
       if (cant > linea.disponible) {
         return res.status(400).json({ error: `De ${linea.nombre} sólo se pueden devolver ${linea.disponible}` });
       }
-      // El depósito dice si volvió abierto o usado. Sólo se le pregunta a los
-      // insumos marcados (líquidos y textiles); del resto no viene nada y se
-      // sigue tratando como antes.
-      const usado = linea.preguntaEstado && p?.estado === "usado";
-      validadas.push({ ...linea, cantidad: cant, usado });
+      // El depósito dice CUÁNTO QUEDA, no si se abrió. Un bidón de 5 litros al
+      // que le falta uno está abierto, pero prácticamente entero: cobrarlo
+      // completo era el agujero que trababa las devoluciones de líquidos.
+      //
+      //   sin_abrir    → se descuenta el consumo
+      //   casi_lleno   → se descuenta el consumo (más de 3/4, decidido 15/10/2026)
+      //   usado        → vuelve al stock pero el consumo se le cobra igual
+      //
+      // No se fracciona: media carga se paga entera, porque llevar fracciones
+      // de bidón en el stock era peor que el problema que resuelve.
+      const estado = linea.preguntaEstado ? String(p?.estado ?? "") : "";
+      const usado = estado === "usado";
+      validadas.push({ ...linea, cantidad: cant, usado, casiLleno: estado === "casi_lleno" });
     }
     if (!validadas.length) return res.status(400).json({ error: "No hay nada para devolver" });
 
@@ -1303,8 +1311,14 @@ router.post("/devoluciones", mustWarehouse, (req, res) => {
       for (const v of validadas) {
         const antes = stockActual.get(v.productoId);
         subirStock.run(v.cantidad, v.productoId);
+        // "casi_lleno" se guarda aparte para poder contar después cuántos
+        // envases abiertos entraron. La vista de neto excluye sólo
+        // ('retornable','usado'), así que cae del lado que descuenta sin
+        // tocar una línea de SQL.
         ins.run(id, v.productoId, v.cantidad, motivo, empresaId, req.user.id, req.user.id,
-          v.retornable ? "retornable" : (v.usado ? "usado" : "no_usado"));
+          v.retornable ? "retornable"
+            : v.usado ? "usado"
+            : v.casiLleno ? "casi_lleno" : "no_usado");
         registrarCambioProducto({
           productId: v.productoId, nombre: antes?.n ?? v.nombre, codigo: antes?.c ?? v.codigo,
           campo: "stock", anterior: Number(antes?.s ?? 0), nuevo: Number(antes?.s ?? 0) + v.cantidad,

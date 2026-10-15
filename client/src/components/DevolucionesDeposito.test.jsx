@@ -121,40 +121,62 @@ describe("Devoluciones del depósito", () => {
   });
 });
 
-describe("¿Volvió abierto?", () => {
+describe("¿Cuánto queda? (líquidos)", () => {
   it("sólo pregunta en los insumos marcados, y recién al cargar una cantidad", async () => {
     const user = userEvent.setup({ delay: null });
     await buscar(user);
     // Antes de poner cantidad no hay pregunta.
-    expect(screen.queryByLabelText(/Cómo volvió DETERGENTE/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Cuánto queda de DETERGENTE/)).not.toBeInTheDocument();
 
     await user.type(screen.getByLabelText(/Cantidad que vuelve de DETERGENTE/), "2");
-    expect(screen.getByLabelText(/Cómo volvió DETERGENTE/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Cuánto queda de DETERGENTE/)).toBeInTheDocument();
 
     // A la bolsa, que no está marcada, no se le pregunta nunca.
     await user.type(screen.getByLabelText(/Cantidad que vuelve de BOLSA NEGRA/), "100");
-    expect(screen.queryByLabelText(/Cómo volvió BOLSA NEGRA/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Cuánto queda de BOLSA NEGRA/)).not.toBeInTheDocument();
   });
+
+  /** Marca una de las tres opciones por su etiqueta, no por posición. */
+  const marcar = async (user, etiqueta) =>
+    user.click(within(screen.getByLabelText(/Cuánto queda de DETERGENTE/))
+      .getByRole("radio", { name: etiqueta }));
 
   it("arranca en 'sin abrir', que es lo más frecuente", async () => {
     const user = userEvent.setup({ delay: null });
     await buscar(user);
     await user.type(screen.getByLabelText(/Cantidad que vuelve de DETERGENTE/), "2");
-    const grupo = screen.getByLabelText(/Cómo volvió DETERGENTE/);
-    const [sinAbrir, usado] = within(grupo).getAllByRole("radio");
-    expect(sinAbrir).toBeChecked();
-    expect(usado).not.toBeChecked();
+    const grupo = screen.getByLabelText(/Cuánto queda de DETERGENTE/);
+    const opciones = within(grupo).getAllByRole("radio");
+    expect(opciones).toHaveLength(3);
+    expect(within(grupo).getByRole("radio", { name: "Sin abrir" })).toBeChecked();
+    expect(within(grupo).getByRole("radio", { name: "Usado" })).not.toBeChecked();
   });
 
-  it("marcar 'abierto o usado' cambia lo que dice que va a pasar", async () => {
+  // El caso que trababa los líquidos: un bidón de 5 litros al que le falta uno
+  // está abierto, pero prácticamente entero. No se le puede cobrar entero.
+  it("'más de ¾ lleno' se descuenta igual que si estuviera sin abrir", async () => {
+    const user = userEvent.setup({ delay: null });
+    await buscar(user);
+    await user.type(screen.getByLabelText(/Cantidad que vuelve de DETERGENTE/), "2");
+    await marcar(user, "Más de ¾ lleno");
+
+    expect(document.querySelector(".dev-efecto").textContent)
+      .toMatch(/se le descuentan 2 al consumo/);
+
+    await user.click(screen.getByRole("button", { name: "Registrar devolución" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalled());
+    const [, body] = api.post.mock.calls[0];
+    expect(body.items.find((i) => i.productoId === "40").estado).toBe("casi_lleno");
+  });
+
+  it("marcar 'usado' cambia lo que dice que va a pasar", async () => {
     const user = userEvent.setup({ delay: null });
     await buscar(user);
     await user.type(screen.getByLabelText(/Cantidad que vuelve de DETERGENTE/), "2");
     expect(document.querySelector(".dev-efecto").textContent)
       .toMatch(/se le descuentan 2 al consumo/);
 
-    const grupo = screen.getByLabelText(/Cómo volvió DETERGENTE/);
-    await user.click(within(grupo).getAllByRole("radio")[1]);
+    await marcar(user, "Usado");
     const resumen = document.querySelector(".dev-efecto").textContent;
     expect(resumen).toMatch(/2 volvieron abiertas o usadas: se le cobran igual/);
     expect(resumen).not.toMatch(/se le descuentan 2 al consumo/);
@@ -164,7 +186,7 @@ describe("¿Volvió abierto?", () => {
     const user = userEvent.setup({ delay: null });
     await buscar(user);
     await user.type(screen.getByLabelText(/Cantidad que vuelve de DETERGENTE/), "2");
-    await user.click(within(screen.getByLabelText(/Cómo volvió DETERGENTE/)).getAllByRole("radio")[1]);
+    await marcar(user, "Usado");
     await user.type(screen.getByLabelText(/Cantidad que vuelve de BOLSA NEGRA/), "100");
     await user.click(screen.getByRole("button", { name: "Registrar devolución" }));
 
@@ -190,6 +212,6 @@ describe("¿Volvió abierto?", () => {
     const user = userEvent.setup({ delay: null });
     await buscar(user);
     await user.type(screen.getByLabelText(/Cantidad que vuelve de TACHO/), "2");
-    expect(screen.queryByLabelText(/Cómo volvió TACHO/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Cuánto queda de TACHO/)).not.toBeInTheDocument();
   });
 });

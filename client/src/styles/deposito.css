@@ -935,6 +935,10 @@
 }
 .deposito-page .dev-estado label {
   display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer;
+  /* Cada opción entera o en el renglón de abajo, nunca partida: si el texto
+     se corta en tres líneas el redondel queda flotando lejos y no se entiende
+     a cuál pertenece. El grupo ya tiene flex-wrap para acomodarlas. */
+  white-space: nowrap;
 }
 .deposito-page .dev-estado input { margin: 0; cursor: pointer; }
 

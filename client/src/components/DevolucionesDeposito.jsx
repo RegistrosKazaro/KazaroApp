@@ -73,9 +73,14 @@ export default function DevolucionesDeposito() {
     .map((i) => ({ item: i, cantidad: Number(cant[i.productoId] || 0) }))
     .filter((x) => x.cantidad > 0), [items, cant]);
 
-  // Un insumo marcado vuelve "sin abrir" salvo que el depósito diga lo
-  // contrario: es lo más frecuente y evita que haya que tocar cada línea.
+  // La pregunta es CUÁNTO QUEDA, no si se abrió. Un bidón de 5 litros al que
+  // le falta uno está abierto pero prácticamente entero, y cobrarlo completo
+  // era lo que trababa las devoluciones de líquidos.
+  //
+  // Sólo "usado" le cobra el consumo al servicio; "sin abrir" y "casi lleno"
+  // se lo descuentan. Arranca en "sin abrir", que es lo más frecuente.
   const volvioUsado = (item) => item.preguntaEstado && estados[item.productoId] === "usado";
+  const estadoDe = (item) => estados[item.productoId] || "sin_abrir";
 
   const sumar = (filtro) => elegidos.filter(filtro).reduce((a, x) => a + x.cantidad, 0);
   const uRetornables = sumar((x) => x.item.retornable);
@@ -91,7 +96,7 @@ export default function DevolucionesDeposito() {
         items: elegidos.map((x) => ({
           productoId: x.item.productoId,
           cantidad: x.cantidad,
-          ...(x.item.preguntaEstado ? { estado: volvioUsado(x.item) ? "usado" : "sin_abrir" } : {}),
+          ...(x.item.preguntaEstado ? { estado: estadoDe(x.item) } : {}),
         })),
         motivo: motivo.trim(),
       });
@@ -202,19 +207,21 @@ export default function DevolucionesDeposito() {
                             </div>
                             {it.preguntaEstado && Number(valor) > 0 && (
                               <div className="dev-estado" role="radiogroup"
-                                aria-label={`¿Cómo volvió ${it.nombre}?`}>
-                                <label>
-                                  <input type="radio" name={`estado-${it.productoId}`}
-                                    checked={!volvioUsado(it)}
-                                    onChange={() => setEstados((e) => ({ ...e, [it.productoId]: "sin_abrir" }))} />
-                                  Sin abrir
-                                </label>
-                                <label title="Vuelve al stock, pero el servicio ya lo gastó: no se le descuenta">
-                                  <input type="radio" name={`estado-${it.productoId}`}
-                                    checked={volvioUsado(it)}
-                                    onChange={() => setEstados((e) => ({ ...e, [it.productoId]: "usado" }))} />
-                                  Abierto o usado
-                                </label>
+                                aria-label={`¿Cuánto queda de ${it.nombre}?`}>
+                                {[
+                                  ["sin_abrir", "Sin abrir", "Se le descuenta el consumo al servicio"],
+                                  ["casi_lleno", "Más de ¾ lleno",
+                                   "Abierto pero prácticamente entero: también se le descuenta el consumo"],
+                                  ["usado", "Usado",
+                                   "Vuelve al stock, pero el servicio ya lo gastó: se le cobra igual"],
+                                ].map(([valorEstado, etiqueta, ayuda]) => (
+                                  <label key={valorEstado} title={ayuda}>
+                                    <input type="radio" name={`estado-${it.productoId}`}
+                                      checked={estadoDe(it) === valorEstado}
+                                      onChange={() => setEstados((e) => ({ ...e, [it.productoId]: valorEstado }))} />
+                                    {etiqueta}
+                                  </label>
+                                ))}
                               </div>
                             )}
                           </td>
