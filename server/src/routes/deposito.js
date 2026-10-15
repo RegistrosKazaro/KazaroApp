@@ -27,6 +27,7 @@ import { sendMail } from "../utils/mailer.js";
 import { fmtAr, ahoraUtcSql } from "../utils/fechas.js";
 import { sinAcentosSql, normalizarBusqueda } from "../utils/busqueda.js";
 import * as picking from "../picking.js";
+import * as movimientos from "../integrations/flexxusMovimientos.js";
 
 const router = Router();
 console.log("[deposito] Router cargado: Modo Seguro (JS JOIN)");
@@ -1256,6 +1257,54 @@ router.get("/devoluciones/remito/:numero", mustWarehouse, (req, res) => {
 });
 
 // Registrar la devolución: suma stock y, si corresponde, descuenta el consumo.
+/* ============== Movimientos entre depósitos ==============
+   La planilla igual a la de Flexxus. Sale de lo que ya pasó en el depósito
+   (despachos y devoluciones), no de la cola: por eso sirve desde hoy, aunque
+   Flexxus todavía no esté enganchado.                                        */
+
+router.get("/movimientos", mustWarehouse, (req, res) => {
+  try {
+    const q = req.query || {};
+    const datos = movimientos.listar(db, {
+      empresaId: getEmpresaId(req),
+      tipo: q.tipo || null,
+      desde: q.desde || null,
+      hasta: q.hasta || null,
+      deposito: q.deposito || null,
+      busqueda: q.q || "",
+      limite: q.limit,
+      offset: q.offset,
+    });
+    for (const r of datos.rows) {
+      r.responsable = r.empleadoId ? getEmployeeDisplayName(r.empleadoId) : null;
+    }
+    res.json(datos);
+  } catch (e) {
+    console.error("[deposito/movimientos]", e?.message || e);
+    res.status(500).json({ error: "No se pudieron leer los movimientos" });
+  }
+});
+
+router.get("/movimientos/depositos", mustWarehouse, (req, res) => {
+  try {
+    res.json({ depositos: movimientos.depositosConMovimientos(db, getEmpresaId(req)) });
+  } catch (e) {
+    console.error("[deposito/movimientos/depositos]", e?.message || e);
+    res.status(500).json({ error: "No se pudieron leer los depósitos" });
+  }
+});
+
+router.get("/movimientos/:clave", mustWarehouse, (req, res) => {
+  try {
+    const r = movimientos.detalle(db, req.params.clave, getEmpresaId(req));
+    if (!r.ok) return res.status(404).json(r);
+    res.json(r);
+  } catch (e) {
+    console.error("[deposito/movimientos/detalle]", e?.message || e);
+    res.status(500).json({ error: "No se pudo abrir el movimiento" });
+  }
+});
+
 /* ===================== Remanentes =====================
    Lo que volvió abierto, usado o roto espera acá a que alguien lo revise, en
    vez de mezclarse con el stock general. De acá sale por dos puertas: al
