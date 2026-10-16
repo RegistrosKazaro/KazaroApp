@@ -39,6 +39,8 @@ export default function FlexxusDepositos() {
   const [cola, setCola] = useState(null);
   const [prueba, setPrueba] = useState(null);
   const [probando, setProbando] = useState(false);
+  const [cbPlan, setCbPlan] = useState(null);      // plan de códigos de barra
+  const [cbCargando, setCbCargando] = useState(null); // "preview" | "aplicar" | null
   const archivoRef = useRef(null);
 
   const cargar = useCallback(async () => {
@@ -85,6 +87,25 @@ export default function FlexxusDepositos() {
       else setErr(d?.error || e.message || "No se pudo probar la conexión");
     } finally {
       setProbando(false);
+    }
+  };
+
+  /**
+   * Los códigos de barra que tenga Flexxus. "preview" sólo consulta y muestra
+   * qué va a pasar; "aplicar" escribe. El servidor vuelve a consultar en los
+   * dos casos: nunca escribe lo que le mande la pantalla.
+   */
+  const codigos = async (paso) => {
+    setCbCargando(paso); setErr(""); setMsg("");
+    try {
+      const { data } = await api.post(`/admin/flexxus/codigos-barra/${paso}`);
+      setCbPlan({ ...data, aplicado: paso === "aplicar" });
+      if (paso === "aplicar") cargar();   // el catálogo cambió
+    } catch (e) {
+      setErr(e?.response?.data?.error || e.message || "No se pudo consultar Flexxus");
+      setCbPlan(null);
+    } finally {
+      setCbCargando(null);
     }
   };
 
@@ -175,7 +196,49 @@ export default function FlexxusDepositos() {
         <button className="btn" onClick={probar} disabled={probando}>
           {probando ? "Probando…" : "Probar conexión"}
         </button>
+        {/* Sin código de barras la pistola no sirve, y cargar 429 insumos a
+            mano es media jornada: primero se mira si Flexxus ya los tiene. */}
+        <button className="btn" onClick={() => codigos("preview")} disabled={!!cbCargando}>
+          {cbCargando === "preview" ? "Consultando Flexxus…" : "Ver códigos de barra en Flexxus"}
+        </button>
       </div>
+
+      {cbPlan && (
+        <div className={`state ${cbPlan.resumen.seCargan ? "success" : ""}`} role="status">
+          <strong>
+            {cbPlan.aplicado
+              ? `Listo: ${cbPlan.escritos} códigos de barra cargados.`
+              : `Flexxus tiene código de barras para ${cbPlan.resumen.seCargan} de ${cbPlan.resumen.total} insumos.`}
+          </strong>
+          <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+            <li>{cbPlan.resumen.seCargan} se van a cargar</li>
+            <li>{cbPlan.resumen.yaTenian} ya tenían uno (no se tocan)</li>
+            <li>{cbPlan.resumen.flexxusVacio} están en Flexxus pero sin código de barras cargado</li>
+            <li>{cbPlan.resumen.noEstan} no aparecen en Flexxus</li>
+            <li>{cbPlan.resumen.sinCodigo} no tienen código interno con qué cruzarse</li>
+            {cbPlan.resumen.repetidos > 0 && (
+              <li><strong>{cbPlan.resumen.repetidos} quedaron afuera porque su código ya lo tiene otro insumo</strong></li>
+            )}
+            {cbPlan.fallados?.length > 0 && (
+              <li>{cbPlan.fallados.length} artículos dieron error al consultarlos</li>
+            )}
+          </ul>
+          {!cbPlan.aplicado && cbPlan.resumen.seCargan > 0 && (
+            <button className="btn" style={{ marginTop: 8 }}
+              onClick={() => codigos("aplicar")} disabled={!!cbCargando}>
+              {cbCargando === "aplicar"
+                ? "Cargando…"
+                : `Cargar los ${cbPlan.resumen.seCargan} códigos`}
+            </button>
+          )}
+          {!cbPlan.aplicado && cbPlan.resumen.seCargan === 0 && (
+            <div style={{ marginTop: 6 }}>
+              Flexxus no tiene códigos de barra para cargar. Hay que escanearlos
+              insumo por insumo o importarlos de una planilla.
+            </div>
+          )}
+        </div>
+      )}
 
       {prueba && (
         <div className={`state ${prueba.ok ? "success" : "error"}`} role="status">

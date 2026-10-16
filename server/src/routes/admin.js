@@ -57,6 +57,7 @@ import {
 } from "../integrations/flexxusOutbox.js";
 import { crearClienteFlexxus, configDesdeEnv } from "../integrations/flexxusClient.js";
 import { probarConexion } from "../integrations/flexxusDespachador.js";
+import * as codigosBarra from "../integrations/flexxusCodigosBarra.js";
 
 const router = Router();
 const mustBeAdmin = [requireAuth, requireRole(["admin", "Admin"])];
@@ -2927,6 +2928,70 @@ router.post("/flexxus/probar-conexion", mustBeAdmin, async (req, res) => {
   } catch (e) {
     console.error("POST /admin/flexxus/probar-conexion error:", e?.message || e);
     res.status(500).json({ ok: false, error: e?.message || "No se pudo probar la conexión" });
+  }
+});
+
+/* ============ Códigos de barra desde Flexxus ============
+   Sin código de barras la pistola no sirve, y cargar 429 insumos a mano es
+   media jornada. Primero se mira si Flexxus ya los tiene.
+
+   Se hace en dos pasos a propósito: `preview` sólo consulta y arma el plan,
+   `aplicar` escribe. Así se ve qué va a pasar ANTES de tocar el catálogo.   */
+
+/** Consulta a Flexxus y arma el plan. No escribe nada. */
+router.post("/flexxus/codigos-barra/preview", mustBeAdmin, async (req, res) => {
+  try {
+    if (!soloKazaro(req, res)) return;
+    const cfg = configDesdeEnv();
+    if (!cfg) {
+      return res.status(400).json({
+        ok: false,
+        error: "Faltan los datos de acceso en el .env del servidor: FLEXXUS_API_URL, FLEXXUS_USER y FLEXXUS_PASS.",
+      });
+    }
+
+    const empresaId = req.user?.empresaId ?? 1;
+    const insumos = codigosBarra.insumosDeLaApp(db, empresaId);
+    const cliente = crearClienteFlexxus(cfg);
+    const { porCodigo, fallados } = await codigosBarra.traerDeFlexxus(cliente, insumos, { log: console });
+    const plan = codigosBarra.planificar(insumos, porCodigo);
+
+    res.json({ ok: true, ...plan, fallados, consultados: porCodigo.size });
+  } catch (e) {
+    console.error("POST /admin/flexxus/codigos-barra/preview error:", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "No se pudo consultar Flexxus" });
+  }
+});
+
+/**
+ * Escribe. Se vuelve a consultar en vez de confiar en lo que mande la
+ * pantalla: si no, bastaría con mandar un plan inventado para escribir
+ * cualquier código de barras en cualquier insumo.
+ */
+router.post("/flexxus/codigos-barra/aplicar", mustBeAdmin, async (req, res) => {
+  try {
+    if (!soloKazaro(req, res)) return;
+    const cfg = configDesdeEnv();
+    if (!cfg) return res.status(400).json({ ok: false, error: "Falta el acceso a Flexxus en el .env." });
+
+    const empresaId = req.user?.empresaId ?? 1;
+    const insumos = codigosBarra.insumosDeLaApp(db, empresaId);
+    const cliente = crearClienteFlexxus(cfg);
+    const { porCodigo, fallados } = await codigosBarra.traerDeFlexxus(cliente, insumos, { log: console });
+    const plan = codigosBarra.planificar(insumos, porCodigo);
+    const r = codigosBarra.aplicar(db, plan, { empresaId });
+
+    audit({
+      empresaId, usuario: req.user?.username || req.user?.email || null,
+      accion: "update", entidad: "Producto", entidadId: "codigos-barra",
+      detalle: `Códigos de barra desde Flexxus: ${r.escritos} cargados de ${plan.resumen.total} insumos`
+        + (r.errores.length ? ` (${r.errores.length} con problema)` : ""),
+    });
+
+    res.json({ ok: r.ok, ...r, resumen: plan.resumen, fallados });
+  } catch (e) {
+    console.error("POST /admin/flexxus/codigos-barra/aplicar error:", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "No se pudieron cargar los códigos" });
   }
 });
 

@@ -212,4 +212,58 @@ describe("Probar conexión con Flexxus", () => {
     await user.click(screen.getByRole("button", { name: "Probar conexión" }));
     expect(await screen.findByText(/Faltan los datos de acceso/)).toBeInTheDocument();
   });
+
+  /* ===== Códigos de barra desde Flexxus ===== */
+  // Sin código de barras la pistola no sirve. Lo importante acá es que se vea
+  // QUÉ va a pasar antes de escribir sobre 429 insumos.
+
+  const PLAN = {
+    ok: true,
+    resumen: { total: 429, seCargan: 310, yaTenian: 12, sinCodigo: 5, noEstan: 80, flexxusVacio: 20, repetidos: 2 },
+    fallados: [],
+  };
+
+  it("consultar Flexxus muestra el plan y todavía no escribe nada", async () => {
+    const user = userEvent.setup({ delay: null });
+    api.post.mockResolvedValue({ data: PLAN });
+    await pintar();
+    await user.click(screen.getByRole("button", { name: /Ver códigos de barra en Flexxus/ }));
+
+    expect(await screen.findByText(/tiene código de barras para 310 de 429/)).toBeInTheDocument();
+    expect(api.post).toHaveBeenCalledWith("/admin/flexxus/codigos-barra/preview");
+    expect(api.post).not.toHaveBeenCalledWith("/admin/flexxus/codigos-barra/aplicar");
+  });
+
+  it("avisa cuáles no se tocan y cuáles chocan con otro insumo", async () => {
+    const user = userEvent.setup({ delay: null });
+    api.post.mockResolvedValue({ data: PLAN });
+    await pintar();
+    await user.click(screen.getByRole("button", { name: /Ver códigos de barra en Flexxus/ }));
+
+    expect(await screen.findByText(/12 ya tenían uno/)).toBeInTheDocument();
+    expect(screen.getByText(/2 quedaron afuera porque su código ya lo tiene otro/)).toBeInTheDocument();
+  });
+
+  it("recién al confirmar se escribe", async () => {
+    const user = userEvent.setup({ delay: null });
+    api.post.mockResolvedValue({ data: PLAN });
+    await pintar();
+    await user.click(screen.getByRole("button", { name: /Ver códigos de barra en Flexxus/ }));
+
+    api.post.mockResolvedValue({ data: { ...PLAN, escritos: 310 } });
+    await user.click(await screen.findByRole("button", { name: /Cargar los 310 códigos/ }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/admin/flexxus/codigos-barra/aplicar"));
+    expect(await screen.findByText(/310 códigos de barra cargados/)).toBeInTheDocument();
+  });
+
+  it("si Flexxus no tiene ninguno, lo dice y no ofrece cargar nada", async () => {
+    const user = userEvent.setup({ delay: null });
+    api.post.mockResolvedValue({ data: { ...PLAN, resumen: { ...PLAN.resumen, seCargan: 0 } } });
+    await pintar();
+    await user.click(screen.getByRole("button", { name: /Ver códigos de barra en Flexxus/ }));
+
+    expect(await screen.findByText(/Flexxus no tiene códigos de barra para cargar/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Cargar los/ })).toBeNull();
+  });
 });
