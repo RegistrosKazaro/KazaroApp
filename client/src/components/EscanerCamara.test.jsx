@@ -103,7 +103,7 @@ describe("Escáner por cámara", () => {
     detectado = [{ rawValue: "100000033" }];
     await mirar(2);
     detectado = [];            // se aparta la cámara
-    await mirar(6);            // más de 700 ms sin verlo
+    await mirar(12);           // más de 2 s sin verlo
     detectado = [{ rawValue: "100000033" }];
     await mirar(2);            // se vuelve a apuntar
 
@@ -121,7 +121,7 @@ describe("Escáner por cámara", () => {
     detectado = [{ rawValue: "100000033" }];
     await mirar(2);
     detectado = [];
-    await mirar(5);                       // se aparta, poco más de 1 segundo
+    await mirar(12);                      // se aparta a propósito
     detectado = [{ rawValue: "100000033" }];
     await mirar(2);                       // mismo insumo, sin esperar 2 segundos
 
@@ -142,7 +142,7 @@ describe("Escáner por cámara", () => {
 
     // Y el siguiente insumo tampoco tiene que esperar: entra a la segunda.
     detectado = [];
-    await mirar(5);
+    await mirar(12);
     detectado = [{ rawValue: "222" }];
     await mirar(2);
     expect(onCodigo).toHaveBeenCalledTimes(2);

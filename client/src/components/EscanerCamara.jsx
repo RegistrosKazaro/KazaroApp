@@ -27,7 +27,9 @@ export const hayCamara = () =>
 // Lo que se espera de una lectora es que cuente UNA vez y no vuelva a contar
 // ese mismo código hasta que salga de la vista. Así, para cargar tres
 // unidades, se apunta tres veces.
-const PERDERLO_PARA_CONTAR_DE_NUEVO = 700;   // ms sin verlo
+// Con 700 ms bastaba el pulso: el código se perdía un instante, se liberaba
+// y volvía a contar solo. Hay que APARTAR la cámara a propósito.
+const PERDERLO_PARA_CONTAR_DE_NUEVO = 2000;  // ms sin verlo
 // Cuántas veces seguidas hay que leer un código para darlo por bueno.
 //
 // Antes esto era un reloj: no aceptar otro código hasta que pasaran 2
@@ -72,7 +74,12 @@ export default function EscanerCamara({ onCodigo, onCerrar }) {
       try {
         detector = new window.BarcodeDetector({ formats: FORMATOS });
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" },   // la de atrás, no la selfie
+          video: {
+            facingMode: "environment",             // la de atrás, no la selfie
+            // Un cuadro grande no se lee mejor, pero cuesta mucho más
+            // decodificarlo: a resolución completa el video se traba.
+            width: { ideal: 960 }, height: { ideal: 720 }, frameRate: { ideal: 24 },
+          },
           audio: false,
         });
         if (!vivoRef.current) { for (const t of stream.getTracks()) t.stop(); return; }
@@ -159,12 +166,12 @@ export default function EscanerCamara({ onCodigo, onCerrar }) {
         />
       )}
 
-      {ultimo && (
-        <div className="deposito-footnote">
-          Último leído: <strong>{ultimo}</strong>
-          {esperando && " — apartá la cámara para contarlo de nuevo"}
-        </div>
-      )}
+      <div className="deposito-footnote" style={{ minHeight: "2.4em" }}>
+        {ultimo ? (
+          <>Último leído: <strong>{ultimo}</strong>
+            {esperando && " — apartá la cámara para contarlo de nuevo"}</>
+        ) : "Apuntá al código y mantené el celular quieto un instante."}
+      </div>
       <div className="deposito-footnote">
         Cada insumo se cuenta una sola vez por apuntada. Para varias unidades,
         apuntá otra vez o escribí la cantidad a mano.
