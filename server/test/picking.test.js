@@ -657,6 +657,101 @@ test("se puede correr el corte si alguna vez hace falta", () => {
   assert.ok(ids.includes(viejo));
 });
 
+/* ===== Preparar lo que quedo PENDIENTE de un despacho incompleto =====
+   El pedido se cierra con lo que habia y lo que falta sigue abierto como
+   pendiente sobre la misma fila. Cuando entra stock, eso hay que juntarlo. */
+
+/** Un pedido ya despachado al que le quedaron unidades pendientes. */
+function conPendiente(productoId, pedidas, pendientes) {
+  const id = pedido([[productoId, pedidas]]);
+  db.prepare(
+    `UPDATE Pedidos SET Status = 'closed', cerrado = 1, closedat = ?, pendiente_status = 'open'
+      WHERE PedidoID = ?`
+  ).run(AHORA, id);
+  db.prepare(`UPDATE PedidoItems SET cantidad_pendiente = ? WHERE PedidoID = ?`)
+    .run(pendientes, id);
+  return id;
+}
+
+test("el pendiente de un pedido cerrado se ofrece para asignar", () => {
+  if (!hayBase) return;
+  const id = conPendiente(insumo(`PendOfrece ${unico()}`), 10, 7);
+  const fila = picking.pendientesParaAsignar(db, EMPRESA).find((p) => p.id === id);
+  assert.ok(fila, "tendria que estar en la lista");
+  assert.equal(fila.esPendiente, 1);
+  assert.equal(fila.unidades, 7, "se ofrece lo que falta, no lo que se pidio");
+});
+
+test("un pedido cerrado SIN pendiente no se ofrece", () => {
+  if (!hayBase) return;
+  const id = pedido([[insumo(`Cerrado ${unico()}`), 5]]);
+  db.prepare(`UPDATE Pedidos SET Status = 'closed' WHERE PedidoID = ?`).run(id);
+  assert.ok(!picking.pendientesParaAsignar(db, EMPRESA).some((p) => p.id === id));
+});
+
+test("asignar un pendiente NO reabre el pedido ya despachado", () => {
+  if (!hayBase) return;
+  const id = conPendiente(insumo(`NoReabre ${unico()}`), 10, 7);
+  const r = picking.asignar(db, { pedidoId: id, preparadorId: prepararA(`P ${unico()}`),
+                                  empresaId: EMPRESA, ahora: AHORA });
+  assert.equal(r.ok, true);
+  assert.equal(r.pendiente, true);
+
+  const p = db.prepare(`SELECT Status, closedat FROM Pedidos WHERE PedidoID = ?`).get(id);
+  assert.equal(p.Status, "closed", "el despacho que ya salio no se toca");
+  assert.ok(p.closedat, "ni su fecha de cierre");
+});
+
+test("el preparador ve solo lo que falta, no el pedido entero", () => {
+  if (!hayBase) return;
+  const art = insumo(`VeFalta ${unico()}`);
+  const id = conPendiente(art, 10, 7);
+  picking.asignar(db, { pedidoId: id, preparadorId: prepararA(`V ${unico()}`), empresaId: EMPRESA, ahora: AHORA });
+
+  const linea = picking.lineasDePicking(db, id).find((l) => l.productoId === art);
+  assert.equal(linea.pedida, 7);
+  assert.equal(linea.preparada, 0, "arranca de cero: lo de antes ya salio");
+  assert.equal(picking.avance(db, id).unidadesPedidas, 7);
+});
+
+test("juntar el pendiente completo lo deja en cero", () => {
+  if (!hayBase) return;
+  const art = insumo(`PendFull ${unico()}`);
+  const id = conPendiente(art, 10, 7);
+  picking.asignar(db, { pedidoId: id, preparadorId: prepararA(`F ${unico()}`), empresaId: EMPRESA, ahora: AHORA });
+  picking.cargarManual(db, { pedidoId: id, items: [{ productoId: art, cantidadPreparada: 7 }] });
+  picking.terminar(db, { pedidoId: id, empresaId: EMPRESA, ahora: AHORA });
+
+  assert.equal(db.prepare(`SELECT cantidad_pendiente n FROM PedidoItems WHERE PedidoID = ?`).get(id).n, 0);
+});
+
+test("si tampoco se completa, sigue pendiente lo que falta", () => {
+  if (!hayBase) return;
+  // Decidido con el usuario: el pendiente se achica entrega tras entrega.
+  const art = insumo(`PendParcial ${unico()}`);
+  const id = conPendiente(art, 10, 7);
+  picking.asignar(db, { pedidoId: id, preparadorId: prepararA(`PP ${unico()}`), empresaId: EMPRESA, ahora: AHORA });
+  picking.cargarManual(db, { pedidoId: id, items: [{ productoId: art, cantidadPreparada: 4 }] });
+
+  const r = picking.terminar(db, { pedidoId: id, empresaId: EMPRESA, ahora: AHORA });
+  assert.equal(r.pendiente, 3);
+  assert.equal(db.prepare(`SELECT cantidad_pendiente n FROM PedidoItems WHERE PedidoID = ?`).get(id).n, 3,
+    "de 7 junto 4: quedan 3 esperando stock");
+});
+
+test("no se puede escanear de mas que lo pendiente", () => {
+  if (!hayBase) return;
+  const barra = `779${unico()}`;
+  const art = insumo(`PendTope ${unico()}`, barra);
+  const id = conPendiente(art, 10, 2);
+  picking.asignar(db, { pedidoId: id, preparadorId: prepararA(`T ${unico()}`), empresaId: EMPRESA, ahora: AHORA });
+
+  picking.escanear(db, { pedidoId: id, codigoBarra: barra, empresaId: EMPRESA });
+  picking.escanear(db, { pedidoId: id, codigoBarra: barra, empresaId: EMPRESA });
+  const r = picking.escanear(db, { pedidoId: id, codigoBarra: barra, empresaId: EMPRESA });
+  assert.equal(r.motivo, picking.MOTIVOS.YA_COMPLETO, "el tope son las 2 pendientes, no las 10");
+});
+
 test("lo que no esta en Pendientes no se ofrece", () => {
   if (!hayBase) return;
   const cerrado = pedido([[insumo(`Cerrado ${unico()}`), 1]]);

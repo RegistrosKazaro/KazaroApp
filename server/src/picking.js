@@ -103,8 +103,31 @@ export function esPreparador(db, { empleadoId, empresaId }) {
 
 /* ========================= Asignación ========================= */
 
+/**
+ * ¿Lo que hay que preparar es el pedido entero o lo que quedó pendiente?
+ *
+ * Cuando el depósito despacha incompleto, el pedido se CIERRA con lo que
+ * había y lo que falta sigue su camino como "pendiente" sobre ese mismo
+ * pedido. Son dos cosas distintas aunque vivan en la misma fila: el pedido
+ * está cerrado y el pendiente sigue abierto.
+ *
+ * Preparar un pendiente es preparar `cantidad_pendiente`, no `Cantidad`, y
+ * NO se le toca el estado al pedido: ya se despachó.
+ */
+export function esPendiente(pedido) {
+  return String(pedido?.pendiente_status ?? "").toLowerCase() === "open"
+    && String(pedido?.Status ?? "").toLowerCase() !== "open";
+}
+
+/** Lo que hay que juntar de cada línea, según sea pedido o pendiente. */
+const OBJETIVO = (pend) => (pend ? "COALESCE(pi.cantidad_pendiente, 0)" : "pi.Cantidad");
+
+const modoDe = (db, pedidoId) => esPendiente(db.prepare(
+  `SELECT Status, pendiente_status FROM Pedidos WHERE PedidoID = ?`
+).get(Number(pedidoId)));
+
 const pedidoDe = (db, pedidoId, empresaId) => db.prepare(
-  `SELECT PedidoID, Status, empresa_id, preparador_id, preparacion_terminada_at
+  `SELECT PedidoID, Status, pendiente_status, empresa_id, preparador_id, preparacion_terminada_at
      FROM Pedidos WHERE PedidoID = ? AND empresa_id = ? AND deleted_at IS NULL`
 ).get(Number(pedidoId), Number(empresaId));
 
@@ -116,7 +139,10 @@ const pedidoDe = (db, pedidoId, empresaId) => db.prepare(
 export function asignar(db, { pedidoId, preparadorId, empresaId, ahora }) {
   const pedido = pedidoDe(db, pedidoId, empresaId);
   if (!pedido) return { ok: false, error: "Pedido no encontrado" };
-  if (String(pedido.Status) === "closed" || String(pedido.Status) === "retirado") {
+  // Un pedido cerrado sólo se puede tomar si lo que quedó pendiente sigue
+  // abierto: eso es lo que hay que preparar cuando entra stock.
+  const pend = esPendiente(pedido);
+  if (!pend && (String(pedido.Status) === "closed" || String(pedido.Status) === "retirado")) {
     return { ok: false, error: "Ese pedido ya está cerrado." };
   }
   if (pedido.preparador_id && Number(pedido.preparador_id) !== Number(preparadorId)) {
@@ -127,14 +153,28 @@ export function asignar(db, { pedidoId, preparadorId, empresaId, ahora }) {
   const prep = listarPreparadores(db, empresaId).find((p) => p.id === Number(preparadorId));
   if (!prep) return { ok: false, error: "Esa persona no tiene permiso para preparar pedidos." };
 
-  db.prepare(
-    `UPDATE Pedidos
-        SET preparador_id = ?, preparacion_asignada_at = ?, preparacion_terminada_at = NULL,
-            Status = 'preparing', cerrado = 0, closedat = NULL
-      WHERE PedidoID = ?`
-  ).run(prep.id, ahora, Number(pedidoId));
+  db.transaction(() => {
+    if (pend) {
+      // Al pendiente NO se le toca el estado del pedido: ya se despachó. Y se
+      // arranca de cero, porque lo preparado antes ya salió del depósito.
+      db.prepare(
+        `UPDATE Pedidos SET preparador_id = ?, preparacion_asignada_at = ?,
+                            preparacion_terminada_at = NULL
+          WHERE PedidoID = ?`
+      ).run(prep.id, ahora, Number(pedidoId));
+      db.prepare(`UPDATE PedidoItems SET cantidad_preparada = 0 WHERE PedidoID = ?`)
+        .run(Number(pedidoId));
+    } else {
+      db.prepare(
+        `UPDATE Pedidos
+            SET preparador_id = ?, preparacion_asignada_at = ?, preparacion_terminada_at = NULL,
+                Status = 'preparing', cerrado = 0, closedat = NULL
+          WHERE PedidoID = ?`
+      ).run(prep.id, ahora, Number(pedidoId));
+    }
+  })();
 
-  return { ok: true, preparador: prep.nombre };
+  return { ok: true, preparador: prep.nombre, pendiente: pend };
 }
 
 /** Lo que se separó queda: si se reasigna, el que sigue no arranca de cero. */
@@ -202,14 +242,25 @@ export const DESDE_PARA_PREPARAR = "2026-09-01";
 export function pendientesParaAsignar(db, empresaId, { desde = DESDE_PARA_PREPARAR } = {}) {
   return db.prepare(
     `SELECT p.PedidoID AS id, p.Fecha AS fecha, p.ServicioID AS servicioId,
-            COUNT(pi.PedidoItemID) AS lineas,
-            COALESCE(SUM(pi.Cantidad), 0) AS unidades
+            CASE WHEN LOWER(COALESCE(p.Status,'')) = 'open' THEN 0 ELSE 1 END AS esPendiente,
+            SUM(CASE WHEN LOWER(COALESCE(p.Status,'')) = 'open'
+                     THEN 1
+                     ELSE (CASE WHEN COALESCE(pi.cantidad_pendiente,0) > 0 THEN 1 ELSE 0 END) END) AS lineas,
+            COALESCE(SUM(CASE WHEN LOWER(COALESCE(p.Status,'')) = 'open'
+                              THEN pi.Cantidad ELSE COALESCE(pi.cantidad_pendiente,0) END), 0) AS unidades
        FROM Pedidos p
        LEFT JOIN PedidoItems pi ON pi.PedidoID = p.PedidoID
       WHERE p.empresa_id = ? AND p.deleted_at IS NULL
         AND p.preparador_id IS NULL
-        AND LOWER(COALESCE(p.Status, '')) = 'open'
         AND substr(p.Fecha, 1, 10) >= ?
+        AND (
+          LOWER(COALESCE(p.Status, '')) = 'open'
+          -- Y lo que quedó pendiente de un despacho incompleto: el pedido está
+          -- cerrado, pero eso todavía hay que juntarlo cuando entra stock.
+          OR (LOWER(COALESCE(p.pendiente_status, '')) = 'open'
+              AND (SELECT COALESCE(SUM(x.cantidad_pendiente),0)
+                     FROM PedidoItems x WHERE x.PedidoID = p.PedidoID) > 0)
+        )
       GROUP BY p.PedidoID
       ORDER BY p.PedidoID DESC
       LIMIT 200`
@@ -223,6 +274,7 @@ export function pendientesParaAsignar(db, empresaId, { desde = DESDE_PARA_PREPAR
  * `codigoBarra` en null es el aviso de que ese insumo se carga a mano.
  */
 export function lineasDePicking(db, pedidoId) {
+  const pend = modoDe(db, pedidoId);
   const tieneBarra = db.prepare(`PRAGMA table_info(Productos)`).all()
     .some((c) => c.name.toLowerCase() === "codigo_barra");
 
@@ -231,18 +283,19 @@ export function lineasDePicking(db, pedidoId) {
             pi.Nombre                          AS nombre,
             pi.Codigo                          AS codigo,
             ${tieneBarra ? "pr.codigo_barra" : "NULL"} AS codigoBarra,
-            pi.Cantidad                        AS pedida,
+            ${OBJETIVO(pend)}                  AS pedida,
             COALESCE(pi.cantidad_preparada, 0) AS preparada
        FROM PedidoItems pi
        LEFT JOIN Productos pr ON pr.ProductID = pi.ProductoID
-      WHERE pi.PedidoID = ?
+      WHERE pi.PedidoID = ? AND ${OBJETIVO(pend)} > 0
       ORDER BY pi.PedidoItemID`
   ).all(Number(pedidoId));
 }
 
 const lineaDe = (db, pedidoId, productoId) => db.prepare(
   `SELECT pi.ProductoID AS productoId, pi.Nombre AS nombre, pi.Codigo AS codigo,
-          pi.Cantidad AS pedida, COALESCE(pi.cantidad_preparada, 0) AS preparada
+          ${OBJETIVO(modoDe(db, pedidoId))} AS pedida,
+          COALESCE(pi.cantidad_preparada, 0) AS preparada
      FROM PedidoItems pi WHERE pi.PedidoID = ? AND pi.ProductoID = ?`
 ).get(Number(pedidoId), Number(productoId));
 
@@ -360,12 +413,13 @@ export function cargarManual(db, { pedidoId, items = [] }) {
 
 /** Cuántas unidades y líneas van, para el contador de arriba de la pantalla. */
 export function avance(db, pedidoId) {
+  const o = modoDe(db, pedidoId) ? "COALESCE(cantidad_pendiente, 0)" : "Cantidad";
   const r = db.prepare(
     `SELECT COUNT(*) AS lineas,
-            COALESCE(SUM(Cantidad), 0) AS pedidas,
+            COALESCE(SUM(${o}), 0) AS pedidas,
             COALESCE(SUM(COALESCE(cantidad_preparada,0)), 0) AS preparadas,
-            SUM(CASE WHEN COALESCE(cantidad_preparada,0) >= Cantidad THEN 1 ELSE 0 END) AS completas
-       FROM PedidoItems WHERE PedidoID = ?`
+            SUM(CASE WHEN COALESCE(cantidad_preparada,0) >= ${o} THEN 1 ELSE 0 END) AS completas
+       FROM PedidoItems WHERE PedidoID = ? AND ${o} > 0`
   ).get(Number(pedidoId));
   return {
     lineas: Number(r?.lineas || 0),
@@ -397,18 +451,28 @@ export function terminar(db, { pedidoId, empresaId, ahora }) {
   //
   // Lo preparado manda sobre lo que el depósito hubiera cargado a mano antes:
   // es lo que de verdad se juntó. Si se preparó todo, el pendiente queda en 0.
+  // Preparando un PENDIENTE, lo que sigue faltando es lo que ya estaba
+  // pendiente menos lo que se acaba de juntar. Preparando el pedido original,
+  // es lo pedido menos lo preparado.
+  const pend = esPendiente(pedido);
+  // Se mide ANTES de descontar: despues de restar, lo pendiente ya cambio y
+  // el resumen diria otra cosa.
+  const resumen = avance(db, pedidoId);
   const tx = db.transaction(() => {
     db.prepare(
-      `UPDATE PedidoItems
-          SET cantidad_pendiente = MAX(0, Cantidad - COALESCE(cantidad_preparada, 0))
-        WHERE PedidoID = ?`
+      pend
+        ? `UPDATE PedidoItems
+              SET cantidad_pendiente = MAX(0, COALESCE(cantidad_pendiente,0) - COALESCE(cantidad_preparada, 0))
+            WHERE PedidoID = ?`
+        : `UPDATE PedidoItems
+              SET cantidad_pendiente = MAX(0, Cantidad - COALESCE(cantidad_preparada, 0))
+            WHERE PedidoID = ?`
     ).run(Number(pedidoId));
     db.prepare(`UPDATE Pedidos SET preparacion_terminada_at = ? WHERE PedidoID = ?`)
       .run(ahora, Number(pedidoId));
   });
   tx();
 
-  const resumen = avance(db, pedidoId);
   return {
     ok: true,
     avance: resumen,

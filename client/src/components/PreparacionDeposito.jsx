@@ -446,7 +446,8 @@ function AsignarPedido({ preparadores, onListo, tick }) {
           <option value="">— Elegí el pedido —</option>
           {pendientes.map((p) => (
             <option key={p.id} value={p.id}>
-              {nro(p.id)} · {p.servicio || "Sin servicio"} ({p.lineas} insumos)
+              {nro(p.id)}{p.esPendiente ? " (pendiente)" : ""} · {p.servicio || "Sin servicio"}
+              {` (${p.lineas} insumos, ${p.unidades} u.)`}
             </option>
           ))}
         </select>
