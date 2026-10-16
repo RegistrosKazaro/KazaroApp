@@ -128,6 +128,26 @@ describe("Escáner por cámara", () => {
     expect(onCodigo).toHaveBeenCalledTimes(2);
   });
 
+  // El usuario reportó que "recién a la tercera vez lo acepta": era un reloj
+  // de 2 segundos desde la lectura anterior, que obligaba a sostener la cámara
+  // quieta esperando. Ahora lo que decide es la repetición, no el tiempo.
+  it("apuntar derecho entra a la segunda lectura, sin esperar relojes", async () => {
+    const onCodigo = vi.fn();
+    render(<EscanerCamara onCodigo={onCodigo} onCerrar={vi.fn()} />);
+    await waitFor(() => expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled());
+
+    detectado = [{ rawValue: "111" }];
+    await mirar(2);
+    expect(onCodigo).toHaveBeenCalledTimes(1);
+
+    // Y el siguiente insumo tampoco tiene que esperar: entra a la segunda.
+    detectado = [];
+    await mirar(5);
+    detectado = [{ rawValue: "222" }];
+    await mirar(2);
+    expect(onCodigo).toHaveBeenCalledTimes(2);
+  });
+
   it("un parpadeo de un cuadro no alcanza para contar dos veces", async () => {
     const onCodigo = vi.fn();
     render(<EscanerCamara onCodigo={onCodigo} onCerrar={vi.fn()} />);
@@ -149,9 +169,9 @@ describe("Escáner por cámara", () => {
     await waitFor(() => expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled());
 
     detectado = [{ rawValue: "111" }];
-    await mirar();
+    await mirar(2);
     detectado = [{ rawValue: "222" }];
-    await mirar(11);   // mover la cámara a otra etiqueta lleva su tiempo
+    await mirar(2);   // apuntar derecho a la otra etiqueta alcanza
 
     expect(onCodigo.mock.calls.map(([c]) => c)).toEqual(["111", "222"]);
   });
@@ -165,9 +185,11 @@ describe("Escáner por cámara", () => {
     await waitFor(() => expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled());
 
     detectado = [{ rawValue: "111" }];
-    await mirar();
+    await mirar(2);
     detectado = [{ rawValue: "999" }];   // la etiqueta de al lado, de paso
-    await mirar(4);                      // casi un segundo: sigue siendo muy rápido
+    await mirar(1);                      // una sola lectura: no se confirma
+    detectado = [];
+    await mirar(1);
 
     expect(onCodigo.mock.calls.map(([c]) => c)).toEqual(["111"]);
   });

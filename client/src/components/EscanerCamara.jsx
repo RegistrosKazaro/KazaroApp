@@ -28,18 +28,22 @@ export const hayCamara = () =>
 // ese mismo código hasta que salga de la vista. Así, para cargar tres
 // unidades, se apunta tres veces.
 const PERDERLO_PARA_CONTAR_DE_NUEVO = 700;   // ms sin verlo
-// Cuánto hay que esperar antes de aceptar un código DISTINTO.
+// Cuántas veces seguidas hay que leer un código para darlo por bueno.
 //
-// Con 400 ms no alcanzaba: mientras se mueve la cámara de un insumo al
-// siguiente barre las etiquetas del medio y las tomaba como lectura. Probado
-// en el depósito el 16/10/2026. Dos segundos dan tiempo a apuntar tranquilo,
-// y de paso tapan el parpadeo de un cuadro borroso.
-const MINIMO_ENTRE_LECTURAS = 2000;
+// Antes esto era un reloj: no aceptar otro código hasta que pasaran 2
+// segundos desde el anterior. Mal: obligaba a sostener la cámara quieta
+// esperando, y parecía que no leía (probado en el depósito, 16/10/2026).
+//
+// Confirmar por repetición es mejor para las dos cosas. Apuntar derecho a una
+// etiqueta da lecturas estables y entra enseguida; pasar la cámara por encima
+// de otra al moverse da una lectura suelta, que no alcanza. El tiempo que
+// tarda es REACCIÓN, no espera: dos vueltas del detector, unos 400 ms.
+const LECTURAS_PARA_CONFIRMAR = 2;
 
 export default function EscanerCamara({ onCodigo, onCerrar }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
-  const ultimoRef = useRef({ codigo: null, liberado: null, cuando: 0, perdidoDesde: null });
+  const ultimoRef = useRef({ codigo: null, candidato: null, veces: 0, cuando: 0, perdidoDesde: null });
   const vivoRef = useRef(true);
   const [err, setErr] = useState("");
   const [ultimo, setUltimo] = useState(null);
@@ -86,25 +90,29 @@ export default function EscanerCamara({ onCodigo, onCerrar }) {
             if (!codigo) {
               // Nada a la vista. Cuando pasa el tiempo suficiente, el último
               // código se libera y se puede volver a contar.
+              r.candidato = null;                    // lo que se estaba por confirmar se corta
               if (r.perdidoDesde == null) r.perdidoDesde = ahora;
               else if (ahora - r.perdidoDesde >= PERDERLO_PARA_CONTAR_DE_NUEVO && r.codigo) {
-                // Se recuerda cuál era para que volver a apuntarle al MISMO
-                // insumo sume otra unidad en el acto: la espera larga es para
-                // no tomar por error la etiqueta de al lado.
-                ultimoRef.current = { codigo: null, liberado: r.codigo, cuando: r.cuando, perdidoDesde: null };
+                ultimoRef.current = { ...r, codigo: null, perdidoDesde: null };
                 setEsperando(false);
               }
             } else {
               r.perdidoDesde = null;                 // lo estamos viendo
-              const mismoDeAntes = codigo === r.liberado;
               if (r.codigo === codigo) {
                 setEsperando(true);                  // ya se contó; apartá la cámara
-              } else if (mismoDeAntes || ahora - r.cuando >= MINIMO_ENTRE_LECTURAS) {
-                ultimoRef.current = { codigo, liberado: null, cuando: ahora, perdidoDesde: null };
-                setUltimo(codigo);
-                setEsperando(true);
-                navigator.vibrate?.(60);   // sin mirar la pantalla, el golpecito avisa
-                onCodigo(codigo);
+                r.candidato = null;
+              } else {
+                // Tiene que repetirse para darlo por bueno: una lectura suelta
+                // al pasar la cámara por otra etiqueta no cuenta.
+                r.veces = r.candidato === codigo ? r.veces + 1 : 1;
+                r.candidato = codigo;
+                if (r.veces >= LECTURAS_PARA_CONFIRMAR) {
+                  ultimoRef.current = { codigo, candidato: null, veces: 0, cuando: ahora, perdidoDesde: null };
+                  setUltimo(codigo);
+                  setEsperando(true);
+                  navigator.vibrate?.(60);   // sin mirar la pantalla, el golpecito avisa
+                  onCodigo(codigo);
+                }
               }
             }
           } catch { /* un cuadro borroso no es un error */ }
