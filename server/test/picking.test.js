@@ -257,6 +257,93 @@ test("no se puede preparar mas de lo que se pidio", () => {
   assert.equal(preparadaDe(id, art), 2, "no tendria que haber pasado de 2");
 });
 
+/* ===== Escanear por codigo de articulo =====
+   Las etiquetas que se imprimen acá llevan el código del artículo, no un EAN
+   del fabricante. Si la pistola sólo mirara codigo_barra, habría que dar de
+   alta 405 códigos a mano para algo que ya está cargado. */
+
+test("la etiqueta con el codigo del articulo tambien suma", () => {
+  if (!hayBase) return;
+  const codigo = `AR${unico()}`.slice(0, 14);
+  const art = Number(db.prepare(
+    `INSERT INTO Productos (ProductName, Precio, Stock, empresa_id, is_active, Code)
+     VALUES (?, 100, 99, 1, 1, ?)`
+  ).run(`POR CODIGO ${unico()}`, codigo).lastInsertRowid);
+  const id = pedido([[art, 5]]);
+
+  const r = picking.escanear(db, { pedidoId: id, codigoBarra: codigo, empresaId: EMPRESA });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(preparadaDe(id, art), 1);
+});
+
+test("los ceros de adelante no importan: 004 y 4 son el mismo articulo", () => {
+  if (!hayBase) return;
+  const n = String(900000 + (seq += 1));
+  const art = Number(db.prepare(
+    `INSERT INTO Productos (ProductName, Precio, Stock, empresa_id, is_active, Code)
+     VALUES (?, 100, 99, 1, 1, ?)`
+  ).run(`CEROS ${unico()}`, n).lastInsertRowid);
+  const id = pedido([[art, 5]]);
+
+  assert.equal(picking.escanear(db, { pedidoId: id, codigoBarra: `00${n}`, empresaId: EMPRESA }).ok, true);
+  assert.equal(preparadaDe(id, art), 1);
+});
+
+test("el codigo de barras le gana al codigo de articulo", () => {
+  if (!hayBase) return;
+  // Un numero que es el EAN de uno y el codigo interno de otro: manda el EAN,
+  // que es el que alguien asigno a proposito.
+  const compartido = `77${unico()}`.slice(0, 13);
+  const conBarra = Number(db.prepare(
+    `INSERT INTO Productos (ProductName, Precio, Stock, empresa_id, is_active, Code, codigo_barra)
+     VALUES (?, 100, 99, 1, 1, ?, ?)`
+  ).run(`DUENIO DEL EAN ${unico()}`, `Z${unico()}`.slice(0, 14), compartido).lastInsertRowid);
+  const conCodigo = Number(db.prepare(
+    `INSERT INTO Productos (ProductName, Precio, Stock, empresa_id, is_active, Code)
+     VALUES (?, 100, 99, 1, 1, ?)`
+  ).run(`LO TIENE DE CODIGO ${unico()}`, compartido).lastInsertRowid);
+
+  const id = pedido([[conBarra, 5], [conCodigo, 5]]);
+  picking.escanear(db, { pedidoId: id, codigoBarra: compartido, empresaId: EMPRESA });
+  assert.equal(preparadaDe(id, conBarra), 1, "tenia que ganar el del codigo de barras");
+  assert.equal(preparadaDe(id, conCodigo), 0);
+});
+
+test("un insumo dado de baja no se encuentra por su codigo", () => {
+  if (!hayBase) return;
+  const codigo = `BA${unico()}`.slice(0, 14);
+  const art = Number(db.prepare(
+    `INSERT INTO Productos (ProductName, Precio, Stock, empresa_id, is_active, Code)
+     VALUES (?, 100, 99, 1, 0, ?)`
+  ).run(`DADO DE BAJA ${unico()}`, codigo).lastInsertRowid);
+  const id = pedido([[art, 5]]);
+
+  const r = picking.escanear(db, { pedidoId: id, codigoBarra: codigo, empresaId: EMPRESA });
+  assert.equal(r.ok, false);
+  assert.equal(r.motivo, picking.MOTIVOS.NO_EXISTE);
+});
+
+test("el codigo de articulo de otra empresa tampoco sirve", () => {
+  if (!hayBase) return;
+  const codigo = `OE${unico()}`.slice(0, 14);
+  db.prepare(
+    `INSERT INTO Productos (ProductName, Precio, Stock, empresa_id, is_active, Code)
+     VALUES (?, 100, 99, 2, 1, ?)`
+  ).run(`DE PAZAR ${unico()}`, codigo);
+  const id = pedido([[insumo(`Propio ${unico()}`), 5]]);
+
+  assert.equal(picking.escanear(db, { pedidoId: id, codigoBarra: codigo, empresaId: EMPRESA }).motivo,
+    picking.MOTIVOS.NO_EXISTE);
+});
+
+test("buscarPorEscaneo con basura devuelve null, no revienta", () => {
+  if (!hayBase) return;
+  for (const x of ["", "   ", null, undefined, "'; DROP TABLE Productos;--"]) {
+    assert.equal(picking.buscarPorEscaneo(db, x, EMPRESA), null, `con ${JSON.stringify(x)}`);
+  }
+  assert.ok(db.prepare(`SELECT COUNT(*) n FROM Productos`).get().n > 0, "la tabla sigue viva");
+});
+
 test("el codigo de barras de otra empresa no sirve aca", () => {
   if (!hayBase) return;
   const barra = `779${unico()}`;

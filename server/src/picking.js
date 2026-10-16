@@ -233,6 +233,52 @@ const lineaDe = (db, pedidoId, productoId) => db.prepare(
 ).get(Number(pedidoId), Number(productoId));
 
 /**
+ * A qué insumo corresponde lo que acaba de escribir la pistola.
+ *
+ * Se busca por dos caminos, en este orden:
+ *
+ *   1. `codigo_barra`, el EAN del envase cuando el fabricante lo trae.
+ *   2. `Code`, el código interno del artículo. Las etiquetas que se imprimen
+ *      acá llevan ese código, así que la pistola escribe el mismo número que
+ *      ya está cargado y no hay nada que dar de alta.
+ *
+ * El código de barras gana porque es el asignado a propósito. El código
+ * interno se compara también sin los ceros de adelante ("004" = "4"), igual
+ * que el resto de la integración; verificado el 16/10/2026 en producción: los
+ * 405 insumos activos tienen código y ninguno choca al normalizar, así que
+ * nunca hay dos candidatos.
+ */
+export function buscarPorEscaneo(db, codigo, empresaId) {
+  const limpio = String(codigo ?? "").trim();
+  if (!limpio) return null;
+  const empresa = Number(empresaId);
+
+  const porBarra = db.prepare(
+    `SELECT ProductID AS id, ProductName AS nombre FROM Productos
+      WHERE codigo_barra = ? AND empresa_id = ? LIMIT 1`
+  ).get(limpio, empresa);
+  if (porBarra) return porBarra;
+
+  const porCodigo = db.prepare(
+    `SELECT ProductID AS id, ProductName AS nombre FROM Productos
+      WHERE TRIM(Code) = ? AND empresa_id = ? AND COALESCE(is_active, 1) = 1 LIMIT 1`
+  ).get(limpio, empresa);
+  if (porCodigo) return porCodigo;
+
+  // Sin los ceros de adelante, y sólo si es un número: para texto, el código
+  // tiene que coincidir tal cual.
+  if (!/^\d+$/.test(limpio)) return null;
+  const sinCeros = limpio.replace(/^0+/, "") || "0";
+  return db.prepare(
+    `SELECT ProductID AS id, ProductName AS nombre FROM Productos
+      WHERE empresa_id = ? AND COALESCE(is_active, 1) = 1
+        AND Code GLOB '[0-9]*' AND CAST(TRIM(Code) AS INTEGER) = CAST(? AS INTEGER)
+        AND TRIM(Code) <> ''
+      LIMIT 1`
+  ).get(empresa, sinCeros) || null;
+}
+
+/**
  * Llega un código de barras desde la pistola y suma 1 a esa línea.
  *
  * Nunca pasa de la cantidad pedida: separar de más es un error que se arregla
@@ -244,14 +290,11 @@ export function escanear(db, { pedidoId, codigoBarra, empresaId }) {
   const codigo = String(codigoBarra ?? "").trim();
   if (!codigo) return { ok: false, motivo: MOTIVOS.SIN_CODIGO, error: "No llegó ningún código." };
 
-  const insumo = db.prepare(
-    `SELECT ProductID AS id, ProductName AS nombre FROM Productos
-      WHERE codigo_barra = ? AND empresa_id = ? LIMIT 1`
-  ).get(codigo, Number(empresaId));
+  const insumo = buscarPorEscaneo(db, codigo, empresaId);
 
   if (!insumo) {
     return { ok: false, motivo: MOTIVOS.NO_EXISTE,
-             error: `El código ${codigo} no es de ningún insumo. Cargalo a mano en la ficha del insumo.` };
+             error: `El código ${codigo} no es de ningún insumo. Fijate que la etiqueta sea la correcta, o cargale el código de barras al insumo desde su ficha.` };
   }
 
   const linea = lineaDe(db, pedidoId, insumo.id);
