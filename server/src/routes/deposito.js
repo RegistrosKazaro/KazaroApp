@@ -1217,6 +1217,39 @@ function lineasDevolubles(pedidoId) {
 }
 
 // Buscar el pedido por número de remito, para cargarle la devolución.
+/**
+ * Buscar remitos por nombre de servicio.
+ *
+ * El supervisor no siempre trae el número: a veces sólo dice de qué servicio
+ * es. Devuelve los remitos YA RETIRADOS de los servicios que coinciden, que
+ * son los únicos sobre los que se puede devolver algo.
+ */
+router.get("/devoluciones/buscar", mustWarehouse, (req, res) => {
+  try {
+    const q = String(req.query.q ?? "").trim();
+    if (q.length < 2) return res.json({ remitos: [] });
+
+    const like = `%${normalizarBusqueda(q)}%`;
+    const remitos = db.prepare(`
+      SELECT p.PedidoID AS id, p.Fecha AS fecha, p.retiro_at AS retiroAt,
+             s.ServicioNombre AS servicio,
+             (SELECT COUNT(*) FROM PedidoItems i WHERE i.PedidoID = p.PedidoID) AS lineas
+        FROM Pedidos p
+        LEFT JOIN Servicios s ON CAST(s.ServiciosID AS INTEGER) = CAST(p.ServicioID AS INTEGER)
+       WHERE p.empresa_id = @empresaId AND p.deleted_at IS NULL
+         AND TRIM(COALESCE(p.retiro_at, '')) <> ''
+         AND ${sinAcentosSql("s.ServicioNombre")} LIKE @like
+       ORDER BY p.retiro_at DESC
+       LIMIT 40
+    `).all({ empresaId: getEmpresaId(req), like });
+
+    res.json({ remitos: remitos.map((r) => ({ ...r, numero: String(r.id).padStart(7, "0") })) });
+  } catch (e) {
+    console.error("[deposito/devoluciones/buscar]", e?.message || e);
+    res.status(500).json({ error: "No se pudo buscar" });
+  }
+});
+
 router.get("/devoluciones/remito/:numero", mustWarehouse, (req, res) => {
   try {
     const empresaId = getEmpresaId(req);

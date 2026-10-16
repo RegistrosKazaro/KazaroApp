@@ -275,3 +275,66 @@ describe("¿Cuánto queda? (líquidos)", () => {
     expect(screen.queryByLabelText(/Cuánto queda de TACHO/)).not.toBeInTheDocument();
   });
 });
+
+describe("Buscar el remito por servicio", () => {
+  // El supervisor no siempre trae el número: a veces sólo sabe de qué servicio es.
+  const HALLAZGOS = { remitos: [
+    { id: 1186, numero: "0001186", servicio: "HOSPITAL EVA PERON", retiroAt: "2026-10-10 11:00:00", lineas: 4 },
+    { id: 1150, numero: "0001150", servicio: "HOSPITAL EVA PERON - ANEXO", retiroAt: "2026-10-02 09:30:00", lineas: 2 },
+  ]};
+
+  it("al escribir un servicio lista sus remitos ya retirados", async () => {
+    const user = userEvent.setup({ delay: null });
+    api.get.mockImplementation((url) => {
+      if (url === "/deposito/devoluciones/buscar") return Promise.resolve({ data: HALLAZGOS });
+      if (url === "/deposito/devoluciones") return Promise.resolve({ data: { rows: [] } });
+      return Promise.resolve({ data: {} });
+    });
+    render(<DevolucionesDeposito />);
+    await user.type(screen.getByLabelText("Buscar por servicio"), "eva peron");
+
+    expect(await screen.findByText("#0001186")).toBeInTheDocument();
+    expect(screen.getByText("HOSPITAL EVA PERON")).toBeInTheDocument();
+    await waitFor(() => {
+      const c = api.get.mock.calls.find(([u]) => u === "/deposito/devoluciones/buscar");
+      expect(c[1].params.q).toBe("eva peron");
+    });
+  });
+
+  it("elegir uno lo carga como si se hubiera escrito el número", async () => {
+    const user = userEvent.setup({ delay: null });
+    api.get.mockImplementation((url) => {
+      if (url === "/deposito/devoluciones/buscar") return Promise.resolve({ data: HALLAZGOS });
+      if (url.includes("/deposito/devoluciones/remito/")) return Promise.resolve({ data: REMITO });
+      return Promise.resolve({ data: { rows: [] } });
+    });
+    render(<DevolucionesDeposito />);
+    await user.type(screen.getByLabelText("Buscar por servicio"), "eva peron");
+    await user.click((await screen.findAllByRole("button", { name: "Elegir" }))[0]);
+
+    expect(await screen.findByText(/Remito #0001186/)).toBeInTheDocument();
+    expect(api.get).toHaveBeenCalledWith("/deposito/devoluciones/remito/0001186");
+  });
+
+  it("con una letra sola no molesta al servidor", async () => {
+    const user = userEvent.setup({ delay: null });
+    api.get.mockResolvedValue({ data: { rows: [] } });
+    render(<DevolucionesDeposito />);
+    await user.type(screen.getByLabelText("Buscar por servicio"), "e");
+
+    await waitFor(() => expect(
+      api.get.mock.calls.some(([u]) => u === "/deposito/devoluciones/buscar")).toBe(false));
+  });
+
+  it("si el servicio no tiene remitos retirados, lo dice", async () => {
+    const user = userEvent.setup({ delay: null });
+    api.get.mockImplementation((url) =>
+      url === "/deposito/devoluciones/buscar"
+        ? Promise.resolve({ data: { remitos: [] } })
+        : Promise.resolve({ data: { rows: [] } }));
+    render(<DevolucionesDeposito />);
+    await user.type(screen.getByLabelText("Buscar por servicio"), "zzz");
+
+    expect(await screen.findByText("No hay remitos retirados de ese servicio.")).toBeInTheDocument();
+  });
+});

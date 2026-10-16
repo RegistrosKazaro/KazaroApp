@@ -13,6 +13,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { formatNumber } from "../utils/format";
+import { formatoFechaHoraAr } from "../utils/fechas";
+import useDebounced from "../hooks/useDebounced";
 
 const soloNumeros = (v) => String(v ?? "").replace(/\D/g, "");
 const unidades = (n) => `${formatNumber(n)} ${n === 1 ? "unidad" : "unidades"}`;
@@ -44,6 +46,8 @@ export default function DevolucionesDeposito() {
   // productoId -> "sin_abrir" | "casi_lleno" | "usado" | "buen_estado" | "roto"
   const [estados, setEstados] = useState({});
   const [numero, setNumero] = useState("");
+  const [porServicio, setPorServicio] = useState("");
+  const [candidatos, setCandidatos] = useState([]);
   const [buscando, setBuscando] = useState(false);
   const [remito, setRemito] = useState(null);
   const [cant, setCant] = useState({});
@@ -68,9 +72,8 @@ export default function DevolucionesDeposito() {
     setEstados({});
   };
 
-  const buscar = async (e) => {
-    e?.preventDefault?.();
-    const n = soloNumeros(numero);
+  const cargarRemito = async (valor) => {
+    const n = soloNumeros(valor);
     if (!n) { setErr("Escribí el número que figura en el remito."); return; }
     setBuscando(true); setErr(""); setHecho(null); setRemito(null); setCant({}); setEstados({});
     try {
@@ -82,6 +85,20 @@ export default function DevolucionesDeposito() {
       setBuscando(false);
     }
   };
+
+  const buscar = (e) => { e?.preventDefault?.(); cargarRemito(numero); };
+
+  // Buscar por servicio mientras se escribe, sin castigar al servidor.
+  const servicioDeb = useDebounced(porServicio, 300);
+  useEffect(() => {
+    const q = servicioDeb.trim();
+    if (q.length < 2) { setCandidatos([]); return; }
+    let vigente = true;
+    api.get("/deposito/devoluciones/buscar", { params: { q } })
+      .then(({ data }) => { if (vigente) setCandidatos(data?.remitos ?? []); })
+      .catch(() => { if (vigente) setCandidatos([]); });
+    return () => { vigente = false; };
+  }, [servicioDeb]);
 
   const escribir = (item, texto) => {
     const digitos = soloNumeros(texto);
@@ -168,7 +185,51 @@ export default function DevolucionesDeposito() {
           <button type="submit" className="pill" disabled={buscando}>
             {buscando ? "Buscando…" : "Buscar remito"}
           </button>
+
+          {/* El supervisor no siempre trae el número: a veces sólo sabe de qué
+              servicio es. Se listan los remitos ya retirados de ese servicio. */}
+          <label className="deposito-field" style={{ flex: "1 1 240px" }}>
+            <span>…o buscá por servicio</span>
+            <input className="deposito-search" value={porServicio}
+              onChange={(e) => setPorServicio(e.target.value)}
+              placeholder="Nombre del servicio"
+              aria-label="Buscar por servicio"
+              style={{ maxWidth: "none", width: "100%" }} />
+          </label>
         </form>
+
+        {porServicio.trim().length >= 2 && (
+          <div className="deposito-table-wrapper" style={{ marginBottom: 10 }}>
+            <table className="deposito-table" aria-label="Remitos del servicio">
+              <thead>
+                <tr>
+                  <th scope="col">Remito</th><th scope="col">Servicio</th>
+                  <th scope="col">Retirado</th><th scope="col" style={{ width: 110 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {!candidatos.length && (
+                  <tr><td colSpan={4} className="deposito-empty">
+                    No hay remitos retirados de ese servicio.
+                  </td></tr>
+                )}
+                {candidatos.map((r) => (
+                  <tr key={r.id} className="deposito-row">
+                    <td><span className="deposito-code">#{r.numero}</span></td>
+                    <td className="deposito-service-name">{r.servicio || "Sin servicio"}</td>
+                    <td style={{ whiteSpace: "nowrap" }}>{formatoFechaHoraAr(r.retiroAt)}</td>
+                    <td>
+                      <button type="button" className="pill"
+                        onClick={() => { setNumero(r.numero); setPorServicio(""); cargarRemito(r.numero); }}>
+                        Elegir
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {err && <div className="state error deposito-state">{err}</div>}
 
