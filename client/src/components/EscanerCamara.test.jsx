@@ -110,6 +110,24 @@ describe("Escáner por cámara", () => {
     expect(onCodigo).toHaveBeenCalledTimes(2);
   });
 
+  // La espera larga es para no tomar por error la etiqueta de al lado mientras
+  // se mueve la cámara. Volver a apuntarle al MISMO insumo para cargar otra
+  // unidad no tiene por qué esperar eso: es lo que más se usa.
+  it("la espera larga no frena volver a contar el mismo insumo", async () => {
+    const onCodigo = vi.fn();
+    render(<EscanerCamara onCodigo={onCodigo} onCerrar={vi.fn()} />);
+    await waitFor(() => expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled());
+
+    detectado = [{ rawValue: "100000033" }];
+    await mirar(2);
+    detectado = [];
+    await mirar(5);                       // se aparta, poco más de 1 segundo
+    detectado = [{ rawValue: "100000033" }];
+    await mirar(2);                       // mismo insumo, sin esperar 2 segundos
+
+    expect(onCodigo).toHaveBeenCalledTimes(2);
+  });
+
   it("un parpadeo de un cuadro no alcanza para contar dos veces", async () => {
     const onCodigo = vi.fn();
     render(<EscanerCamara onCodigo={onCodigo} onCerrar={vi.fn()} />);
@@ -133,7 +151,7 @@ describe("Escáner por cámara", () => {
     detectado = [{ rawValue: "111" }];
     await mirar();
     detectado = [{ rawValue: "222" }];
-    await mirar(3);   // mover la cámara a otra etiqueta lleva su tiempo
+    await mirar(11);   // mover la cámara a otra etiqueta lleva su tiempo
 
     expect(onCodigo.mock.calls.map(([c]) => c)).toEqual(["111", "222"]);
   });
@@ -148,8 +166,8 @@ describe("Escáner por cámara", () => {
 
     detectado = [{ rawValue: "111" }];
     await mirar();
-    detectado = [{ rawValue: "999" }];   // el cuadro de al lado, mal leído
-    await mirar();
+    detectado = [{ rawValue: "999" }];   // la etiqueta de al lado, de paso
+    await mirar(4);                      // casi un segundo: sigue siendo muy rápido
 
     expect(onCodigo.mock.calls.map(([c]) => c)).toEqual(["111"]);
   });

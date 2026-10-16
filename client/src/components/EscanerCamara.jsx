@@ -28,13 +28,18 @@ export const hayCamara = () =>
 // ese mismo código hasta que salga de la vista. Así, para cargar tres
 // unidades, se apunta tres veces.
 const PERDERLO_PARA_CONTAR_DE_NUEVO = 700;   // ms sin verlo
-// Guarda contra el parpadeo: un cuadro borroso en el medio no libera el código.
-const MINIMO_ENTRE_LECTURAS = 400;
+// Cuánto hay que esperar antes de aceptar un código DISTINTO.
+//
+// Con 400 ms no alcanzaba: mientras se mueve la cámara de un insumo al
+// siguiente barre las etiquetas del medio y las tomaba como lectura. Probado
+// en el depósito el 16/10/2026. Dos segundos dan tiempo a apuntar tranquilo,
+// y de paso tapan el parpadeo de un cuadro borroso.
+const MINIMO_ENTRE_LECTURAS = 2000;
 
 export default function EscanerCamara({ onCodigo, onCerrar }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
-  const ultimoRef = useRef({ codigo: null, cuando: 0, perdidoDesde: null });
+  const ultimoRef = useRef({ codigo: null, liberado: null, cuando: 0, perdidoDesde: null });
   const vivoRef = useRef(true);
   const [err, setErr] = useState("");
   const [ultimo, setUltimo] = useState(null);
@@ -83,15 +88,19 @@ export default function EscanerCamara({ onCodigo, onCerrar }) {
               // código se libera y se puede volver a contar.
               if (r.perdidoDesde == null) r.perdidoDesde = ahora;
               else if (ahora - r.perdidoDesde >= PERDERLO_PARA_CONTAR_DE_NUEVO && r.codigo) {
-                ultimoRef.current = { codigo: null, cuando: r.cuando, perdidoDesde: null };
+                // Se recuerda cuál era para que volver a apuntarle al MISMO
+                // insumo sume otra unidad en el acto: la espera larga es para
+                // no tomar por error la etiqueta de al lado.
+                ultimoRef.current = { codigo: null, liberado: r.codigo, cuando: r.cuando, perdidoDesde: null };
                 setEsperando(false);
               }
             } else {
               r.perdidoDesde = null;                 // lo estamos viendo
+              const mismoDeAntes = codigo === r.liberado;
               if (r.codigo === codigo) {
                 setEsperando(true);                  // ya se contó; apartá la cámara
-              } else if (ahora - r.cuando >= MINIMO_ENTRE_LECTURAS) {
-                ultimoRef.current = { codigo, cuando: ahora, perdidoDesde: null };
+              } else if (mismoDeAntes || ahora - r.cuando >= MINIMO_ENTRE_LECTURAS) {
+                ultimoRef.current = { codigo, liberado: null, cuando: ahora, perdidoDesde: null };
                 setUltimo(codigo);
                 setEsperando(true);
                 navigator.vibrate?.(60);   // sin mirar la pantalla, el golpecito avisa
