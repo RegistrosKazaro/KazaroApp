@@ -211,7 +211,7 @@ export default function PreparacionDeposito({ modo = "jefe" }) {
           <input
             ref={escaneoRef}
             className="deposito-search"
-            placeholder="Apuntá y dispará…"
+            placeholder="Código del insumo"
             autoFocus
             // .deposito-search viene con max-width 220px, pensado para los
             // filtros. Acá es el campo principal: tiene que ocupar todo.
@@ -232,7 +232,9 @@ export default function PreparacionDeposito({ modo = "jefe" }) {
 
         <Cartel aviso={aviso} onCerrar={() => setAviso(null)} />
 
-        <div className="deposito-table-wrapper">
+        {/* tabla-ficha: en el celular cada fila se vuelve una ficha, porque
+            el picking se usa caminando entre las estanterías. */}
+        <div className="deposito-table-wrapper tabla-ficha">
           <table className="deposito-table" aria-label="Insumos del pedido">
             <thead>
               <tr>
@@ -263,10 +265,10 @@ export default function PreparacionDeposito({ modo = "jefe" }) {
                         </span>
                       </div>
                     </td>
-                    <td className="deposito-td--numeric">
+                    <td className="deposito-td--numeric" data-rotulo="Preparado">
                       <input
                         type="number"
-                        className="deposito-search"
+                        className="deposito-search pick-cant"
                         min={0}
                         max={l.pedida}
                         value={l.preparada}
@@ -276,7 +278,7 @@ export default function PreparacionDeposito({ modo = "jefe" }) {
                         aria-label={`Preparado de ${l.nombre}`}
                       />
                     </td>
-                    <td className="deposito-td--numeric">{l.pedida}</td>
+                    <td className="deposito-td--numeric" data-rotulo="Se pidió">{l.pedida}</td>
                     <td><Barra hecho={Number(l.preparada) || 0} total={Number(l.pedida)} /></td>
                   </tr>
                 );
@@ -314,7 +316,7 @@ export default function PreparacionDeposito({ modo = "jefe" }) {
 
       {soyJefe && <AsignarPedido preparadores={preparadores} onListo={cargarCola} />}
 
-      <div className="deposito-table-wrapper">
+      <div className="deposito-table-wrapper tabla-ficha">
         <table className="deposito-table" aria-label="Pedidos en preparación">
           <thead>
             <tr>

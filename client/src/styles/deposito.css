@@ -965,18 +965,36 @@
 .dev-hecho li { margin-bottom: 0.1rem; }
 
 @media (max-width: 760px) {
-  /* La tabla no entra: cada fila pasa a ser una ficha con los datos rotulados. */
-  .deposito-page .dev-wrap .deposito-table thead { display: none; }
+  /* La tabla no entra: cada fila pasa a ser una ficha con los datos rotulados.
+     Vale para las devoluciones (.dev-wrap) y para cualquier tabla que se
+     marque con .tabla-ficha, como el picking, que se usa desde el celular. */
+  .deposito-page .dev-wrap .deposito-table thead,
+  .deposito-page .tabla-ficha .deposito-table thead { display: none; }
   .deposito-page .dev-wrap .deposito-table,
   .deposito-page .dev-wrap .deposito-table tbody,
   .deposito-page .dev-wrap .deposito-table tr,
-  .deposito-page .dev-wrap .deposito-table td { display: block; width: auto; }
-  .deposito-page .dev-wrap .deposito-table tr {
+  .deposito-page .dev-wrap .deposito-table td,
+  .deposito-page .tabla-ficha .deposito-table,
+  .deposito-page .tabla-ficha .deposito-table tbody,
+  .deposito-page .tabla-ficha .deposito-table tr,
+  .deposito-page .tabla-ficha .deposito-table td { display: block; width: auto; }
+  .deposito-page .dev-wrap .deposito-table tr,
+  .deposito-page .tabla-ficha .deposito-table tr {
     border-bottom: 1px solid #e5e7eb; padding: 0.5rem 0.25rem;
   }
-  .deposito-page .dev-wrap .deposito-table td { border: 0; padding: 0.15rem 0.5rem; text-align: left; }
-  .deposito-page .dev-wrap .deposito-table td[data-rotulo]::before {
+  .deposito-page .dev-wrap .deposito-table td,
+  .deposito-page .tabla-ficha .deposito-table td {
+    border: 0; padding: 0.15rem 0.5rem; text-align: left;
+  }
+  .deposito-page .dev-wrap .deposito-table td[data-rotulo]::before,
+  .deposito-page .tabla-ficha .deposito-table td[data-rotulo]::before {
     content: attr(data-rotulo) ": "; color: #6b7280; font-size: 0.75rem;
+  }
+  /* En el celular el campo de cantidad se toca con el dedo: a todo el ancho
+     y alto cómodo, no los 90px que alcanzan con el mouse. */
+  .deposito-page .tabla-ficha .pick-cant {
+    width: 100% !important; max-width: none !important;
+    text-align: left !important; font-size: 1.1rem !important; padding: 0.6rem !important;
   }
   .deposito-page .dev-cant { width: 100%; text-align: left; }
   .deposito-page .dev-todo { margin-left: 0; }
