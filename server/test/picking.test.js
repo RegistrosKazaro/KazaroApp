@@ -458,6 +458,106 @@ test("terminar NO cierra el pedido: eso lo hace el jefe", () => {
   assert.equal(p.preparacion_terminada_at, AHORA);
 });
 
+/* ===== Lo que no se preparo tiene que quedar PENDIENTE =====
+   Sin esto, preparar 3 de 10 y cerrar le cobraba al servicio las 10: el cierre
+   mira cantidad_pendiente, y la foto del despacho calcula Cantidad menos
+   pendiente, asi que informaba que salieron 10 a todos lados. */
+
+const pendienteDe = (pedidoId, productoId) => db.prepare(
+  `SELECT COALESCE(cantidad_pendiente,0) n FROM PedidoItems WHERE PedidoID = ? AND ProductoID = ?`
+).get(pedidoId, productoId).n;
+
+test("terminar incompleto deja pendiente lo que falto", () => {
+  if (!hayBase) return;
+  const art = insumo(`Pend ${unico()}`);
+  const id = pedido([[art, 10]]);
+  const prep = prepararA(`Deja pend ${unico()}`);
+  picking.asignar(db, { pedidoId: id, preparadorId: prep, empresaId: EMPRESA, ahora: AHORA });
+  picking.cargarManual(db, { pedidoId: id, items: [{ productoId: art, cantidadPreparada: 3 }] });
+
+  const r = picking.terminar(db, { pedidoId: id, empresaId: EMPRESA, ahora: AHORA });
+  assert.equal(r.ok, true);
+  assert.equal(r.pendiente, 7);
+  assert.equal(pendienteDe(id, art), 7, "las 7 que no se juntaron quedan pendientes");
+});
+
+test("el consumo baja a lo que realmente salio", () => {
+  if (!hayBase) return;
+  // Es el punto de todo: no cobrarle al servicio lo que nunca recibio.
+  const art = insumo(`Consumo ${unico()}`);
+  const id = pedido([[art, 10]]);
+  const prep = prepararA(`Consumo ${unico()}`);
+  picking.asignar(db, { pedidoId: id, preparadorId: prep, empresaId: EMPRESA, ahora: AHORA });
+  picking.cargarManual(db, { pedidoId: id, items: [{ productoId: art, cantidadPreparada: 3 }] });
+  picking.terminar(db, { pedidoId: id, empresaId: EMPRESA, ahora: AHORA });
+
+  const n = db.prepare(`SELECT Cantidad c FROM v_pedido_items_neto WHERE PedidoID = ?`).get(id);
+  assert.equal(n.c, 3, "tiene que contar 3, no 10");
+});
+
+test("si se preparo todo, no queda ningun pendiente", () => {
+  if (!hayBase) return;
+  const art = insumo(`Completo ${unico()}`);
+  const id = pedido([[art, 4]]);
+  const prep = prepararA(`Completo ${unico()}`);
+  picking.asignar(db, { pedidoId: id, preparadorId: prep, empresaId: EMPRESA, ahora: AHORA });
+  picking.cargarManual(db, { pedidoId: id, items: [{ productoId: art, cantidadPreparada: 4 }] });
+
+  const r = picking.terminar(db, { pedidoId: id, empresaId: EMPRESA, ahora: AHORA });
+  assert.equal(r.pendiente, 0);
+  assert.equal(pendienteDe(id, art), 0);
+});
+
+test("lo preparado manda sobre lo que el deposito habia cargado a mano", () => {
+  if (!hayBase) return;
+  const art = insumo(`Pisa ${unico()}`);
+  const id = pedido([[art, 10]]);
+  db.prepare(`UPDATE PedidoItems SET cantidad_pendiente = 2 WHERE PedidoID = ?`).run(id);
+  const prep = prepararA(`Pisa ${unico()}`);
+  picking.asignar(db, { pedidoId: id, preparadorId: prep, empresaId: EMPRESA, ahora: AHORA });
+  picking.cargarManual(db, { pedidoId: id, items: [{ productoId: art, cantidadPreparada: 6 }] });
+  picking.terminar(db, { pedidoId: id, empresaId: EMPRESA, ahora: AHORA });
+
+  assert.equal(pendienteDe(id, art), 4, "lo que se junto de verdad son 6, faltan 4");
+});
+
+test("con varios insumos, cada uno lleva su propio pendiente", () => {
+  if (!hayBase) return;
+  const a = insumo(`Multi A ${unico()}`), b = insumo(`Multi B ${unico()}`);
+  const id = pedido([[a, 10], [b, 5]]);
+  const prep = prepararA(`Multi ${unico()}`);
+  picking.asignar(db, { pedidoId: id, preparadorId: prep, empresaId: EMPRESA, ahora: AHORA });
+  picking.cargarManual(db, { pedidoId: id, items: [
+    { productoId: a, cantidadPreparada: 10 }, { productoId: b, cantidadPreparada: 1 },
+  ]});
+  picking.terminar(db, { pedidoId: id, empresaId: EMPRESA, ahora: AHORA });
+
+  assert.equal(pendienteDe(id, a), 0, "ese se junto entero");
+  assert.equal(pendienteDe(id, b), 4);
+});
+
+test("terminar sin preparar nada deja todo pendiente", () => {
+  if (!hayBase) return;
+  const art = insumo(`Nada ${unico()}`);
+  const id = pedido([[art, 8]]);
+  const prep = prepararA(`Nada ${unico()}`);
+  picking.asignar(db, { pedidoId: id, preparadorId: prep, empresaId: EMPRESA, ahora: AHORA });
+
+  const r = picking.terminar(db, { pedidoId: id, empresaId: EMPRESA, ahora: AHORA });
+  assert.equal(r.pendiente, 8);
+  assert.equal(pendienteDe(id, art), 8);
+});
+
+test("un pedido que no paso por el picking no se toca", () => {
+  if (!hayBase) return;
+  // El circuito manual del deposito sigue funcionando igual.
+  const art = insumo(`Manual ${unico()}`);
+  const id = pedido([[art, 10]]);
+  db.prepare(`UPDATE PedidoItems SET cantidad_pendiente = 2 WHERE PedidoID = ?`).run(id);
+  assert.equal(picking.terminar(db, { pedidoId: id, empresaId: EMPRESA, ahora: AHORA }).ok, false);
+  assert.equal(pendienteDe(id, art), 2, "el pendiente cargado a mano sigue intacto");
+});
+
 test("se puede terminar incompleto: puede no haber stock", () => {
   if (!hayBase) return;
   const art = insumo(`Falta ${unico()}`);

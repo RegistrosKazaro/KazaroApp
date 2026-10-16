@@ -388,9 +388,32 @@ export function terminar(db, { pedidoId, empresaId, ahora }) {
   if (!pedido) return { ok: false, error: "Pedido no encontrado" };
   if (!pedido.preparador_id) return { ok: false, error: "Ese pedido no está asignado a nadie." };
 
-  db.prepare(`UPDATE Pedidos SET preparacion_terminada_at = ? WHERE PedidoID = ?`)
-    .run(ahora, Number(pedidoId));
-  return { ok: true, avance: avance(db, pedidoId) };
+  // Lo que no se preparó pasa a PENDIENTE, que es el circuito que ya existía.
+  //
+  // Sin esto, preparar 3 de 10 y cerrar le cobraba al servicio las 10: el
+  // cierre mira cantidad_pendiente para armar el pendiente, y la foto del
+  // despacho calcula Cantidad - cantidad_pendiente, así que informaba que
+  // salieron 10 —al servicio, a los informes y al movimiento de Flexxus—.
+  //
+  // Lo preparado manda sobre lo que el depósito hubiera cargado a mano antes:
+  // es lo que de verdad se juntó. Si se preparó todo, el pendiente queda en 0.
+  const tx = db.transaction(() => {
+    db.prepare(
+      `UPDATE PedidoItems
+          SET cantidad_pendiente = MAX(0, Cantidad - COALESCE(cantidad_preparada, 0))
+        WHERE PedidoID = ?`
+    ).run(Number(pedidoId));
+    db.prepare(`UPDATE Pedidos SET preparacion_terminada_at = ? WHERE PedidoID = ?`)
+      .run(ahora, Number(pedidoId));
+  });
+  tx();
+
+  const resumen = avance(db, pedidoId);
+  return {
+    ok: true,
+    avance: resumen,
+    pendiente: Math.max(0, resumen.unidadesPedidas - resumen.unidadesPreparadas),
+  };
 }
 
 /** Por si el jefe lo devuelve: vuelve a quedar en manos del preparador. */

@@ -159,8 +159,11 @@ export default function PreparacionDeposito({ modo = "jefe" }) {
   const terminar = async () => {
     if (!abierto) return;
     const a = abierto.avance;
+    const falta = Math.max(0, a.unidadesPedidas - a.unidadesPreparadas);
     if (!a.completo && !window.confirm(
-      `Vas a avisar que terminaste con ${a.unidadesPreparadas} de ${a.unidadesPedidas} unidades. ¿Seguro?`
+      `Preparaste ${a.unidadesPreparadas} de ${a.unidadesPedidas} unidades.\n\n`
+      + `Las ${falta} que faltan van a quedar PENDIENTES: no se le cobran al `
+      + `servicio y se entregan cuando haya stock.\n\n¿Confirmás?`
     )) return;
     try {
       await api.put(`/deposito/orders/${abierto.pedido.id}/picking/terminar`);

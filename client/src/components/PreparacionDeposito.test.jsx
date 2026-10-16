@@ -222,6 +222,9 @@ describe("Preparación del depósito", () => {
     await user.click(screen.getByRole("button", { name: /Terminé \(incompleto\)/ }));
 
     expect(confirmar).toHaveBeenCalledWith(expect.stringContaining("13 de 20"));
+    // Y avisa qué pasa con lo que falta, que es lo que el preparador necesita saber.
+    expect(confirmar).toHaveBeenCalledWith(expect.stringContaining("7 que faltan"));
+    expect(confirmar).toHaveBeenCalledWith(expect.stringContaining("PENDIENTES"));
     expect(api.put).not.toHaveBeenCalled();   // dijo que no
     confirmar.mockRestore();
   });
