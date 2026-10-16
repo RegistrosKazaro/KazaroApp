@@ -49,6 +49,11 @@ export default function EscanerCamara({ onCodigo, onCerrar }) {
   const [ultimo, setUltimo] = useState(null);
   // true mientras el código leído sigue a la vista: ya se contó.
   const [esperando, setEsperando] = useState(false);
+  // `onCodigo` se vuelve a crear en cada render del padre. Si entra como
+  // dependencia del efecto, la cámara se apaga y se vuelve a abrir DESPUÉS DE
+  // CADA ESCANEO: eso era el tironeo. Va por ref y el efecto corre una vez.
+  const onCodigoRef = useRef(onCodigo);
+  onCodigoRef.current = onCodigo;
 
   const cerrar = useCallback(() => {
     vivoRef.current = false;
@@ -99,8 +104,7 @@ export default function EscanerCamara({ onCodigo, onCerrar }) {
             } else {
               r.perdidoDesde = null;                 // lo estamos viendo
               if (r.codigo === codigo) {
-                setEsperando(true);                  // ya se contó; apartá la cámara
-                r.candidato = null;
+                r.candidato = null;   // ya se contó; apartá la cámara
               } else {
                 // Tiene que repetirse para darlo por bueno: una lectura suelta
                 // al pasar la cámara por otra etiqueta no cuenta.
@@ -111,7 +115,7 @@ export default function EscanerCamara({ onCodigo, onCerrar }) {
                   setUltimo(codigo);
                   setEsperando(true);
                   navigator.vibrate?.(60);   // sin mirar la pantalla, el golpecito avisa
-                  onCodigo(codigo);
+                  onCodigoRef.current(codigo);
                 }
               }
             }
@@ -131,7 +135,7 @@ export default function EscanerCamara({ onCodigo, onCerrar }) {
       for (const t of streamRef.current?.getTracks() ?? []) t.stop();
       streamRef.current = null;
     };
-  }, [onCodigo]);
+  }, []);
 
   return (
     <div className="state deposito-state" style={{ padding: 10 }}>
