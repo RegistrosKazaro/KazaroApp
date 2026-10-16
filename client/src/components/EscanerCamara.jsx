@@ -22,16 +22,24 @@ export const hayCamara = () =>
   !!navigator?.mediaDevices?.getUserMedia;
 
 // Mirando una etiqueta quieta, el detector la lee muchas veces por segundo.
-// Sin esto, un solo insumo sumaría veinte.
-const ESPERA_MISMO_CODIGO = 1200;
+//
+// Una espera fija no alcanza: si seguís apuntando, al vencer vuelve a contar.
+// Lo que se espera de una lectora es que cuente UNA vez y no vuelva a contar
+// ese mismo código hasta que salga de la vista. Así, para cargar tres
+// unidades, se apunta tres veces.
+const PERDERLO_PARA_CONTAR_DE_NUEVO = 700;   // ms sin verlo
+// Guarda contra el parpadeo: un cuadro borroso en el medio no libera el código.
+const MINIMO_ENTRE_LECTURAS = 400;
 
 export default function EscanerCamara({ onCodigo, onCerrar }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
-  const ultimoRef = useRef({ codigo: null, cuando: 0 });
+  const ultimoRef = useRef({ codigo: null, cuando: 0, perdidoDesde: null });
   const vivoRef = useRef(true);
   const [err, setErr] = useState("");
   const [ultimo, setUltimo] = useState(null);
+  // true mientras el código leído sigue a la vista: ya se contó.
+  const [esperando, setEsperando] = useState(false);
 
   const cerrar = useCallback(() => {
     vivoRef.current = false;
@@ -67,13 +75,25 @@ export default function EscanerCamara({ onCodigo, onCerrar }) {
           try {
             const [hallado] = await detector.detect(videoRef.current);
             const codigo = String(hallado?.rawValue ?? "").trim();
-            if (codigo) {
-              const ahora = Date.now();
-              const r = ultimoRef.current;
-              const repetido = r.codigo === codigo && ahora - r.cuando < ESPERA_MISMO_CODIGO;
-              if (!repetido) {
-                ultimoRef.current = { codigo, cuando: ahora };
+            const ahora = Date.now();
+            const r = ultimoRef.current;
+
+            if (!codigo) {
+              // Nada a la vista. Cuando pasa el tiempo suficiente, el último
+              // código se libera y se puede volver a contar.
+              if (r.perdidoDesde == null) r.perdidoDesde = ahora;
+              else if (ahora - r.perdidoDesde >= PERDERLO_PARA_CONTAR_DE_NUEVO && r.codigo) {
+                ultimoRef.current = { codigo: null, cuando: r.cuando, perdidoDesde: null };
+                setEsperando(false);
+              }
+            } else {
+              r.perdidoDesde = null;                 // lo estamos viendo
+              if (r.codigo === codigo) {
+                setEsperando(true);                  // ya se contó; apartá la cámara
+              } else if (ahora - r.cuando >= MINIMO_ENTRE_LECTURAS) {
+                ultimoRef.current = { codigo, cuando: ahora, perdidoDesde: null };
                 setUltimo(codigo);
+                setEsperando(true);
                 navigator.vibrate?.(60);   // sin mirar la pantalla, el golpecito avisa
                 onCodigo(codigo);
               }
@@ -118,9 +138,15 @@ export default function EscanerCamara({ onCodigo, onCerrar }) {
         />
       )}
 
-      {ultimo && <div className="deposito-footnote">Último leído: {ultimo}</div>}
+      {ultimo && (
+        <div className="deposito-footnote">
+          Último leído: <strong>{ultimo}</strong>
+          {esperando && " — apartá la cámara para contarlo de nuevo"}
+        </div>
+      )}
       <div className="deposito-footnote">
-        Para varias unidades del mismo insumo conviene escanear una vez y escribir la cantidad.
+        Cada insumo se cuenta una sola vez por apuntada. Para varias unidades,
+        apuntá otra vez o escribí la cantidad a mano.
       </div>
     </div>
   );

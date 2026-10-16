@@ -80,7 +80,52 @@ describe("Escáner por cámara", () => {
     expect(onCodigo).toHaveBeenCalledWith("100000033");
   });
 
-  it("otro insumo distinto entra en el acto", async () => {
+  // Lo que el usuario vio en el depósito: apuntando quieto a una etiqueta
+  // seguía sumando unidades. Una espera fija no alcanza, porque al vencer
+  // vuelve a contar aunque nunca hayas movido la cámara.
+  it("no vuelve a contar mientras la etiqueta siga a la vista", async () => {
+    const onCodigo = vi.fn();
+    render(<EscanerCamara onCodigo={onCodigo} onCerrar={vi.fn()} />);
+    await waitFor(() => expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled());
+
+    detectado = [{ rawValue: "100000033" }];
+    await mirar(40);   // ocho segundos apuntando sin moverse
+
+    expect(onCodigo).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/apartá la cámara para contarlo de nuevo/)).toBeInTheDocument();
+  });
+
+  it("apartando la cámara y volviendo, cuenta otra unidad", async () => {
+    const onCodigo = vi.fn();
+    render(<EscanerCamara onCodigo={onCodigo} onCerrar={vi.fn()} />);
+    await waitFor(() => expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled());
+
+    detectado = [{ rawValue: "100000033" }];
+    await mirar(2);
+    detectado = [];            // se aparta la cámara
+    await mirar(6);            // más de 700 ms sin verlo
+    detectado = [{ rawValue: "100000033" }];
+    await mirar(2);            // se vuelve a apuntar
+
+    expect(onCodigo).toHaveBeenCalledTimes(2);
+  });
+
+  it("un parpadeo de un cuadro no alcanza para contar dos veces", async () => {
+    const onCodigo = vi.fn();
+    render(<EscanerCamara onCodigo={onCodigo} onCerrar={vi.fn()} />);
+    await waitFor(() => expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled());
+
+    detectado = [{ rawValue: "100000033" }];
+    await mirar(2);
+    detectado = [];            // un solo cuadro borroso
+    await mirar(1);
+    detectado = [{ rawValue: "100000033" }];
+    await mirar(2);
+
+    expect(onCodigo).toHaveBeenCalledTimes(1);
+  });
+
+  it("otro insumo distinto entra sin tener que apartar la cámara", async () => {
     const onCodigo = vi.fn();
     render(<EscanerCamara onCodigo={onCodigo} onCerrar={vi.fn()} />);
     await waitFor(() => expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled());
@@ -88,9 +133,25 @@ describe("Escáner por cámara", () => {
     detectado = [{ rawValue: "111" }];
     await mirar();
     detectado = [{ rawValue: "222" }];
-    await mirar();
+    await mirar(3);   // mover la cámara a otra etiqueta lleva su tiempo
 
     expect(onCodigo.mock.calls.map(([c]) => c)).toEqual(["111", "222"]);
+  });
+
+  it("una mala lectura de un cuadro no mete el insumo equivocado", async () => {
+    // Cambiar de código en menos de medio segundo no es alguien moviendo la
+    // cámara: es el detector equivocándose en un cuadro borroso. Meter el
+    // insumo que no era en el pedido es peor que esperar un instante.
+    const onCodigo = vi.fn();
+    render(<EscanerCamara onCodigo={onCodigo} onCerrar={vi.fn()} />);
+    await waitFor(() => expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled());
+
+    detectado = [{ rawValue: "111" }];
+    await mirar();
+    detectado = [{ rawValue: "999" }];   // el cuadro de al lado, mal leído
+    await mirar();
+
+    expect(onCodigo.mock.calls.map(([c]) => c)).toEqual(["111"]);
   });
 
   it("apaga la cámara al cerrar", async () => {
