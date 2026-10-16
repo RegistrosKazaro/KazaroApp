@@ -19,6 +19,7 @@
 // clases. Si no, fuera del panel los botones quedan blancos sobre blanco.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import EscanerCamara, { hayCamara } from "./EscanerCamara";
 import "../styles/admin-panel.css";
 import "../styles/deposito.css";
 
@@ -60,6 +61,9 @@ export default function PreparacionDeposito({ modo = "jefe" }) {
   const [err, setErr] = useState("");
   const [cargando, setCargando] = useState(false);
   const escaneoRef = useRef(null);
+  // La cámara es el respaldo de la pistola; el botón sólo aparece si el
+  // equipo la soporta (Android sí, iPhone no).
+  const [camara, setCamara] = useState(false);
 
   /* ---------- Carga ---------- */
 
@@ -229,6 +233,14 @@ export default function PreparacionDeposito({ modo = "jefe" }) {
             onBlur={(e) => { if (!e.relatedTarget) setTimeout(() => escaneoRef.current?.focus(), 150); }}
           />
         </label>
+
+        {hayCamara() && !camara && (
+          <button type="button" className="pill pill--ghost" onClick={() => setCamara(true)}
+                  style={{ marginBottom: 10 }}>
+            Escanear con la cámara
+          </button>
+        )}
+        {camara && <EscanerCamara onCodigo={escanear} onCerrar={() => setCamara(false)} />}
 
         <Cartel aviso={aviso} onCerrar={() => setAviso(null)} />
 
