@@ -182,11 +182,24 @@ export function pedidosAsignados(db, { empresaId, preparadorId = null }) {
 }
 
 /**
+ * Desde cuándo tiene sentido preparar un pedido.
+ *
+ * Antes del 01/08/2026 los pedidos se contabilizaban al crearse, así que
+ * quedaron "abiertos" para siempre aunque ya se habían entregado: son 352 en
+ * producción, el más viejo de octubre de 2025, y ninguno se va a preparar
+ * nunca. Mezclados con los de verdad hacían ilegible la lista de asignar.
+ *
+ * El corte lo puso el usuario el 16/10/2026. Entre el 01/08 y el 01/09 no
+ * quedó ningún pendiente, así que no esconde nada real.
+ */
+export const DESDE_PARA_PREPARAR = "2026-09-01";
+
+/**
  * Los pedidos que el jefe puede repartir: los de la solapa Pendientes que
  * todavía no tienen dueño. Con el nombre del servicio, que es como los
  * reconoce.
  */
-export function pendientesParaAsignar(db, empresaId) {
+export function pendientesParaAsignar(db, empresaId, { desde = DESDE_PARA_PREPARAR } = {}) {
   return db.prepare(
     `SELECT p.PedidoID AS id, p.Fecha AS fecha, p.ServicioID AS servicioId,
             COUNT(pi.PedidoItemID) AS lineas,
@@ -196,10 +209,11 @@ export function pendientesParaAsignar(db, empresaId) {
       WHERE p.empresa_id = ? AND p.deleted_at IS NULL
         AND p.preparador_id IS NULL
         AND LOWER(COALESCE(p.Status, '')) = 'open'
+        AND substr(p.Fecha, 1, 10) >= ?
       GROUP BY p.PedidoID
       ORDER BY p.PedidoID DESC
       LIMIT 200`
-  ).all(Number(empresaId));
+  ).all(Number(empresaId), String(desde));
 }
 
 /* ========================= El picking ========================= */

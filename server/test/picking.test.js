@@ -519,6 +519,44 @@ test("para asignar se ofrecen los pendientes sin dueño", () => {
   assert.ok(!ids.includes(tomado), "el que ya tiene dueño no se vuelve a ofrecer");
 });
 
+test("los pedidos viejos no se ofrecen: nunca se van a preparar", () => {
+  if (!hayBase) return;
+  // Antes del 01/08/2026 los pedidos se contabilizaban al crearse y quedaron
+  // "abiertos" para siempre. En produccion son 352, el mas viejo de octubre
+  // de 2025, y hacian ilegible la lista de asignar.
+  const viejo = pedido([[insumo(`Viejo ${unico()}`), 2]]);
+  db.prepare(`UPDATE Pedidos SET Fecha = '2025-10-23 10:00:00' WHERE PedidoID = ?`).run(viejo);
+  const nuevo = pedido([[insumo(`Nuevo ${unico()}`), 2]]);
+  db.prepare(`UPDATE Pedidos SET Fecha = '2026-09-15 10:00:00' WHERE PedidoID = ?`).run(nuevo);
+
+  const ids = picking.pendientesParaAsignar(db, EMPRESA).map((p) => p.id);
+  assert.ok(!ids.includes(viejo), "el de 2025 no tendria que aparecer");
+  assert.ok(ids.includes(nuevo));
+});
+
+test("el primer dia del corte entra", () => {
+  if (!hayBase) return;
+  const justo = pedido([[insumo(`Justo ${unico()}`), 1]]);
+  db.prepare(`UPDATE Pedidos SET Fecha = ? WHERE PedidoID = ?`)
+    .run(`${picking.DESDE_PARA_PREPARAR} 00:00:00`, justo);
+  assert.ok(picking.pendientesParaAsignar(db, EMPRESA).map((p) => p.id).includes(justo));
+});
+
+test("el dia anterior al corte no entra", () => {
+  if (!hayBase) return;
+  const antes = pedido([[insumo(`Antes ${unico()}`), 1]]);
+  db.prepare(`UPDATE Pedidos SET Fecha = '2026-08-31 23:59:00' WHERE PedidoID = ?`).run(antes);
+  assert.ok(!picking.pendientesParaAsignar(db, EMPRESA).map((p) => p.id).includes(antes));
+});
+
+test("se puede correr el corte si alguna vez hace falta", () => {
+  if (!hayBase) return;
+  const viejo = pedido([[insumo(`Corrido ${unico()}`), 1]]);
+  db.prepare(`UPDATE Pedidos SET Fecha = '2025-10-23 10:00:00' WHERE PedidoID = ?`).run(viejo);
+  const ids = picking.pendientesParaAsignar(db, EMPRESA, { desde: "2025-01-01" }).map((p) => p.id);
+  assert.ok(ids.includes(viejo));
+});
+
 test("lo que no esta en Pendientes no se ofrece", () => {
   if (!hayBase) return;
   const cerrado = pedido([[insumo(`Cerrado ${unico()}`), 1]]);
