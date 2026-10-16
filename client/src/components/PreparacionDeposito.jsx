@@ -60,6 +60,10 @@ export default function PreparacionDeposito({ modo = "jefe" }) {
   const [destacada, setDestacada] = useState(null); // productoId que acaba de sumar
   const [err, setErr] = useState("");
   const [cargando, setCargando] = useState(false);
+  // Sube de a uno en cada "Actualizar": asi la lista de pedidos para asignar
+  // tambien se recarga. Antes solo se cargaba al abrir la solapa, y un pedido
+  // recien confirmado no aparecia hasta salir y volver a entrar.
+  const [tick, setTick] = useState(0);
   const escaneoRef = useRef(null);
   // La cámara es el respaldo de la pistola; el botón sólo aparece si el
   // equipo la soporta (Android sí, iPhone no).
@@ -82,6 +86,7 @@ export default function PreparacionDeposito({ modo = "jefe" }) {
       // mandara, con cambiar el número vería la cola de otro.
       const { data } = await api.get("/deposito/preparacion");
       setCola(data?.pedidos ?? []);
+      setTick((t) => t + 1);
       setErr("");
     } catch (e) {
       setErr(e?.response?.data?.error || e.message);
@@ -329,7 +334,7 @@ export default function PreparacionDeposito({ modo = "jefe" }) {
 
       {err && <div className="state error deposito-state">{err}</div>}
 
-      {soyJefe && <AsignarPedido preparadores={preparadores} onListo={cargarCola} />}
+      {soyJefe && <AsignarPedido preparadores={preparadores} onListo={cargarCola} tick={tick} />}
 
       <div className="deposito-table-wrapper tabla-ficha">
         <table className="deposito-table" aria-label="Pedidos en preparación">
@@ -407,7 +412,7 @@ export default function PreparacionDeposito({ modo = "jefe" }) {
  * todavía no tienen dueño; al asignar uno, pasa solo a En preparación y
  * desaparece de acá.
  */
-function AsignarPedido({ preparadores, onListo }) {
+function AsignarPedido({ preparadores, onListo, tick }) {
   const [pendientes, setPendientes] = useState([]);
   const [cual, setCual] = useState("");
   const [quien, setQuien] = useState("");
@@ -420,7 +425,7 @@ function AsignarPedido({ preparadores, onListo }) {
     } catch (e) { setMsg(e?.response?.data?.error || e.message); }
   }, []);
 
-  useEffect(() => { cargar(); }, [cargar]);
+  useEffect(() => { cargar(); }, [cargar, tick]);
 
   const asignar = async () => {
     if (!cual || !quien) { setMsg("Elegí el pedido y a quién se lo asignás."); return; }

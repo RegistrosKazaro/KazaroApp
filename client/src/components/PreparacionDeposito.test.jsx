@@ -265,6 +265,22 @@ describe("Preparación del depósito", () => {
     expect(urls).toContain("/deposito/preparacion");
   });
 
+  // Un pedido recién confirmado en la solapa Pedidos no aparecía para asignar
+  // hasta salir y volver a entrar: la lista se cargaba una sola vez.
+  it("Actualizar también recarga los pedidos para asignar", async () => {
+    const user = userEvent.setup();
+    render(<PreparacionDeposito />);
+    await screen.findByText("#0001351");
+    const antes = api.get.mock.calls.filter(([u]) => u === "/deposito/preparacion/asignables").length;
+
+    await user.click(screen.getByRole("button", { name: "Actualizar" }));
+
+    await waitFor(() => {
+      const ahora = api.get.mock.calls.filter(([u]) => u === "/deposito/preparacion/asignables").length;
+      expect(ahora).toBeGreaterThan(antes);
+    });
+  });
+
   it("si no hay nadie con rol Picking, le dice al jefe qué hacer", async () => {
     api.get.mockImplementation((url) => {
       if (url === "/deposito/preparadores") return Promise.resolve({ data: { preparadores: [] } });
