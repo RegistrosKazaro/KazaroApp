@@ -367,8 +367,17 @@ export default function MisPedidos() {
                       editarlo y mandarlo de nuevo. Sale con numero nuevo. */}
                   {o.items?.length > 0 && (
                     <div style={{ marginBottom: 10 }}>
-                      <button type="button" className="pill" onClick={() => repetir(o)}>
-                        Repetir este pedido
+                      {/* Estilo propio: la clase `pill` en esta pantalla es
+                          blanca sobre blanco y el botón no se veía. */}
+                      <button
+                        type="button"
+                        onClick={() => repetir(o)}
+                        style={{
+                          padding: "6px 16px", borderRadius: 999, border: 0, cursor: "pointer",
+                          background: "#047857", color: "#fff", fontWeight: 600, fontSize: "0.85rem",
+                        }}
+                      >
+                        🔁 Repetir este pedido
                       </button>
                       <span style={{ marginLeft: 8, fontSize: "0.78rem", color: "#6b7280" }}>
                         Se carga en el carrito para que lo edites y lo envíes como un pedido nuevo.

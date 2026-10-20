@@ -65,7 +65,7 @@ describe("Repetir un pedido anterior", () => {
     const user = userEvent.setup();
     montar();
     await abrir(user);
-    expect(await screen.findByRole("button", { name: "Repetir este pedido" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Repetir este pedido/ })).toBeInTheDocument();
   });
 
   it("deja el carrito igual al pedido viejo, con su servicio", async () => {
@@ -73,7 +73,7 @@ describe("Repetir un pedido anterior", () => {
     let carrito = null;
     montar((c) => { carrito = c; });
     await abrir(user);
-    await user.click(await screen.findByRole("button", { name: "Repetir este pedido" }));
+    await user.click(await screen.findByRole("button", { name: /Repetir este pedido/ }));
 
     await waitFor(() => expect(screen.getByText("carrito")).toBeInTheDocument());
     expect(carrito.items).toHaveLength(2);
@@ -92,7 +92,7 @@ describe("Repetir un pedido anterior", () => {
     let carrito = null;
     montar((c) => { carrito = c; });
     await abrir(user);
-    await user.click(await screen.findByRole("button", { name: "Repetir este pedido" }));
+    await user.click(await screen.findByRole("button", { name: /Repetir este pedido/ }));
 
     await waitFor(() => expect(screen.getByText("carrito")).toBeInTheDocument());
     expect(carrito.items.map((i) => i.productId)).toEqual([10, 20]);
@@ -103,7 +103,7 @@ describe("Repetir un pedido anterior", () => {
     let carrito = null;
     montar((c) => { carrito = c; });
     await abrir(user);
-    await user.click(await screen.findByRole("button", { name: "Repetir este pedido" }));
+    await user.click(await screen.findByRole("button", { name: /Repetir este pedido/ }));
     await waitFor(() => expect(screen.getByText("carrito")).toBeInTheDocument());
 
     carrito.update(10, 35);                                   // más unidades
@@ -123,7 +123,7 @@ describe("Repetir un pedido anterior", () => {
     let carrito = null;
     montar((c) => { carrito = c; });
     await abrir(user);
-    await user.click(await screen.findByRole("button", { name: "Repetir este pedido" }));
+    await user.click(await screen.findByRole("button", { name: /Repetir este pedido/ }));
 
     await waitFor(() => expect(screen.getByText("carrito")).toBeInTheDocument());
     for (const it of carrito.items) {
@@ -137,6 +137,6 @@ describe("Repetir un pedido anterior", () => {
     const user = userEvent.setup();
     montar();
     await abrir(user);
-    expect(screen.queryByRole("button", { name: "Repetir este pedido" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Repetir este pedido/ })).toBeNull();
   });
 });
