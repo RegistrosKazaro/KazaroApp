@@ -2970,6 +2970,104 @@ export function ensureServiceBudgetTable() {
   ensureBudgetPctColumn();
   db.exec(`CREATE INDEX IF NOT EXISTS idx_srvbudget_serv ON service_budget(ServicioID);`);
 }
+/* ============ Mails que van a destinatarios propios ============
+   Hay servicios cuyos pedidos no tienen que avisarle a los de siempre, sino a
+   una lista acotada (el caso de Río Cuarto). La regla va pegada al SERVICIO y
+   no al supervisor: si mañana otra persona pide para ese servicio, el mail
+   sale igual. Decidido con el usuario el 20/10/2026.                       */
+
+export function ensureMailPorServicioTable() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS servicio_mail_destino (
+      ServicioID    INTEGER PRIMARY KEY,
+      Destinatarios TEXT NOT NULL,
+      creado_at     TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+}
+ensureMailPorServicioTable();
+
+/** A quién hay que avisarle de los pedidos de ese servicio, si hay regla. */
+export function destinoMailDeServicio(servicioId) {
+  try {
+    const r = db.prepare(
+      `SELECT Destinatarios FROM servicio_mail_destino
+        WHERE CAST(ServicioID AS INTEGER) = CAST(? AS INTEGER)`
+    ).get(servicioId);
+    const v = String(r?.Destinatarios ?? "").trim();
+    return v || null;
+  } catch { return null; }
+}
+
+/* ============ Presupuesto compartido por un grupo de servicios ============
+   Un servicio "padre" (MIN. EDUC - ZONA RIO IV, EPEC - ZONA F RIO IV) presta
+   su presupuesto a un conjunto de servicios hijos. Lo que se controla no es
+   cada pedido suelto, sino la SUMA DEL MES de todos los hermanos: es una
+   bolsa común que se va gastando. Decidido con el usuario el 20/10/2026.    */
+
+export function ensureGrupoPresupuestoTable() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS service_budget_grupo (
+      ServicioID INTEGER PRIMARY KEY,   -- el hijo
+      PadreID    INTEGER NOT NULL,      -- de quién sale el presupuesto
+      creado_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_sbg_padre ON service_budget_grupo(PadreID);
+  `);
+}
+ensureGrupoPresupuestoTable();
+
+/** A qué bolsa pertenece un servicio, si pertenece a alguna. */
+export function grupoDeServicio(servicioId) {
+  try {
+    return db.prepare(
+      `SELECT g.PadreID AS padreId, s.ServicioNombre AS padre,
+              COALESCE(b.Presupuesto, 0) AS presupuesto
+         FROM service_budget_grupo g
+         JOIN Servicios s ON CAST(s.ServiciosID AS INTEGER) = CAST(g.PadreID AS INTEGER)
+         LEFT JOIN service_budget b ON b.ServicioID = g.PadreID
+        WHERE CAST(g.ServicioID AS INTEGER) = CAST(? AS INTEGER)`
+    ).get(servicioId) || null;
+  } catch { return null; }
+}
+
+/**
+ * Lo que ya lleva gastado la bolsa este mes.
+ *
+ * Se mide con el total NETO (descontadas devoluciones y lo que no se entregó),
+ * porque es lo que de verdad consumieron. El mes es el argentino: la base
+ * guarda UTC y sin corregir, un pedido del día 1 a la mañana caería en el mes
+ * anterior.
+ */
+export function gastoDelMesDelGrupo(padreId, cuando = null) {
+  try {
+    const mes = String(cuando || new Date().toISOString()).slice(0, 19).replace("T", " ");
+    const r = db.prepare(`
+      SELECT COALESCE(SUM(v.TotalNeto), 0) AS gastado
+        FROM Pedidos p
+        JOIN service_budget_grupo g
+          ON CAST(g.ServicioID AS INTEGER) = CAST(p.ServicioID AS INTEGER)
+        JOIN v_pedidos_neto v ON v.PedidoID = p.PedidoID
+       WHERE g.PadreID = ? AND p.deleted_at IS NULL
+         AND strftime('%Y-%m', datetime(p.Fecha, '-3 hours'))
+           = strftime('%Y-%m', datetime(?, '-3 hours'))
+    `).get(padreId, mes);
+    return Number(r?.gastado || 0);
+  } catch { return 0; }
+}
+
+/** Los hijos de una bolsa, para la pantalla de presupuestos. */
+export function hijosDelGrupo(padreId) {
+  try {
+    return db.prepare(
+      `SELECT g.ServicioID AS id, s.ServicioNombre AS nombre
+         FROM service_budget_grupo g
+         LEFT JOIN Servicios s ON CAST(s.ServiciosID AS INTEGER) = CAST(g.ServicioID AS INTEGER)
+        WHERE g.PadreID = ? ORDER BY nombre COLLATE NOCASE`
+    ).all(padreId);
+  } catch { return []; }
+}
+
 export function getBudgetSettingsByServiceId(servicioId) {
   ensureServiceBudgetTable();
   try {

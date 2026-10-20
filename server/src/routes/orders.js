@@ -5,6 +5,7 @@ import {
   createOrder, getFullOrder, getEmployeeDisplayName,
   getServiceById, getServiceEmails, getServiceNameById,
   getBudgetSettingsByServiceId, DEFAULT_SERVICE_PCT,
+  grupoDeServicio, gastoDelMesDelGrupo, destinoMailDeServicio,
   getUserRoles, listServicesByUser, getUserById, db,
 } from "../db.js";
 import { getWarehouseForChildService } from "../warehouses.js";
@@ -116,6 +117,26 @@ router.post("/", requireAuth, async (req, res) => {
       }
     }
 
+    // Tope mensual de la bolsa compartida. El tope por pedido de arriba sigue
+    // valiendo: este se suma, no lo reemplaza.
+    if (rolEfectivo === "supervisor" && servicioId) {
+      const grupo = grupoDeServicio(servicioId);
+      if (grupo && Number(grupo.presupuesto) > 0) {
+        const gastado = gastoDelMesDelGrupo(grupo.padreId);
+        const esteTotal = (items || []).reduce(
+          (a, i) => a + Number(i?.precio ?? i?.Precio ?? 0) * Number(i?.cantidad ?? i?.Cantidad ?? 0), 0);
+        const disponible = Number(grupo.presupuesto) - gastado;
+        if (esteTotal > disponible) {
+          return res.status(400).json({
+            error: `Este pedido supera el presupuesto mensual de ${grupo.padre}.`
+              + ` Quedan $${Math.max(0, Math.round(disponible)).toLocaleString("es-AR")} disponibles este mes`
+              + ` y el pedido suma $${Math.round(esteTotal).toLocaleString("es-AR")}.`,
+            presupuestoGrupo: { padre: grupo.padre, presupuesto: grupo.presupuesto, gastado, disponible },
+          });
+        }
+      }
+    }
+
    let pedidoId;
     try {
       pedidoId = createOrder({ empleadoId, servicioId, nota, items, asRole: rolEfectivo, maxTotalAllowed });
@@ -196,6 +217,7 @@ router.post("/", requireAuth, async (req, res) => {
       // Mail que siempre recibe los pedidos de Kazaro (con y sin uniformes)
       const NICOLAS = getMailConfigValue(empresaId, "MAIL_ALWAYS", "nicolas.barcena@kazaro.com.ar");
       const UNIFORMES_TO = getMailConfigValue(empresaId, "MAIL_UNIFORMES_TO", `eugenia.alvarez@kazaro.com.ar,${NICOLAS}`);
+      const destinoDelServicio = servicioId ? destinoMailDeServicio(servicioId) : null;
 
       const mailOpts = {
         // Los uniformes no llevan el CC del depósito: van sólo a UNIFORMES_TO.
@@ -222,6 +244,11 @@ router.post("/", requireAuth, async (req, res) => {
         // MAIL_TO, y el mail se seguía colando por el MAIL_CC global, que en
         // Kazaro tiene a german.gonzalez, nicolas.bustos y alejandro.diaz.
         mailOpts.to = UNIFORMES_TO;
+        mailOpts.exclusive = true;
+      } else if (destinoDelServicio) {
+        // Servicio con destinatarios propios: van SOLO esos. exclusive para
+        // que no se cuele por el MAIL_CC global, como pasaba con uniformes.
+        mailOpts.to = destinoDelServicio;
         mailOpts.exclusive = true;
       } else if (empresaId === 1) {
         // Kazaro sin uniformes: los 4 del .env + nicolas.barcena.
