@@ -44,6 +44,31 @@ export default function CartProvider({ children }) {
   function remove(productId) {
     setItems(prev => prev.filter(it => it.productId !== productId));
   }
+  /**
+   * Deja el carrito igual a un pedido anterior, para repetirlo.
+   *
+   * Reemplaza en vez de sumar: si no, repetir un pedido se mezclaría con lo
+   * que hubiera a medio cargar y saldría cualquier cosa. Después se edita
+   * como siempre y al enviarlo sale con número nuevo, porque es un pedido
+   * nuevo: el viejo no se toca.
+   *
+   * Los precios NO viajan desde el pedido viejo: el servidor los toma del
+   * catálogo al crear, así que repetir un pedido de hace un mes sale a precio
+   * de hoy.
+   */
+  function reemplazar(nuevos = [], servicio = null) {
+    setItems((nuevos || [])
+      .map((it) => ({
+        productId: it.productId,
+        name: it.name ?? it.nombre ?? "",
+        price: Number(it.price ?? it.precio ?? 0),
+        qty: Math.max(1, Number(it.qty ?? it.cantidad ?? 1)),
+        categoryName: it.categoryName ?? "",
+      }))
+      .filter((it) => it.productId != null));
+    if (servicio) setService(servicio);
+  }
+
   function clear() {
     setItems([]);
     setService(null);
@@ -64,7 +89,7 @@ export default function CartProvider({ children }) {
   );
 
   const value = useMemo(
-    () => ({ items, add, update, remove, clear, total, service, setService }),
+    () => ({ items, add, update, remove, clear, reemplazar, total, service, setService }),
     [items, total, service]
   );
 

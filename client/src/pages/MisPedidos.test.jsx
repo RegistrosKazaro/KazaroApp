@@ -9,6 +9,8 @@ vi.mock("../hooks/useAuth", () => ({ useAuth: () => ({ user: { roles: ["supervis
 
 import { api } from "../api/client";
 import MisPedidos from "./MisPedidos";
+// La pantalla usa el carrito para "Repetir este pedido".
+import CartProvider from "../context/CartProvider";
 
 const hoy = new Date().toISOString().slice(0, 10);
 const PEDIDOS = [
@@ -26,7 +28,7 @@ beforeEach(() => {
 });
 
 const abrirRetirados = async (user) => {
-  render(<MemoryRouter><MisPedidos /></MemoryRouter>);
+  render(<CartProvider><MemoryRouter><MisPedidos /></MemoryRouter></CartProvider>);
   await user.click(await screen.findByRole("button", { name: "Retirados" }));
   await screen.findByText("#0001028");
 };
@@ -40,7 +42,7 @@ describe("Mis pedidos — hora", () => {
         items: [{ nombre: "LAMPAZO", cantidad: 1 }] },
     ] });
     const user = userEvent.setup({ delay: null });
-    render(<MemoryRouter><MisPedidos /></MemoryRouter>);
+    render(<CartProvider><MemoryRouter><MisPedidos /></MemoryRouter></CartProvider>);
     // "Todo" en la antigüedad, para que el test no dependa de la fecha de hoy.
     await user.selectOptions(await screen.findByRole("combobox"), "0");
     await screen.findByText("#0002001");
@@ -77,7 +79,7 @@ describe("Mis pedidos — buscador", () => {
 
   it("también en la solapa de activos", async () => {
     const user = userEvent.setup({ delay: null });
-    render(<MemoryRouter><MisPedidos /></MemoryRouter>);
+    render(<CartProvider><MemoryRouter><MisPedidos /></MemoryRouter></CartProvider>);
     await screen.findByText("#0001171");
     await user.type(buscador(), "1171");
     expect(screen.getByText("#0001171")).toBeInTheDocument();

@@ -1,7 +1,8 @@
 // client/src/pages/MisPedidos.jsx
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { normalizeText } from "../utils/text";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
+import { useCart } from "../hooks/useCart";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
 import { formatMoney } from "../utils/format";
@@ -62,8 +63,24 @@ function AlertaBadge({ dias, status }) {
 }
 
 export default function MisPedidos() {
-  useParams();
+  const { role } = useParams();
   useAuth();
+  const { reemplazar } = useCart();
+  const nav = useNavigate();
+
+  /**
+   * Repetir un pedido: deja el carrito igual a ese pedido y lleva al carrito.
+   * Es un pedido NUEVO —sale con otro número— y el viejo queda intacto.
+   */
+  const repetir = (o) => {
+    if (!o?.items?.length) return;
+    const servicio = o.ServicioID
+      ? { id: o.ServicioID, name: o.servicioNombre || "" }
+      : null;
+    reemplazar(o.items, servicio);
+    nav(`/app/${role || "supervisor"}/cart`);
+  };
+
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -345,6 +362,19 @@ export default function MisPedidos() {
                       );
                     })}
                   </div>
+
+                  {/* Repetir: deja el carrito igual a este pedido para
+                      editarlo y mandarlo de nuevo. Sale con numero nuevo. */}
+                  {o.items?.length > 0 && (
+                    <div style={{ marginBottom: 10 }}>
+                      <button type="button" className="pill" onClick={() => repetir(o)}>
+                        Repetir este pedido
+                      </button>
+                      <span style={{ marginLeft: 8, fontSize: "0.78rem", color: "#6b7280" }}>
+                        Se carga en el carrito para que lo edites y lo envíes como un pedido nuevo.
+                      </span>
+                    </div>
+                  )}
 
                   {/* Items del pedido */}
                   {o.items?.length > 0 && (
