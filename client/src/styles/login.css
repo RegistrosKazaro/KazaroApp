@@ -97,6 +97,9 @@ body {
 .login-side-panel {
   background: #0d2c5a;
   padding: 44px 40px;
+  /* Mismo motivo que .appbar: en el celular este panel llega hasta el borde
+     de arriba y el título no tiene que quedar debajo del reloj. */
+  padding-top: calc(44px + env(safe-area-inset-top, 0px));
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -199,6 +202,7 @@ body {
 }
 @media (max-width: 480px) {
   .login-side-panel, .login-card-split { padding: 30px 24px; }
+  .login-side-panel { padding-top: calc(30px + env(safe-area-inset-top, 0px)); }
 }
 
 /* ── Logo ── */

@@ -9,6 +9,8 @@
   .appbar {
     position: relative;
     padding: 10px 12px;
+    /* El atajo de arriba pisa el padding-top de app.css, hay que repetirlo. */
+    padding-top: calc(10px + env(safe-area-inset-top, 0px));
   }
 
   /* Botón hamburguesa: buen tamaño de toque (44px), ícono blanco. */

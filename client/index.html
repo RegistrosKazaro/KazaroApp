@@ -2,7 +2,11 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- viewport-fit=cover: sin esto, con la barra de estado translúcida de
+         abajo, iOS achica la ventana y pinta él la franja de arriba con un
+         degradado derivado del contenido. Con cover la página llega hasta el
+         borde y la pinta la barra de la app (ver env(safe-area-inset-top)). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <link rel="icon" href="/Kazaro.ico" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />

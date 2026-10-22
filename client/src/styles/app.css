@@ -2,6 +2,10 @@
   background:#0b1220;
   color:#fff;
   padding:12px 16px;
+  /* En la app instalada en iPhone la página llega hasta el borde de arriba:
+     la barra se estira para cubrir la franja del reloj con su propio color.
+     Fuera de ahí el inset es 0 y no cambia nada. */
+  padding-top:calc(12px + env(safe-area-inset-top, 0px));
   display:flex;
   align-items:center;
   justify-content:space-between;
