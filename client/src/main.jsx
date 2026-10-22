@@ -11,8 +11,11 @@ import ErrorBoundary from "./components/ErrorBoundary.jsx";
 
 import "./styles/global.css";
 import { ensureCsrf } from "./api/client";
+import { recargarCuandoHayaVersionNueva } from "./pwa";
 import "./styles/a11y-boost.css";
 import "./styles/nav-mobile.css";
+
+recargarCuandoHayaVersionNueva();
 /** Exportar el componente evita el warning de react-refresh */
 export function Boot({ children }) {
   useEffect(() => {
