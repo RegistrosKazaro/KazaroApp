@@ -2,24 +2,57 @@
 //
 // Leer códigos con la cámara del celular, como respaldo de la pistola.
 //
-// Usa BarcodeDetector, que ya viene en el navegador de Android: no agrega
-// ninguna librería y decodifica con el hardware del equipo, que es bastante
-// más rápido que hacerlo por software. iPhone no lo tiene, por eso el botón
-// sólo aparece donde funciona (ver `hayCamara`).
-//
-// shortcut: sin soporte para iPhone/Safari, que no trae BarcodeDetector. Si
-// algún día entran equipos de Apple, hay que sumar una librería que decodifique
-// por software (unos 200 KB) y cargarla sólo en esos equipos.
+// En Android decodifica el equipo con BarcodeDetector: no cuesta nada y es
+// bastante más rápido que hacerlo por software. Safari no lo trae, así que en
+// iPhone se baja un decodificador (zxing-wasm, ~950 KB) la primera vez que se
+// abre la cámara. Los dos exponen el mismo `detect(video)`, ver `crearDetector`.
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /** Los que pegan en las etiquetas de acá, más los EAN de los envases. */
 const FORMATOS = ["code_128", "code_39", "ean_13", "ean_8", "itf", "upc_a", "upc_e", "qr_code"];
+/** Los mismos, con los nombres que usa zxing. */
+const FORMATOS_ZXING = ["Code128", "Code39", "EAN13", "EAN8", "ITF", "UPCA", "UPCE", "QRCode"];
 
-/** Si el equipo no puede, el botón no se muestra: mejor que uno que no anda. */
+/** Sin cámara no hay botón: mejor que uno que no anda. */
 export const hayCamara = () =>
-  typeof window !== "undefined" &&
-  "BarcodeDetector" in window &&
-  !!navigator?.mediaDevices?.getUserMedia;
+  typeof window !== "undefined" && !!navigator?.mediaDevices?.getUserMedia;
+
+/**
+ * Un lector con la forma de BarcodeDetector: `detect(video)` → [{rawValue}].
+ * Donde el equipo lo trae, se usa el del equipo; donde no, se baja el de
+ * software, que no se carga nunca en los equipos que no lo necesitan.
+ */
+async function crearDetector() {
+  if ("BarcodeDetector" in window) return new window.BarcodeDetector({ formats: FORMATOS });
+
+  const [{ readBarcodes, prepareZXingModule }, { default: wasmUrl }] = await Promise.all([
+    import("zxing-wasm/reader"),
+    import("zxing-wasm/reader/zxing_reader.wasm?url"),
+  ]);
+  // Por defecto busca el .wasm al lado del .js, y empaquetado no está ahí.
+  prepareZXingModule({ overrides: { locateFile: () => wasmUrl } });
+
+  const lienzo = document.createElement("canvas");
+  const pincel = lienzo.getContext("2d", { willReadFrequently: true });
+  return {
+    async detect(video) {
+      const { videoWidth: ancho, videoHeight: alto } = video;
+      if (!ancho || !alto) return [];            // todavía no llegó el primer cuadro
+      lienzo.width = ancho;
+      lienzo.height = alto;
+      pincel.drawImage(video, 0, 0, ancho, alto);
+      // Insistir con rotaciones e inversiones cuesta más que el cuadro entero,
+      // y acá hay cinco por segundo: si este no salió, el próximo viene en
+      // 200 ms. Barato y seguido le gana a caro y lento.
+      const hallados = await readBarcodes(pincel.getImageData(0, 0, ancho, alto), {
+        formats: FORMATOS_ZXING,
+        tryHarder: false, tryRotate: false, tryInvert: false,
+        maxNumberOfSymbols: 1,
+      });
+      return hallados.map((b) => ({ rawValue: b.text }));
+    },
+  };
+}
 
 // Mirando una etiqueta quieta, el detector la lee muchas veces por segundo.
 //
@@ -72,7 +105,6 @@ export default function EscanerCamara({ onCodigo, onCerrar }) {
 
     (async () => {
       try {
-        detector = new window.BarcodeDetector({ formats: FORMATOS });
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: "environment",             // la de atrás, no la selfie
@@ -88,6 +120,18 @@ export default function EscanerCamara({ onCodigo, onCerrar }) {
           videoRef.current.srcObject = stream;
           await videoRef.current.play().catch(() => {});
         }
+
+        // Después de pedir la cámara: así el permiso se pregunta enseguida y,
+        // en iPhone, el decodificador se baja mientras lo están aceptando.
+        try {
+          detector = await crearDetector();
+        } catch {
+          for (const t of stream.getTracks()) t.stop();   // no dejar la luz prendida
+          streamRef.current = null;
+          setErr("No se pudo cargar el lector de códigos. Probá con la pistola o cargá a mano.");
+          return;
+        }
+        if (!vivoRef.current) return;
 
         let mirando = false;
         timer = setInterval(async () => {
@@ -131,7 +175,7 @@ export default function EscanerCamara({ onCodigo, onCerrar }) {
         }, 200);
       } catch (e) {
         setErr(e?.name === "NotAllowedError"
-          ? "No diste permiso para usar la cámara. Habilitala desde el candado de la barra de direcciones."
+          ? "No diste permiso para usar la cámara. En Android se habilita desde el candado de la barra de direcciones; en iPhone, en Ajustes › Safari › Cámara."
           : "No se pudo abrir la cámara. Probá con la pistola.");
       }
     })();

@@ -10,6 +10,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+// El decodificador por software (el de iPhone) no se puede correr en jsdom:
+// lo que importa probar es que el componente lo use y que lo que devuelve
+// pase por las mismas reglas de conteo.
+const leidosPorSoftware = vi.fn(async () => [{ text: "100000777" }]);
+vi.mock("zxing-wasm/reader", () => ({
+  readBarcodes: (...args) => leidosPorSoftware(...args),
+  prepareZXingModule: vi.fn(),
+}));
+vi.mock("zxing-wasm/reader/zxing_reader.wasm?url", () => ({ default: "/zxing_reader.wasm" }));
+
 import EscanerCamara, { hayCamara } from "./EscanerCamara";
 
 let detectado = [];
@@ -32,10 +42,21 @@ function montarApis({ permiso = true, soporta = true } = {}) {
   };
   // jsdom no implementa play()
   window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+  // Ni canvas, ni las medidas del video, que el camino de software necesita.
+  for (const [prop, valor] of [["videoWidth", 960], ["videoHeight", 720]]) {
+    Object.defineProperty(window.HTMLVideoElement.prototype, prop, {
+      configurable: true, get: () => valor,
+    });
+  }
+  window.HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
+    drawImage: vi.fn(),
+    getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(4), width: 960, height: 720 })),
+  }));
 }
 
 beforeEach(() => {
   detectado = [];
+  leidosPorSoftware.mockClear();
   vi.useFakeTimers({ shouldAdvanceTime: true });
   montarApis();
 });
@@ -53,11 +74,31 @@ const mirar = async (vueltas = 1) => {
 };
 
 describe("Escáner por cámara", () => {
-  it("no se ofrece en un equipo que no lo soporta", () => {
+  it("se ofrece igual en un equipo sin BarcodeDetector, como el iPhone", () => {
+    // Antes el botón se escondía en iPhone. Ahora ahí decodifica por software.
     montarApis({ soporta: false });
-    expect(hayCamara()).toBe(false);
+    expect(hayCamara()).toBe(true);
     montarApis({ soporta: true });
     expect(hayCamara()).toBe(true);
+  });
+
+  it("sin cámara en el equipo no se ofrece", () => {
+    navigator.mediaDevices = {};
+    expect(hayCamara()).toBe(false);
+  });
+
+  // El camino del iPhone: el decodificador por software, que entra por el
+  // mismo `detect(video)` y por lo tanto cuenta con las mismas reglas.
+  it("en iPhone lee con el decodificador por software", async () => {
+    montarApis({ soporta: false });
+    const onCodigo = vi.fn();
+    render(<EscanerCamara onCodigo={onCodigo} onCerrar={vi.fn()} />);
+    await waitFor(() => expect(leidosPorSoftware).toHaveBeenCalled());
+
+    await mirar(3);   // tres vueltas mirando la MISMA etiqueta
+
+    expect(onCodigo).toHaveBeenCalledTimes(1);
+    expect(onCodigo).toHaveBeenCalledWith("100000777");
   });
 
   it("pide la cámara de atrás, no la de selfies", async () => {
