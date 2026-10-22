@@ -187,6 +187,14 @@ body {
 @media (max-width: 780px) {
   .login-split { grid-template-columns: 1fr; }
   .login-side-panel { border-right: 0; border-bottom: 1px solid rgba(255,255,255,.06); }
+  /* En el celular el panel ocupa toda la pantalla. Con el margen de .login-bg
+     el fondo de olas asomaba arriba y a los costados, y se veía como una
+     franja degradada suelta entre la barra de estado y el panel. Los márgenes
+     negativos son justo el padding del fondo, así no queda nada asomando.
+     Sólo acá: las otras pantallas que usan .login-bg son tarjetas centradas
+     y ahí el fondo se ve a propósito. */
+  .login-container-split { margin: -24px -16px; width: auto; }
+  .login-split { border-radius: 0; }
 }
 @media (max-width: 480px) {
   .login-side-panel, .login-card-split { padding: 30px 24px; }
