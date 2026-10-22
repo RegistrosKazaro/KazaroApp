@@ -2,15 +2,19 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <!-- viewport-fit=cover: sin esto, con la barra de estado translúcida de
-         abajo, iOS achica la ventana y pinta él la franja de arriba con un
-         degradado derivado del contenido. Con cover la página llega hasta el
-         borde y la pinta la barra de la app (ver env(safe-area-inset-top)). -->
+    <!-- viewport-fit=cover: que la página llegue a los bordes de la pantalla
+         en los iPhone con muesca. Lo de arriba lo resuelve theme-color. -->
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <link rel="icon" href="/Kazaro.ico" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- El color de la franja del reloj en la app instalada. Sin declararlo,
+         iOS se inventa un degradado difuminado ahí (reportado 22/10/2026).
+         Es el mismo color que .appbar, así que se lee como una sola barra.
+         `black` en vez de `black-translucent`: con translucent la página se
+         dibuja DEBAJO del reloj, y iOS lo ignora cuando hay manifiesto. -->
+    <meta name="theme-color" content="#0b1220" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="Insumos" />
     <title>Insumos</title>
   </head>
