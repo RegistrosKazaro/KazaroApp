@@ -21,7 +21,14 @@ export default defineConfig({
         // para la franja del reloj en la app instalada y para la pantalla de
         // arranque: en blanco dejaba un degradado blanco arriba de todo.
         background_color: '#0b1220',
-        display: 'standalone',
+        // 'browser' y no 'standalone': en pantalla completa iOS dibuja él la
+        // franja del reloj con un degradado que no se puede controlar desde la
+        // página (probado el 22/10/2026 contra theme-color, background_color,
+        // viewport-fit, la barra de estado y el fondo del documento: ninguno lo
+        // mueve). Como pestaña de Safari esa franja es la barra del navegador.
+        // Ojo: la meta apple-mobile-web-app-capable hace lo mismo por su cuenta
+        // y también hubo que sacarla de index.html.
+        display: 'browser',
         orientation: 'portrait',
         start_url: '/',
         icons: [
