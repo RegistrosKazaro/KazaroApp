@@ -17,7 +17,10 @@ export default defineConfig({
         short_name: 'Insumos',
         description: 'Gestión de pedidos de insumos',
         theme_color: '#0b1220',
-        background_color: '#ffffff',
+        // El mismo color que la barra de la app, NO blanco. iOS usa este color
+        // para la franja del reloj en la app instalada y para la pantalla de
+        // arranque: en blanco dejaba un degradado blanco arriba de todo.
+        background_color: '#0b1220',
         display: 'standalone',
         orientation: 'portrait',
         start_url: '/',
