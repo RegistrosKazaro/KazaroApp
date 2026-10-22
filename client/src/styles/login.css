@@ -92,9 +92,10 @@ body {
   box-shadow: var(--shadow-card);
 }
 
+/* Color liso, no translúcido: con transparencia y blur se veía el fondo de
+   olas a través del panel y quedaba un degradado difuminado en diagonal. */
 .login-side-panel {
-  background: rgba(6, 20, 45, .55);
-  backdrop-filter: blur(6px);
+  background: #0d2c5a;
   padding: 44px 40px;
   display: flex;
   flex-direction: column;
@@ -113,7 +114,7 @@ body {
 .login-side-accent { color: #5fe3d8; }
 .login-side-accent-pazar { color: #a6e34d; }
 
-.login-side-panel-pazar { background: rgba(6, 24, 12, .5); }
+.login-side-panel-pazar { background: #163a1f; }
 
 .login-side-subtitle {
   margin: 0 0 28px;
