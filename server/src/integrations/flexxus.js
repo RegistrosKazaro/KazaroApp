@@ -107,7 +107,12 @@ export function applyStockSync(report, { dryRun = true } = {}) {
       report.resumen.soloEnFlexxus,
       report.resumen.colisionesApp + report.resumen.colisionesFlexxus,
       dryRun ? 1 : 0,
-      JSON.stringify(report.resumen)
+      JSON.stringify({
+        ...report.resumen,
+        antes: cambios.map((m) =>({
+          productId: m.productId, code: m.code, antes: m.stockApp, despues: m.stockFlexxus,
+        })),
+      })
     );
   } catch (e) {
     console.warn("[flexxus] no se pudo loguear el sync:", e?.message || e);

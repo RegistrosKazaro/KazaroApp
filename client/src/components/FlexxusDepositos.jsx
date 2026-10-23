@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import useDebounced from "../hooks/useDebounced";
 import { formatNumber } from "../utils/format";
+import StockDesdeExcel from "./StockDesdeExcel";
 
 const ESTADOS = {
   mapeado:      { label: "Mapeado",      color: "#166534", bg: "#dcfce7" },
@@ -141,6 +142,8 @@ export default function FlexxusDepositos() {
           esperando, visible en la cola, hasta que se le asigne uno.
         </p>
       </div>
+      
+      <StockDesdeExcel />
 
       {resumen && (
         <div className="toolbar" style={{ gap: 8, flexWrap: "wrap" }}>

@@ -58,6 +58,9 @@ import {
 import { crearClienteFlexxus, configDesdeEnv } from "../integrations/flexxusClient.js";
 import { probarConexion } from "../integrations/flexxusDespachador.js";
 import * as codigosBarra from "../integrations/flexxusCodigosBarra.js";
+import { leerExcelFlexxus } from "../integrations/flexxusExcel.js";
+import { readAppProducts, applyStockSync, buildSyncReport } from "../integrations/flexxus.js";
+
 
 const router = Router();
 const mustBeAdmin = [requireAuth, requireRole(["admin", "Admin"])];
@@ -2992,6 +2995,42 @@ router.post("/flexxus/codigos-barra/aplicar", mustBeAdmin, async (req, res) => {
   } catch (e) {
     console.error("POST /admin/flexxus/codigos-barra/aplicar error:", e?.message || e);
     res.status(500).json({ ok: false, error: e?.message || "No se pudieron cargar los códigos" });
+  }
+});
+
+// Stock desde el excel que se exporta a mano en Flexxus
+// Una sola ruta. Hay que mirarla siempre antes, porque aplicar pisa el stock de los insumos
+
+router.post("/flexxus/stock/excel", mustBeAdmin, upload.single("file"), (req, res) => {
+  try {
+    if (!req.file?.buffer) return res.status(400).json({
+      error: "Archivo requerido (field: file)"});
+
+    const { filas, columnas, avisos, hoja } = leerExcelFlexxus(req.file.buffer);
+    if (!filas.length) {
+      return res.status(400).json({ error: "No se pudo leer el Excel", hoja, columnas, avisos});
+    }
+    const aplicar = String(req.query.aplicar || "") === "1";
+    const r = 
+    applyStockSync(buildSyncReport(readAppProducts(), filas), {
+      dryRun: !aplicar});
+      res.json ({
+        hoja, columnas, avisos,
+        aplicado: !r.dryRun,
+        aplicados: r.aplicados,
+        resumen: r.resumen,
+        sinTocar: r.soloEnApp.map((p) => ({ code: p.code,
+          nombre: p.name, stock: p.stock })),
+          cambios: r.matched.filter((m) => m.diff !== 0)
+          .sort((a,b) => Math.abs(b.diff) - Math.abs(a.diff))
+          .map((m) =>({
+            code: m.code, nombre: m.nombreApp || m.nombreFlexxus,
+            app: m.stockApp, flexxus: m.stockFlexxus, diff: m.diff,
+          })),
+      });
+  } catch (e){
+    console.error("POST /admin/flexxus/stock/excel error:", e?.message || e);
+    res.status(500).json({ error: e?.message || "No se pudo procesar el Excel"});
   }
 });
 
