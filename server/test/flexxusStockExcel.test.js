@@ -34,25 +34,30 @@ after(() => {
 
 const sinBase = () => !handler || !db;
 
-/** Un Excel con el formato del export real: Código / Artículo / Stock. */
+/** Un Excel con el formato del export real. Las filas son [codigo, nombre, stock, subdeposito]. */
 function excel(filas) {
   const libro = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(
     libro,
-    XLSX.utils.aoa_to_sheet([["Código", "Artículo", "Stock"], ...filas]),
+    XLSX.utils.aoa_to_sheet([["Código", "Artículo", "Stock", "SubDeposito"], ...filas]),
     "Hoja1"
   );
   return XLSX.write(libro, { type: "buffer", bookType: "xlsx" });
 }
 
 /** Un insumo de Kazaro con el stock que se le diga. */
-function insumo(code, stock) {
+function insumo(code, stock, categoriaId = null) {
   const id = Number(db.prepare(
-    `INSERT INTO Productos (ProductName, Precio, Stock, empresa_id, is_active, Code)
-     VALUES (?, 1, ?, 1, 1, ?)`
-  ).run(`XLS ${code}`, stock, code).lastInsertRowid);
+    `INSERT INTO Productos (ProductName, Precio, Stock, empresa_id, is_active, Code, CategoriaID)
+     VALUES (?, 1, ?, 1, 1, ?, ?)`
+  ).run(`XLS ${code}`, stock, code, categoriaId).lastInsertRowid);
   return id;
 }
+
+/** El id de la categoría Uniformes, que es la que se deja afuera. */
+const idUniformes = () =>
+  db.prepare(`SELECT CategoriaID AS id FROM Categorias WHERE LOWER(CategoriaNombre) = ?`)
+    .get("uniformes")?.id ?? null;
 
 const stockDe = (id) => Number(db.prepare(`SELECT Stock FROM Productos WHERE ProductID = ?`).get(id).Stock);
 
@@ -158,6 +163,71 @@ test("sin archivo contesta 400, no revienta", async () => {
   };
   await handler({ query: {}, user: { empresaId: 1 } }, res);
   assert.equal(res.statusCode, 400);
+});
+
+test("los uniformes de la app no se tocan", async () => {
+  if (sinBase()) return;
+  // Se manejan aparte: pisarles el stock con el de Flexxus no corresponde.
+  const cat = idUniformes();
+  if (cat == null) return;
+  const code = codigoNuevo();
+  const id = insumo(code, 40, cat);
+
+  await llamar(excel([[code, "UN UNIFORME", 3, "ZONA 1"]]), { aplicar: "1" });
+
+  assert.equal(stockDe(id), 40, "el uniforme tenia que quedar intacto");
+});
+
+test("lo que en Flexxus vive en UNIFORMES tampoco se usa", async () => {
+  if (sinBase()) return;
+  // Aunque el insumo de la app no sea uniforme, si el articulo de Flexxus
+  // sale del subdeposito UNIFORMES no es la fuente correcta.
+  const code = codigoNuevo();
+  const id = insumo(code, 40);
+
+  await llamar(excel([[code, "ALGO", 3, "UNIFORMES"]]), { aplicar: "1" });
+
+  assert.equal(stockDe(id), 40);
+});
+
+test("por defecto NO baja nada a cero, pero lo informa", async () => {
+  if (sinBase()) return;
+  // Un insumo en cero no se puede pedir: createOrder corta con "Sin stock".
+  const code = codigoNuevo();
+  const id = insumo(code, 500);
+
+  const { body } = await llamar(excel([[code, "SE ACABO", 0, "ZONA 1"]]), { aplicar: "1" });
+
+  assert.equal(stockDe(id), 500, "no tenia que bajarlo");
+  const avisado = body.enCero.find((x) => x.code === code);
+  assert.ok(avisado, "tenia que avisar que este quedaria en cero");
+  assert.equal(avisado.app, 500);
+});
+
+test("con ceros=1 sí los baja: es una decisión explícita", async () => {
+  if (sinBase()) return;
+  const code = codigoNuevo();
+  const id = insumo(code, 500);
+
+  await llamar(excel([[code, "SE ACABO", 0, "ZONA 1"]]), { aplicar: "1", ceros: "1" });
+
+  assert.equal(stockDe(id), 0);
+});
+
+test("retener los ceros no frena al resto", async () => {
+  if (sinBase()) return;
+  const enCero = codigoNuevo();
+  const idCero = insumo(enCero, 500);
+  const normal = codigoNuevo();
+  const idNormal = insumo(normal, 500);
+
+  await llamar(excel([
+    [enCero, "SE ACABO", 0, "ZONA 1"],
+    [normal, "QUEDA ALGO", 120, "ZONA 1"],
+  ]), { aplicar: "1" });
+
+  assert.equal(stockDe(idCero), 500, "el que iba a cero se retiene");
+  assert.equal(stockDe(idNormal), 120, "pero el otro se aplica igual");
 });
 
 test("la ruta está montada y pasa por el guardia de admin", async () => {

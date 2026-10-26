@@ -36,6 +36,7 @@ import {
   asignarRubroAProductos,
   definirRubrosDeServicio,
   recalcularTodosLosServicios,
+  getProductIdsCategoriasSeparadas,
 } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendMail, pauseMail, resumeMail, getMailPauseState } from "../utils/mailer.js";
@@ -3011,23 +3012,47 @@ router.post("/flexxus/stock/excel", mustBeAdmin, upload.single("file"), (req, re
       return res.status(400).json({ error: "No se pudo leer el Excel", hoja, columnas, avisos});
     }
     const aplicar = String(req.query.aplicar || "") === "1";
-    const r = 
-    applyStockSync(buildSyncReport(readAppProducts(), filas), {
-      dryRun: !aplicar});
-      res.json ({
-        hoja, columnas, avisos,
-        aplicado: !r.dryRun,
-        aplicados: r.aplicados,
-        resumen: r.resumen,
-        sinTocar: r.soloEnApp.map((p) => ({ code: p.code,
-          nombre: p.name, stock: p.stock })),
-          cambios: r.matched.filter((m) => m.diff !== 0)
-          .sort((a,b) => Math.abs(b.diff) - Math.abs(a.diff))
-          .map((m) =>({
-            code: m.code, nombre: m.nombreApp || m.nombreFlexxus,
-            app: m.stockApp, flexxus: m.stockFlexxus, diff: m.diff,
-          })),
-      });
+    // Los uniformes se manejan aparte y no se tocan con esto: ni los de la app
+    // (categoría Uniformes) ni los del subdepósito UNIFORMES de Flexxus.
+    const idsUniformes = getProductIdsCategoriasSeparadas();
+    const appRows = readAppProducts().filter((p) => !idsUniformes.has(Number(p.productId)));
+    const flexRows = filas.filter((f) => String(f.subdeposito).toUpperCase() !== "UNIFORMES");
+
+    const report = buildSyncReport(appRows, flexRows);
+
+    // Bajar un insumo a cero no es sólo un número: createOrder corta con "Sin
+    // stock" y nadie puede pedirlo. Por defecto esos quedan afuera y se
+    // informan aparte, para decidirlos mirándolos.
+    const incluirCeros = String(req.query.ceros || "") === "1";
+    const enCero = report.matched.filter(
+      (m) => Number(m.stockFlexxus) <= 0 && Number(m.stockApp) > 0
+    );
+    if (!incluirCeros) {
+      const retenidos = new Set(enCero.map((m) => m.productId));
+      report.matched = report.matched.filter((m) => !retenidos.has(m.productId));
+    }
+
+    const r = applyStockSync(report, { dryRun: !aplicar });
+
+    res.json({
+      hoja, columnas, avisos,
+      aplicado: !r.dryRun,
+      aplicados: r.aplicados,
+      incluirCeros,
+      resumen: r.resumen,
+      uniformesExcluidos: idsUniformes.size,
+      sinTocar: r.soloEnApp.map((p) => ({ code: p.code, nombre: p.name, stock: p.stock })),
+      // Los que quedarían sin stock: se muestran siempre, se apliquen o no.
+      enCero: enCero
+        .sort((a, b) => Number(b.stockApp) - Number(a.stockApp))
+        .map((m) => ({ code: m.code, nombre: m.nombreApp || m.nombreFlexxus, app: m.stockApp })),
+      cambios: r.matched.filter((m) => m.diff !== 0)
+        .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff))
+        .map((m) => ({
+          code: m.code, nombre: m.nombreApp || m.nombreFlexxus,
+          app: m.stockApp, flexxus: m.stockFlexxus, diff: m.diff,
+        })),
+    });
   } catch (e){
     console.error("POST /admin/flexxus/stock/excel error:", e?.message || e);
     res.status(500).json({ error: e?.message || "No se pudo procesar el Excel"});

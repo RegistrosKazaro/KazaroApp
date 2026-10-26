@@ -21,6 +21,8 @@ export default function StockDesdeExcel() {
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
   const [aviso, setAviso] = useState("");
+  // Dejar un insumo en cero impide pedirlo. Por defecto no se bajan.
+  const [incluirCeros, setIncluirCeros] = useState(false);
 
   async function enviar(aplicar) {
     if (!archivo) return;
@@ -30,8 +32,9 @@ export default function StockDesdeExcel() {
     try {
       const fd = new FormData();
       fd.append("file", archivo);
+      const params = [aplicar ? "aplicar=1" : "", incluirCeros ? "ceros=1" : ""].filter(Boolean);
       const { data } = await api.post(
-        `/admin/flexxus/stock/excel${aplicar ? "?aplicar=1" : ""}`,
+        `/admin/flexxus/stock/excel${params.length ? "?" + params.join("&") : ""}`,
         fd,
         { headers: { "Content-Type": "multipart/form-data" } }
       );
@@ -58,7 +61,7 @@ export default function StockDesdeExcel() {
         <h3>Stock desde el Excel de Flexxus</h3>
         <p style={{ margin: "4px 0 0", fontSize: ".85rem", color: "#6b7280" }}>
           Subí el export. Primero se muestra la comparación sin tocar nada; el stock se pisa
-          sólo si apretás Aplicar. Lo que Flexxus no tenga —los uniformes, por ejemplo— queda como está.
+          sólo si apretás Aplicar. Los uniformes quedan afuera, se manejan aparte.
         </p>
       </div>
 
@@ -106,6 +109,36 @@ export default function StockDesdeExcel() {
 
           {previo.avisos?.length > 0 && (
             <div className="state error">El Excel vino raro: {previo.avisos.join(", ")}</div>
+          )}
+
+          {(previo.enCero?.length ?? 0) > 0 && (
+            <div className="state" style={{ background: "#fee2e2", color: "#991b1b" }}>
+              <strong>{previo.enCero.length} insumos quedarían en cero</strong> según el Excel.
+              Un insumo en cero no se puede pedir: la app corta con “Sin stock”.
+              {incluirCeros
+                ? " Están incluidos en lo que se va a aplicar."
+                : " Quedan afuera: el resto se aplica igual."}
+              <label style={{ display: "block", marginTop: 8, fontWeight: 600 }}>
+                <input
+                  type="checkbox"
+                  checked={incluirCeros}
+                  disabled={cargando}
+                  onChange={(e) => { setIncluirCeros(e.target.checked); setPrevio(null); }}
+                  style={{ marginRight: 6 }}
+                />
+                Bajarlos a cero igual (confirmé que no hay stock)
+              </label>
+              <details style={{ marginTop: 6 }}>
+                <summary style={{ cursor: "pointer" }}>Ver cuáles son</summary>
+                <ul style={{ margin: "6px 0 0 18px", fontSize: ".85rem" }}>
+                  {previo.enCero.map((c) => (
+                    <li key={c.code}>
+                      {c.code} — {c.nombre} (hoy: {formatNumber(c.app)})
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </div>
           )}
 
           <div style={{ maxHeight: 420, overflow: "auto", border: "1px solid #e5e7eb", borderRadius: 8 }}>
