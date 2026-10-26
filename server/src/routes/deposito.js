@@ -2340,6 +2340,74 @@ router.put("/orders/reopen/:id",  mustWarehouse, (req, res) => { req.params.acti
 
 /* ========================= Analytics ========================= */
 
+// Stock crítico medido en MESES DE COBERTURA, no en unidades sueltas.
+//
+// Mirar el stock a secas no sirve: 28.150 bolsas negras parecen muchas y son
+// menos de dos meses, mientras 50 mopas pueden ser medio año. Lo que la app sí
+// sabe con certeza es cuánto se consume, porque son sus propios pedidos.
+//
+// Se mide sobre el neto (lo devuelto no se consumió) de los últimos 90 días.
+router.get("/stock-critico", mustWarehouse, (req, res) => {
+  try {
+    const meses = Math.max(0.1, Number(req.query.meses) || 2);
+    const empresaId = getEmpresaId(req);
+
+    const filas = db.prepare(`
+      SELECT p.ProductID            AS productId,
+             p.Code                 AS code,
+             p.ProductName          AS name,
+             COALESCE(p.Stock, 0)   AS stock,
+             COALESCE(c.cant, 0)    AS consumo90
+        FROM Productos p
+        LEFT JOIN (
+               SELECT i.ProductoID AS pid, SUM(i.Cantidad) AS cant
+                 FROM v_pedido_items_neto i
+                 JOIN Pedidos d ON d.PedidoID = i.PedidoID
+                WHERE d.deleted_at IS NULL
+                  AND d.empresa_id = @empresaId
+                  AND datetime(d.Fecha, '-3 hours') >= datetime('now', '-90 days')
+                GROUP BY i.ProductoID
+             ) c ON c.pid = p.ProductID
+       WHERE p.empresa_id = @empresaId
+         AND COALESCE(p.is_active, 1) = 1
+    `).all({ empresaId });
+
+    const items = filas
+      .map((r) => {
+        const porMes = Number(r.consumo90) / 3;
+        return {
+          productId: r.productId,
+          code: r.code ? String(r.code).trim() : "",
+          name: r.name,
+          stock: Number(r.stock),
+          porMes: Math.round(porMes),
+          // Sin consumo no hay cobertura que calcular: no es que esté sobrado,
+          // es que no sabemos. Va aparte, no mezclado con los que se quiebran.
+          meses: porMes > 0 ? Number(r.stock) / porMes : null,
+          // Stock sembrado en su momento para que nada frenara los pedidos.
+          // Se marca en vez de taparlo: el número existe pero no es real.
+          dudoso: Number(r.stock) >= 10000,
+        };
+      })
+      .filter((x) => x.meses !== null && x.meses <= meses)
+      .sort((a, b) => a.meses - b.meses);
+
+    res.json({
+      meses,
+      items,
+      resumen: {
+        total: items.length,
+        sinStock: items.filter((x) => x.stock <= 0).length,
+        dudosos: items.filter((x) => x.dudoso).length,
+        sinConsumo: filas.filter((r) => Number(r.consumo90) <= 0).length,
+      },
+    });
+  } catch (e) {
+    console.error("[deposito] /stock-critico error", e);
+    res.status(500).json({ error: "No se pudo calcular la cobertura de stock" });
+  }
+});
+
 router.get("/overview", mustWarehouse, (req, res) => {
   try {
     const threshold = Number.isNaN(Number(req.query.threshold)) ? 0 : Number(req.query.threshold);
