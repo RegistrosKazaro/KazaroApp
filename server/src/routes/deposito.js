@@ -22,12 +22,14 @@ import {
   audit,
   registrarCambioProducto,
   INICIO_FLUJO_REVISION,
+  recomputeFlexxusMatch,
 } from "../db.js";
 import { sendMail } from "../utils/mailer.js";
 import { fmtAr, ahoraUtcSql } from "../utils/fechas.js";
 import { sinAcentosSql, normalizarBusqueda } from "../utils/busqueda.js";
 import * as picking from "../picking.js";
 import * as movimientos from "../integrations/flexxusMovimientos.js";
+import * as ingresos from "../ingresos.js"
 
 const router = Router();
 console.log("[deposito] Router cargado: Modo Seguro (JS JOIN)");
@@ -2470,5 +2472,57 @@ router.get("/consumo-desde-ultimo-ingreso/:productId", mustWarehouse, (req, res)
     res.json({ productId, consumido: null, last_ingreso: null, incoming_total: null, next_eta: null });
   }
 });
+/* === INGRESO DE INSUMOS === */
+
+router.get("/ingresos", mustWarehouse, (req, res) =>{
+  try{
+    res.json({
+      rows: ingresos.listarIngresos({
+        empresaId: getEmpresaId(req),
+        estado: req.query.estado || null,
+        limite: req.query.limite,
+      }),
+    });
+  }catch (e){
+    console.error("[deposito] /ingresos error", e);
+    res.status(500).json({ error: "No se pudieron listar los ingresos"});
+  }
+});
+
+router.get("/ingresos/:id", mustWarehouse, (req, res) =>{
+  try{
+    const ing = ingresos.detalleIngreso({
+      empresaID: getEmpresaId(req),
+      ingresoId: req.params.id,
+    });
+    if (!ing) return res.status(404).json({ error: "Ese remito no existe"});
+    res.json(ing);
+  }catch(e) {
+    console.error("[deposito] /ingreso/:id error", e);
+    res.status(500).json({ error: "No se pudo abrir el remito"});  }
+});
+
+router.post("/ingresos", mustWarehouse, (req, res) => {  try{
+    const id = ingresos.crearRemito({
+      empresaId: getEmpresaId(req),
+      usuario: req.user?.username || req.user?.email || null, ...req.body,
+    });
+    res.json({ok: true, id});
+  } catch (e){
+    res.status(400).json({ error: e?.message || "No se pudo cargar el remito"});
+  }
+});
+
+router.post("/ingresos/:id/factura", mustWarehouse, (req, res) => {  try {
+    const r = ingresos.asociarFactura({
+      empresaId: getEmpresaId(req),      ingresoId: req.params.id,
+      usuario: req.user?.username || req.user?.email || null, ...req.body,
+    });
+    res.json({ok: true, ...r});
+  } catch (e){
+    res.status(400).json({ error: e?.message || "No se pudo asosciar la factura", diferencias: e?.diferencias});
+  }
+});
+
 
 export default router;
