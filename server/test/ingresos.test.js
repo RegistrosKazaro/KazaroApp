@@ -293,6 +293,90 @@ test("el listado no mezcla empresas", async() =>{
     assert.ok(!ing.listarIngresos({ empresaId: 2}).some((r) => r.id === id));
 });
 
+/** Llama a la ruta de verdad, como la llama Express. Verificar que esté
+ *  montada no alcanza: un `empresaID` en vez de `empresaId` compila, monta,
+ *  y devuelve 404 para todo. Eso pasó. */
+async function llamarRuta(ruta, metodo, req) {
+  const { default: deposito } = await import("../src/routes/deposito.js");
+  const handler = deposito.stack
+    .find((l) => l.route?.path === ruta && l.route.methods[metodo])
+    .route.stack.at(-1).handle;
+  const res = {
+    statusCode: 200,
+    status(c) { this.statusCode = c; return this; },
+    json(d) { this.body = d; return this; },
+  };
+  await handler({ params: {}, query: {}, body: {}, user: { empresaId: 1 }, ...req }, res);
+  return res;
+}
+
+test("la ruta del detalle encuentra el remito", async () => {
+  if (sinBase()) return;
+  const p = insumo(0);
+  const { id } = remito(p, 7);
+
+  const res = await llamarRuta("/ingresos/:id", "get", { params: { id: String(id) } });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.items.length, 1);
+  assert.equal(Number(res.body.items[0].cantidad), 7);
+});
+
+test("la ruta del detalle no cruza empresas", async () => {
+  if (sinBase()) return;
+  const { id } = remito(insumo(0), 1);
+
+  const res = await llamarRuta("/ingresos/:id", "get",
+    { params: { id: String(id) }, user: { empresaId: 2 } });
+
+  assert.equal(res.statusCode, 404);
+});
+
+test("la ruta del listado devuelve filas", async () => {
+  if (sinBase()) return;
+  const { id } = remito(insumo(0), 3);
+
+  const res = await llamarRuta("/ingresos", "get", { query: { estado: "cargado" } });
+
+  assert.equal(res.statusCode, 200);
+  assert.ok(res.body.rows.some((r) => r.id === id));
+});
+
+test("la ruta de carga crea el remito y no toca el stock", async () => {
+  if (sinBase()) return;
+  const p = insumo(100);
+
+  const res = await llamarRuta("/ingresos", "post", { body: {
+    proveedor: "POR LA RUTA", numero: unico(), fecha: "2026-10-29",
+    items: [{ productoId: p, cantidad: 25 }],
+  } });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.ok, true);
+  assert.equal(stockDe(p), 100);
+});
+
+test("la ruta de la factura sube el stock, y rechazada no lo toca", async () => {
+  if (sinBase()) return;
+  const p = insumo(100);
+  const { id, itemId } = remito(p, 25);
+
+  const mal = await llamarRuta("/ingresos/:id/factura", "post", {
+    params: { id: String(id) },
+    body: { numeroFactura: unico(), lineas: [{ itemId, cantidad: 24, precioUnitario: 10 }] },
+  });
+  assert.equal(mal.statusCode, 400);
+  assert.equal(mal.body.diferencias[0].factura, 24);
+  assert.equal(stockDe(p), 100, "una factura rechazada no puede mover el stock");
+
+  const bien = await llamarRuta("/ingresos/:id/factura", "post", {
+    params: { id: String(id) },
+    body: { numeroFactura: unico(), lineas: [{ itemId, cantidad: 25, precioUnitario: 10 }] },
+  });
+  assert.equal(bien.statusCode, 200);
+  assert.equal(stockDe(p), 125);
+});
+
 test("las 4 rutas estan montadas y pasan por el guarda del deposito", async () =>{
     if(sinBase()) return;
     const { default: deposito } = await

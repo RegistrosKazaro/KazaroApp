@@ -208,7 +208,11 @@ function PanelFactura({ detalle, onListo }) {
 
   return (
     <div className="deposito-items-panel">
-      <div className="deposito-items-title">Asociar la factura del proveedor</div>
+      <div className="deposito-items-title">Conciliar con la factura del proveedor</div>
+      <p className="deposito-footnote" style={{ marginTop: 0 }}>
+        Remito {detalle.numero} de {detalle.proveedor}.
+        {detalle.observaciones ? ` Observaciones: ${detalle.observaciones}` : ""}
+      </p>
 
       {err && (
         <div className="state error" style={{ marginBottom: 8 }}>
@@ -239,14 +243,16 @@ function PanelFactura({ detalle, onListo }) {
 
       <table className="deposito-items-table" style={{ marginTop: 10 }}>
         <thead>
+          {/* Sin columna de código: compras matchea por nombre contra la
+              factura de papel, y en el celular cada columna de más empuja los
+              campos que hay que tipear fuera de la pantalla. */}
           <tr>
-            <th scope="col">Código</th>
             <th scope="col">Insumo</th>
-            <th scope="col" className="numeric" style={{ width: 90 }}>Remito</th>
-            <th scope="col" className="numeric" style={{ width: 110 }} title="Lo que dice la factura. Tiene que coincidir con el remito.">
+            <th scope="col" className="numeric" style={{ width: 80 }}>Remito</th>
+            <th scope="col" className="numeric" style={{ width: 90 }} title="Lo que dice la factura. Tiene que coincidir con el remito.">
               Factura
             </th>
-            <th scope="col" className="numeric" style={{ width: 130 }}>Precio unitario</th>
+            <th scope="col" className="numeric" style={{ width: 110 }}>Precio</th>
             <th scope="col" className="numeric">Subtotal</th>
           </tr>
         </thead>
@@ -255,7 +261,6 @@ function PanelFactura({ detalle, onListo }) {
             const difiere = Number(l.cantidad) !== l.delRemito;
             return (
               <tr key={l.itemId}>
-                <td>{l.codigo ? <span className="deposito-code">{l.codigo}</span> : "—"}</td>
                 <td>{l.nombre}</td>
                 <td className="numeric">{formatNumber(l.delRemito)}</td>
                 <td className="numeric">
@@ -331,7 +336,9 @@ export default function IngresosDeposito() {
       <div className="dep-topbar">
         <h2 className="deposito-title">Ingreso de mercadería</h2>
         <div className="deposito-header-actions">
-          {[["cargado", "Sin facturar"], ["facturado", "Facturados"], ["", "Todos"]].map(([k, l]) => (
+          {/* "Conciliar", no "facturar": acá no se emite nada, se toman los
+              datos de la factura del proveedor y se comparan con el remito. */}
+          {[["cargado", "Sin conciliar"], ["facturado", "Conciliados"], ["", "Todos"]].map(([k, l]) => (
             <button key={k || "todos"} type="button"
               className={`pill${estado === k ? "" : " pill--ghost"}`}
               onClick={() => { setEstado(k); setDetalle(null); }}>{l}</button>
@@ -356,6 +363,47 @@ export default function IngresosDeposito() {
 
       {nuevo && <FormRemito onListo={listo} onCancelar={() => setNuevo(false)} />}
 
+      {/* El panel del remito abierto va acá y no dentro de la tabla: la tabla
+          scrollea a lo ancho, y en el celular el panel se iba con ella — se
+          tipeaban cantidades sin ver a qué insumo correspondían. */}
+      {detalle && (detalle.estado === "cargado"
+        ? <PanelFactura key={detalle.id} detalle={detalle} onListo={listo} />
+        : (
+          <div className="deposito-items-panel">
+            <div className="deposito-items-title">
+              Factura {detalle.factura_numero} · el stock ya subió
+            </div>
+            <p className="deposito-footnote" style={{ marginTop: 0 }}>
+              Remito {detalle.numero} de {detalle.proveedor}.
+              {detalle.observaciones ? ` Observaciones: ${detalle.observaciones}` : ""}
+            </p>
+            <table className="deposito-items-table">
+              <thead>
+                <tr>
+                  <th scope="col">Código</th>
+                  <th scope="col">Insumo</th>
+                  <th scope="col" className="numeric">Cantidad</th>
+                  <th scope="col" className="numeric">Precio unitario</th>
+                  <th scope="col" className="numeric">Subtotal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detalle.items.map((it) => (
+                  <tr key={it.id}>
+                    <td>{it.codigo ? <span className="deposito-code">{it.codigo}</span> : "—"}</td>
+                    <td>{it.nombre}</td>
+                    <td className="numeric">{formatNumber(it.cantidad)}</td>
+                    <td className="numeric">{it.precioUnitario == null ? "—" : formatMoney(it.precioUnitario)}</td>
+                    <td className="numeric">
+                      {it.precioUnitario == null ? "—" : formatMoney(it.cantidad * it.precioUnitario)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+
       <div className="deposito-table-wrapper">
         <table className="deposito-table" aria-label="Remitos de proveedores">
           <thead>
@@ -377,7 +425,7 @@ export default function IngresosDeposito() {
             )}
             {rows.map((r) => {
               const puestoEnPantalla = detalle?.id === r.id;
-              return [
+              return (
                 <tr key={r.id} className={`deposito-row${puestoEnPantalla ? " deposito-row--expanded" : ""}`}>
                   <td>{r.proveedor}</td>
                   <td><span className="deposito-code">{r.numero}</span></td>
@@ -389,61 +437,18 @@ export default function IngresosDeposito() {
                   <td>
                     {r.facturaNumero
                       ? <span style={{ color: "#166534", fontWeight: 600 }}>{r.facturaNumero}</span>
-                      : <span style={{ color: "#b45309" }}>sin facturar</span>}
+                      : <span style={{ color: "#b45309" }}>sin factura</span>}
                   </td>
                   <td>
                     <div className="deposito-header-actions" style={{ justifyContent: "flex-end" }}>
                       <button type="button" className={puestoEnPantalla ? "pill pill--ghost" : "pill"}
                         onClick={() => abrir(r.id)}>
-                        {puestoEnPantalla ? "Cerrar" : r.estado === "cargado" ? "Facturar" : "Ver"}
+                        {puestoEnPantalla ? "Cerrar" : r.estado === "cargado" ? "Conciliar" : "Ver"}
                       </button>
                     </div>
                   </td>
-                </tr>,
-
-                puestoEnPantalla && (
-                  <tr key={`${r.id}-det`} className="deposito-row--items-container">
-                    <td colSpan={7}>
-                      {detalle.estado === "cargado"
-                        ? <PanelFactura detalle={detalle} onListo={listo} />
-                        : (
-                          <div className="deposito-items-panel">
-                            <div className="deposito-items-title">
-                              Factura {detalle.factura_numero} · el stock ya subió
-                            </div>
-                            <table className="deposito-items-table">
-                              <thead>
-                                <tr>
-                                  <th scope="col">Código</th>
-                                  <th scope="col">Insumo</th>
-                                  <th scope="col" className="numeric">Cantidad</th>
-                                  <th scope="col" className="numeric">Precio unitario</th>
-                                  <th scope="col" className="numeric">Subtotal</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {detalle.items.map((it) => (
-                                  <tr key={it.id}>
-                                    <td>{it.codigo ? <span className="deposito-code">{it.codigo}</span> : "—"}</td>
-                                    <td>{it.nombre}</td>
-                                    <td className="numeric">{formatNumber(it.cantidad)}</td>
-                                    <td className="numeric">{it.precioUnitario == null ? "—" : formatMoney(it.precioUnitario)}</td>
-                                    <td className="numeric">
-                                      {it.precioUnitario == null ? "—" : formatMoney(it.cantidad * it.precioUnitario)}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                            {detalle.observaciones && (
-                              <p className="deposito-footnote">Observaciones: {detalle.observaciones}</p>
-                            )}
-                          </div>
-                        )}
-                    </td>
-                  </tr>
-                ),
-              ];
+                </tr>
+              );
             })}
           </tbody>
         </table>

@@ -46,8 +46,8 @@ beforeEach(() => {
 const abrirFactura = async (user) => {
   render(<IngresosDeposito />);
   const fila = (await screen.findByText("QUIMICA DEL SUR")).closest("tr");
-  await user.click(within(fila).getByRole("button", { name: "Facturar" }));
-  const titulo = await screen.findByText("Asociar la factura del proveedor");
+  await user.click(within(fila).getByRole("button", { name: "Conciliar" }));
+  const titulo = await screen.findByText("Conciliar con la factura del proveedor");
   return titulo.closest(".deposito-items-panel");
 };
 
@@ -57,7 +57,7 @@ describe("Ingreso de mercadería", () => {
     const fila = (await screen.findByText("QUIMICA DEL SUR")).closest("tr");
 
     expect(within(fila).getByText("R-00012345")).toBeTruthy();
-    expect(within(fila).getByText("sin facturar")).toBeTruthy();
+    expect(within(fila).getByText("sin factura")).toBeTruthy();
     // La fecha es texto YYYY-MM-DD y se muestra tal cual: pasarla por Date la
     // corría un día por zona horaria.
     expect(within(fila).getByText("2026-10-28")).toBeTruthy();

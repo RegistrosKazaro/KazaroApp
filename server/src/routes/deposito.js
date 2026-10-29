@@ -2492,7 +2492,7 @@ router.get("/ingresos", mustWarehouse, (req, res) =>{
 router.get("/ingresos/:id", mustWarehouse, (req, res) =>{
   try{
     const ing = ingresos.detalleIngreso({
-      empresaID: getEmpresaId(req),
+      empresaId: getEmpresaId(req),
       ingresoId: req.params.id,
     });
     if (!ing) return res.status(404).json({ error: "Ese remito no existe"});
