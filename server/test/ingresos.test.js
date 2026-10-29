@@ -293,6 +293,144 @@ test("el listado no mezcla empresas", async() =>{
     assert.ok(!ing.listarIngresos({ empresaId: 2}).some((r) => r.id === id));
 });
 
+/* ===== Una factura que cubre varios remitos ===== */
+
+/** Dos remitos del mismo proveedor, listos para una sola factura. */
+function dosRemitos(proveedor = "PROVEEDOR COMUN") {
+  const a = insumo(100);
+  const b = insumo(100);
+  const uno = ing.crearRemito({ empresaId: 1, proveedor, numero: unico(),
+    items: [{ productoId: a, cantidad: 10 }] });
+  const dos = ing.crearRemito({ empresaId: 1, proveedor, numero: unico(),
+    items: [{ productoId: b, cantidad: 30 }] });
+  const item = (id) => db.prepare(`SELECT id FROM ingreso_items WHERE ingreso_id = ?`).get(id).id;
+  return { a, b, uno, dos, itemUno: item(uno), itemDos: item(dos) };
+}
+
+test("una factura cubre varios remitos y sube el stock de todos", async () => {
+  if (sinBase()) return;
+  const { a, b, uno, dos, itemUno, itemDos } = dosRemitos();
+  const numeroFactura = unico();
+
+  const r = ing.asociarFactura({
+    empresaId: 1, ingresoIds: [uno, dos], numeroFactura, fechaFactura: "2026-10-29",
+    lineas: [
+      { itemId: itemUno, cantidad: 10, precioUnitario: 100 },
+      { itemId: itemDos, cantidad: 30, precioUnitario: 200 },
+    ],
+  });
+
+  assert.equal(r.remitos, 2);
+  assert.equal(r.unidades, 40);
+  assert.equal(stockDe(a), 110);
+  assert.equal(stockDe(b), 130);
+  // Los dos quedan con la misma factura: así se sabe qué cubrió.
+  const filas = db.prepare(
+    `SELECT estado, factura_numero f FROM ingresos_mercaderia WHERE id IN (?, ?)`
+  ).all(uno, dos);
+  assert.deepEqual(filas.map((x) => x.estado), ["facturado", "facturado"]);
+  assert.deepEqual([...new Set(filas.map((x) => x.f))], [numeroFactura]);
+});
+
+test("si una linea de cualquiera de los remitos no coincide, no entra ninguno", async () => {
+  if (sinBase()) return;
+  // Todo o nada: dejar entrar el que coincide partiría la factura al medio.
+  const { a, b, uno, dos, itemUno, itemDos } = dosRemitos();
+
+  assert.throws(() => ing.asociarFactura({
+    empresaId: 1, ingresoIds: [uno, dos], numeroFactura: unico(),
+    lineas: [
+      { itemId: itemUno, cantidad: 10, precioUnitario: 1 },
+      { itemId: itemDos, cantidad: 29, precioUnitario: 1 },
+    ],
+  }), (e) => {
+    assert.match(e.message, /no coincide/i);
+    assert.equal(e.diferencias.length, 1);
+    assert.ok(e.diferencias[0].remitoNumero, "tiene que decir de que remito es");
+    return true;
+  });
+
+  assert.equal(stockDe(a), 100, "el remito que coincidia tampoco tenia que entrar");
+  assert.equal(stockDe(b), 100);
+});
+
+test("una factura no mezcla proveedores", async () => {
+  if (sinBase()) return;
+  // La factura la emite uno solo: mezclarlos cargaria mercaderia contra quien
+  // no corresponde, y nadie lo notaria despues.
+  const a = insumo(100);
+  const b = insumo(100);
+  const uno = ing.crearRemito({ empresaId: 1, proveedor: "PROVEEDOR UNO", numero: unico(),
+    items: [{ productoId: a, cantidad: 5 }] });
+  const dos = ing.crearRemito({ empresaId: 1, proveedor: "PROVEEDOR DOS", numero: unico(),
+    items: [{ productoId: b, cantidad: 5 }] });
+
+  assert.throws(() => ing.asociarFactura({
+    empresaId: 1, ingresoIds: [uno, dos], numeroFactura: unico(),
+    lineas: [],
+  }), /proveedores distintos/i);
+
+  assert.equal(stockDe(a), 100);
+  assert.equal(stockDe(b), 100);
+});
+
+test("si uno de los remitos ya tiene factura, lo dice por su numero", async () => {
+  if (sinBase()) return;
+  const { a, b, uno, dos, itemUno, itemDos } = dosRemitos();
+  const numeroDos = db.prepare(`SELECT numero FROM ingresos_mercaderia WHERE id = ?`).get(dos).numero;
+
+  ing.asociarFactura({ empresaId: 1, ingresoIds: [dos], numeroFactura: unico(),
+    lineas: [{ itemId: itemDos, cantidad: 30, precioUnitario: 1 }] });
+
+  assert.throws(() => ing.asociarFactura({
+    empresaId: 1, ingresoIds: [uno, dos], numeroFactura: unico(),
+    lineas: [
+      { itemId: itemUno, cantidad: 10, precioUnitario: 1 },
+      { itemId: itemDos, cantidad: 30, precioUnitario: 1 },
+    ],
+  }), new RegExp(`${numeroDos}.*ya tiene factura`, "i"));
+
+  assert.equal(stockDe(a), 100, "el otro no tenia que entrar");
+  assert.equal(stockDe(b), 130, "el ya facturado no se toca de nuevo");
+});
+
+test("la misma factura se puede ir completando en dos tandas", async () => {
+  if (sinBase()) return;
+  // Llega la factura, se concilia un remito, y mañana aparece el otro que
+  // tambien cubria: el numero se repite a proposito.
+  const { a, b, uno, dos, itemUno, itemDos } = dosRemitos();
+  const numeroFactura = unico();
+
+  ing.asociarFactura({ empresaId: 1, ingresoIds: [uno], numeroFactura,
+    lineas: [{ itemId: itemUno, cantidad: 10, precioUnitario: 1 }] });
+  ing.asociarFactura({ empresaId: 1, ingresoIds: [dos], numeroFactura,
+    lineas: [{ itemId: itemDos, cantidad: 30, precioUnitario: 1 }] });
+
+  assert.equal(stockDe(a), 110);
+  assert.equal(stockDe(b), 130);
+  assert.equal(db.prepare(
+    `SELECT COUNT(*) n FROM ingresos_mercaderia WHERE factura_numero = ?`
+  ).get(numeroFactura).n, 2);
+});
+
+test("la ruta acepta los remitos por el cuerpo", async () => {
+  if (sinBase()) return;
+  const { a, b, uno, dos, itemUno, itemDos } = dosRemitos();
+
+  const res = await llamarRuta("/ingresos/:id/factura", "post", {
+    params: { id: String(uno) },
+    body: { ingresoIds: [uno, dos], numeroFactura: unico(), lineas: [
+      { itemId: itemUno, cantidad: 10, precioUnitario: 1 },
+      { itemId: itemDos, cantidad: 30, precioUnitario: 1 },
+    ] },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.remitos, 2);
+  assert.equal(stockDe(a), 110);
+  assert.equal(stockDe(b), 130);
+});
+
 /** Llama a la ruta de verdad, como la llama Express. Verificar que esté
  *  montada no alcanza: un `empresaID` en vez de `empresaId` compila, monta,
  *  y devuelve 404 para todo. Eso pasó. */

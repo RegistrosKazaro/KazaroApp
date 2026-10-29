@@ -168,18 +168,40 @@ function FormRemito({ onListo, onCancelar }) {
   );
 }
 
-/* ===== Asociar la factura: acá sube el stock ===== */
-function PanelFactura({ detalle, onListo }) {
+/** Las líneas de un remito, listas para la tabla de la factura. Arrancan con
+ *  la cantidad del remito: compras sólo toca lo que la factura diga distinto. */
+const lineasDe = (det) => det.items.map((it) => ({
+  itemId: it.id, nombre: it.nombre, ingresoId: det.id, remito: det.numero,
+  delRemito: Number(it.cantidad), cantidad: String(it.cantidad), precioUnitario: "",
+}));
+
+/* ===== Conciliar la factura: acá sube el stock ===== */
+function PanelFactura({ detalle, otros = [], onListo }) {
   const [numeroFactura, setNumeroFactura] = useState("");
   const [fechaFactura, setFechaFactura] = useState(hoy());
-  // Arrancan iguales al remito: compras sólo toca lo que la factura diga distinto.
-  const [lineas, setLineas] = useState(() => detalle.items.map((it) => ({
-    itemId: it.id, nombre: it.nombre, codigo: it.codigo,
-    delRemito: Number(it.cantidad), cantidad: String(it.cantidad), precioUnitario: "",
-  })));
+  const [lineas, setLineas] = useState(() => lineasDe(detalle));
+  // Una factura suele cubrir varios remitos del mismo proveedor.
+  const [sumados, setSumados] = useState([]);
   const [guardando, setGuardando] = useState(false);
   const [err, setErr] = useState("");
   const [difs, setDifs] = useState([]);
+
+  const ingresoIds = [detalle.id, ...sumados];
+
+  /** Suma o saca un remito de esta factura, trayendo sus líneas al tocarlo. */
+  async function alternarRemito(id) {
+    setErr("");
+    if (sumados.includes(id)) {
+      setSumados((prev) => prev.filter((x) => x !== id));
+      setLineas((prev) => prev.filter((l) => l.ingresoId !== id));
+      return;
+    }
+    try {
+      const { data } = await api.get(`/deposito/ingresos/${id}`);
+      setSumados((prev) => [...prev, id]);
+      setLineas((prev) => [...prev, ...lineasDe(data)]);
+    } catch (e) { setErr(errorDe(e)); }
+  }
 
   const escribir = (itemId, campo, val) =>
     setLineas((prev) => prev.map((l) => (l.itemId === itemId ? { ...l, [campo]: val } : l)));
@@ -188,18 +210,22 @@ function PanelFactura({ detalle, onListo }) {
   const puedeAsociar = numeroFactura.trim() && lineas.every((l) => Number(l.cantidad) > 0);
 
   const asociar = async () => {
-    if (!window.confirm(`Se va a sumar al stock lo del remito ${detalle.numero}. ¿Seguir?`)) return;
+    const queEntra = ingresoIds.length === 1
+      ? `lo del remito ${detalle.numero}`
+      : `lo de ${ingresoIds.length} remitos`;
+    if (!window.confirm(`Se va a sumar al stock ${queEntra}. ¿Seguir?`)) return;
     setGuardando(true); setErr(""); setDifs([]);
     try {
       const { data } = await api.post(`/deposito/ingresos/${detalle.id}/factura`, {
-        numeroFactura: numeroFactura.trim(), fechaFactura,
+        ingresoIds, numeroFactura: numeroFactura.trim(), fechaFactura,
         lineas: lineas.map((l) => ({
           itemId: l.itemId,
           cantidad: Number(l.cantidad),
           precioUnitario: l.precioUnitario === "" ? null : Number(l.precioUnitario),
         })),
       });
-      onListo(`Factura asociada: entraron ${formatNumber(data.unidades)} unidades al stock.`);
+      onListo(`Factura asociada a ${data.remitos === 1 ? "1 remito" : `${data.remitos} remitos`}: `
+        + `entraron ${formatNumber(data.unidades)} unidades al stock.`);
     } catch (e) {
       setErr(errorDe(e));
       setDifs(e?.response?.data?.diferencias || []);
@@ -214,6 +240,23 @@ function PanelFactura({ detalle, onListo }) {
         {detalle.observaciones ? ` Observaciones: ${detalle.observaciones}` : ""}
       </p>
 
+      {/* Sólo del mismo proveedor: una factura la emite uno solo. */}
+      {otros.length > 0 && (
+        <fieldset style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: "6px 10px 8px", marginBottom: 10 }}>
+          <legend style={{ fontSize: ".8rem", color: "#4b5563", padding: "0 4px" }}>
+            ¿Esta factura cubre más remitos de {detalle.proveedor}?
+          </legend>
+          {otros.map((o) => (
+            <label key={o.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, marginRight: 14, fontSize: ".88rem" }}>
+              <input type="checkbox" checked={sumados.includes(o.id)} disabled={guardando}
+                onChange={() => alternarRemito(o.id)} />
+              <span className="deposito-code">{o.numero}</span>
+              <span style={{ color: "#6b7280" }}>{o.fecha} · {formatNumber(o.unidades)} u.</span>
+            </label>
+          ))}
+        </fieldset>
+      )}
+
       {err && (
         <div className="state error" style={{ marginBottom: 8 }}>
           {err}
@@ -221,7 +264,13 @@ function PanelFactura({ detalle, onListo }) {
             <ul style={{ margin: "4px 0 0 18px" }}>
               {difs.map((d) => {
                 const l = lineas.find((x) => x.itemId === d.itemId);
-                return <li key={d.itemId}>{l?.nombre || `línea ${d.itemId}`}: el remito dice {formatNumber(d.remito)}, la factura {formatNumber(d.factura)}</li>;
+                return (
+                  <li key={d.itemId}>
+                    {l?.nombre || `línea ${d.itemId}`}
+                    {ingresoIds.length > 1 && d.remitoNumero ? ` (remito ${d.remitoNumero})` : ""}
+                    : el remito dice {formatNumber(d.remito)}, la factura {formatNumber(d.factura)}
+                  </li>
+                );
               })}
             </ul>
           )}
@@ -247,8 +296,10 @@ function PanelFactura({ detalle, onListo }) {
               factura de papel, y en el celular cada columna de más empuja los
               campos que hay que tipear fuera de la pantalla. */}
           <tr>
+            {ingresoIds.length > 1 && <th scope="col" style={{ width: 110 }}>Remito</th>}
             <th scope="col">Insumo</th>
-            <th scope="col" className="numeric" style={{ width: 80 }}>Remito</th>
+            <th scope="col" className="numeric" style={{ width: 80 }}
+                title="Lo que el depósito contó al recibir, según el remito">Llegó</th>
             <th scope="col" className="numeric" style={{ width: 90 }} title="Lo que dice la factura. Tiene que coincidir con el remito.">
               Factura
             </th>
@@ -261,6 +312,7 @@ function PanelFactura({ detalle, onListo }) {
             const difiere = Number(l.cantidad) !== l.delRemito;
             return (
               <tr key={l.itemId}>
+                {ingresoIds.length > 1 && <td><span className="deposito-code">{l.remito}</span></td>}
                 <td>{l.nombre}</td>
                 <td className="numeric">{formatNumber(l.delRemito)}</td>
                 <td className="numeric">
@@ -367,7 +419,9 @@ export default function IngresosDeposito() {
           scrollea a lo ancho, y en el celular el panel se iba con ella — se
           tipeaban cantidades sin ver a qué insumo correspondían. */}
       {detalle && (detalle.estado === "cargado"
-        ? <PanelFactura key={detalle.id} detalle={detalle} onListo={listo} />
+        ? <PanelFactura key={detalle.id} detalle={detalle} onListo={listo}
+            otros={rows.filter((r) => r.id !== detalle.id && r.estado === "cargado"
+              && r.proveedor.toUpperCase() === detalle.proveedor.toUpperCase())} />
         : (
           <div className="deposito-items-panel">
             <div className="deposito-items-title">

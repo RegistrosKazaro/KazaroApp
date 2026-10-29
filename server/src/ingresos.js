@@ -88,42 +88,64 @@ export function crearRemito({ empresaId, proveedor, numero, fecha, observaciones
 }
 
 /*
- * Compras asocia la factura al remito.
- 
+ * Compras concilia la factura del proveedor contra los remitos que cubre.
+ *
+ * Una factura suele cubrir VARIOS remitos, así que se pasan todos juntos: o
+ * entran todos o no entra ninguno. La factura no tiene tabla propia porque la
+ * identifican el proveedor y su número, y eso ya vive en cada remito.
+ *
+ * @param ingresoIds los remitos que cubre esa factura (uno o varios).
  * @param lineas [{ itemId, cantidad, precioUnitario }] — lo que dice la FACTURA.
- *   Si alguna cantidad no coincide con el remito, no se asocia: esa diferencia
- *   la tiene que resolver una persona, no taparla el sistema.
+ *   Si alguna cantidad no coincide con el remito, no se asocia nada: esa
+ *   diferencia la tiene que resolver una persona, no taparla el sistema.
  */
 
-export function asociarFactura({ empresaId, ingresoId, numeroFactura, fechaFactura, usuario = null, lineas = [] }) {
+export function asociarFactura({ empresaId, ingresoIds, ingresoId, numeroFactura, fechaFactura, usuario = null, lineas = [] }) {
   const num = limpio(numeroFactura);
   if (!num) throw new Error("Falta el número de factura");
 
-  const ing = db.prepare(
-    `SELECT id, estado FROM ingresos_mercaderia WHERE id = ? AND empresa_id = ?`
-  ).get(Number(ingresoId), empresaId);
-  if (!ing) throw new Error("Ese remito no existe");
-  if (ing.estado === "facturado") throw new Error("Ese remito ya tiene factura: el stock ya subió");
+  const pedidos = Array.isArray(ingresoIds) ? ingresoIds : [ingresoIds ?? ingresoId];
+  const ids = [...new Set(pedidos.map(Number))].filter(Number.isFinite);
+  if (!ids.length) throw new Error("No hay remitos para conciliar");
 
+  const remitos = ids.map((id) => {
+    const r = db.prepare(
+      `SELECT id, estado, proveedor, numero FROM ingresos_mercaderia WHERE id = ? AND empresa_id = ?`
+    ).get(id, empresaId);
+    if (!r) throw new Error("Ese remito no existe");
+    if (r.estado === "facturado") throw new Error(`El remito ${r.numero} ya tiene factura: el stock ya subió`);
+    return r;
+  });
+
+  // Una factura la emite un proveedor. Mezclar dos es un error de carga, y
+  // taparlo dejaría mercadería cargada contra quien no corresponde.
+  if (new Set(remitos.map((r) => r.proveedor.toUpperCase())).size > 1) {
+    throw new Error("Esos remitos son de proveedores distintos: una factura es de un solo proveedor");
+  }
+
+  const huecos = ids.map(() => "?").join(",");
   const delRemito = db.prepare(
-    `SELECT id, producto_id, cantidad FROM ingreso_items WHERE ingreso_id = ?`
-  ).all(ing.id);
+    `SELECT t.id, t.producto_id, t.cantidad, i.numero AS remito
+       FROM ingreso_items t
+       JOIN ingresos_mercaderia i ON i.id = t.ingreso_id
+      WHERE t.ingreso_id IN (${huecos})`
+  ).all(...ids);
 
   const porId = new Map(lineas.map((l) => [Number(l.itemId), l]));
   const difs = [];
   const aplicar = delRemito.map((r) => {
     const f = porId.get(r.id);
-    if (!f) throw new Error("La factura no cubre todas las líneas del remito");
+    if (!f) throw new Error("La factura no cubre todas las líneas de los remitos");
     const cant = Number(f.cantidad);
     const precio = f.precioUnitario == null || f.precioUnitario === "" ? null : Number(f.precioUnitario);
     if (!Number.isFinite(cant) || cant <= 0) throw new Error("Cantidad de la factura inválida");
     if (precio != null && (!Number.isFinite(precio) || precio < 0)) throw new Error("Precio unitario inválido");
-    if (cant !== Number(r.cantidad)) difs.push({ itemId: r.id, remito: r.cantidad, factura: cant });
+    if (cant !== Number(r.cantidad)) difs.push({ itemId: r.id, remito: r.cantidad, factura: cant, remitoNumero: r.remito });
     return { ...r, precio };
   });
 
   if (difs.length) {
-    const e = new Error(`La factura no coincide con el remito en ${difs.length} línea(s)`);
+    const e = new Error(`La factura no coincide con ${difs.length === 1 ? "el remito" : "los remitos"} en ${difs.length} línea(s)`);
     e.diferencias = difs;
     throw e;
   }
@@ -141,11 +163,12 @@ export function asociarFactura({ empresaId, ingresoId, numeroFactura, fechaFactu
       `UPDATE ingresos_mercaderia
           SET estado = 'facturado', factura_numero = ?, factura_fecha = ?,
               facturado_at = datetime('now'), facturado_por = ?
-        WHERE id = ?`
-    ).run(num, limpio(fechaFactura) || null, usuario, ing.id);
+        WHERE id IN (${huecos})`
+    ).run(num, limpio(fechaFactura) || null, usuario, ...ids);
 
     return {
-      ingresoId: ing.id,
+      ingresoIds: ids,
+      remitos: ids.length,
       lineas: aplicar.length,
       unidades: aplicar.reduce((a, l) => a + Number(l.cantidad), 0),
     };

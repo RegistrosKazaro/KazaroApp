@@ -39,19 +39,85 @@ beforeEach(() => {
     if (url === "/deposito/productos") return Promise.resolve({ data: BUSQUEDA });
     return Promise.resolve({ data: DETALLE });
   });
-  api.post.mockResolvedValue({ data: { ok: true, lineas: 2, unidades: 60 } });
+  api.post.mockResolvedValue({ data: { ok: true, remitos: 1, lineas: 2, unidades: 60 } });
 });
 
-/** Abre el panel de factura del único remito de la lista. */
+/** Abre el panel de factura. Se busca por número de remito y no por proveedor:
+ *  cuando hay varios remitos del mismo proveedor, el nombre se repite. */
 const abrirFactura = async (user) => {
   render(<IngresosDeposito />);
-  const fila = (await screen.findByText("QUIMICA DEL SUR")).closest("tr");
+  const fila = (await screen.findByText("R-00012345")).closest("tr");
   await user.click(within(fila).getByRole("button", { name: "Conciliar" }));
   const titulo = await screen.findByText("Conciliar con la factura del proveedor");
   return titulo.closest(".deposito-items-panel");
 };
 
+/* Una factura del proveedor suele cubrir varios remitos. */
+const OTRO = { id: 9, proveedor: "QUIMICA DEL SUR", numero: "R-00012999", fecha: "2026-10-29",
+  estado: "cargado", lineas: 1, unidades: 5, facturaNumero: null };
+const DETALLE_OTRO = { ...OTRO, observaciones: "", items: [
+  { id: 201, productoId: 60, nombre: "LAVANDINA X 5 LTS", codigo: "01999", cantidad: 5, precioUnitario: null },
+] };
+const AJENO = { id: 11, proveedor: "OTRO PROVEEDOR", numero: "R-55555", fecha: "2026-10-29",
+  estado: "cargado", lineas: 1, unidades: 1, facturaNumero: null };
+
+/** Deja en la lista el remito de siempre, otro del mismo proveedor y uno ajeno. */
+function conVariosRemitos() {
+  api.get.mockImplementation((url) => {
+    if (url === "/deposito/ingresos") return Promise.resolve({ data: { rows: [ROWS[0], OTRO, AJENO] } });
+    if (url === "/deposito/productos") return Promise.resolve({ data: BUSQUEDA });
+    if (url === "/deposito/ingresos/9") return Promise.resolve({ data: DETALLE_OTRO });
+    return Promise.resolve({ data: DETALLE });
+  });
+}
+
 describe("Ingreso de mercadería", () => {
+  it("ofrece sumar otros remitos del mismo proveedor, y sólo de ese", async () => {
+    conVariosRemitos();
+    const user = userEvent.setup();
+    const panel = await abrirFactura(user);
+
+    // El de otro proveedor no puede entrar: una factura la emite uno solo.
+    expect(within(panel).getByText("R-00012999")).toBeTruthy();
+    expect(within(panel).queryByText("R-55555")).toBeNull();
+  });
+
+  it("sumar un remito trae sus insumos y manda los dos ids", async () => {
+    conVariosRemitos();
+    api.post.mockResolvedValue({ data: { ok: true, remitos: 2, lineas: 3, unidades: 65 } });
+    const user = userEvent.setup();
+    const panel = await abrirFactura(user);
+
+    await user.click(within(panel).getByRole("checkbox"));
+    expect(await within(panel).findByText("LAVANDINA X 5 LTS")).toBeTruthy();
+
+    await user.type(screen.getByPlaceholderText("A-0001-00001234"), "A-0001-00009999");
+    await user.click(within(panel).getByRole("button", { name: /Asociar factura/ }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalled());
+    const [, body] = api.post.mock.calls[0];
+    expect(body.ingresoIds).toEqual([7, 9]);
+    expect(body.lineas.map((l) => l.itemId)).toEqual([101, 102, 201]);
+    expect(await screen.findByText(/2 remitos: entraron 65 unidades/)).toBeTruthy();
+  });
+
+  it("destildar un remito le saca los insumos", async () => {
+    conVariosRemitos();
+    const user = userEvent.setup();
+    const panel = await abrirFactura(user);
+
+    await user.click(within(panel).getByRole("checkbox"));
+    expect(await within(panel).findByText("LAVANDINA X 5 LTS")).toBeTruthy();
+
+    await user.click(within(panel).getByRole("checkbox"));
+    await waitFor(() => expect(within(panel).queryByText("LAVANDINA X 5 LTS")).toBeNull());
+
+    await user.type(screen.getByPlaceholderText("A-0001-00001234"), "A-1");
+    await user.click(within(panel).getByRole("button", { name: /Asociar factura/ }));
+    await waitFor(() => expect(api.post).toHaveBeenCalled());
+    expect(api.post.mock.calls[0][1].ingresoIds).toEqual([7]);
+  });
+
   it("lista los remitos y marca los que esperan factura", async () => {
     render(<IngresosDeposito />);
     const fila = (await screen.findByText("QUIMICA DEL SUR")).closest("tr");
