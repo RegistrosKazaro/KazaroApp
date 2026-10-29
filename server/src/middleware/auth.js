@@ -44,11 +44,19 @@ async function comparePassword(input, userRow) {
   return false;
 }
 
+/** Sin secreto no se firma ni se verifica nada. Antes caía en el literal
+ *  "dev-secret": si un .env quedaba sin JWT_SECRET, cualquiera que supiera esa
+ *  palabra podía fabricarse un token con el uid que quisiera. */
+function secretoJwt() {
+  if (!env.JWT_SECRET) throw new Error("Falta JWT_SECRET");
+  return env.JWT_SECRET;
+}
+
 // empresaId es opcional; si se pasa queda en el token como claim "eid"
 export function signToken(userId, empresaId = null) {
   const payload = { uid: Number(userId) };
   if (empresaId != null) payload.eid = Number(empresaId);
-  return jwt.sign(payload, env.JWT_SECRET || "dev-secret", { expiresIn: "12h" });
+  return jwt.sign(payload, secretoJwt(), { expiresIn: "12h" });
 }
 
 function readTokenFromReq(req) {
@@ -67,7 +75,7 @@ export function requireAuth(req, res, next) {
     const raw = readTokenFromReq(req);
     if (!raw) return res.status(401).json({ ok: false });
 
-    const payload = jwt.verify(raw, env.JWT_SECRET || "dev-secret");
+    const payload = jwt.verify(raw, secretoJwt());
     const user = getUserById(payload?.uid);
     if (!user?.id) return res.status(401).json({ ok: false });
 

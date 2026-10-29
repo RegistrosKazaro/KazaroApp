@@ -1,62 +1,76 @@
-process.env.APP_BASE_URL = "http://localhost4000";
+// CORS: quién puede llamar a la API desde un navegador.
+//
+// Este test apuntaba a src/app.js, que no lo usa nadie: el servidor real es
+// src/index.js y arma el CORS con createCorsMiddleware. Probar app.js daba
+// tranquilidad falsa, porque ese archivo tiene su propia lista de orígenes
+// pegada a mano que no es la que corre. Ahora se prueba el middleware vivo.
+process.env.APP_BASE_URL = "http://localhost:4000";
 process.env.CORS_ALLOWED_ORIGINS = "https://allowed.test";
 
-import assert from "node:assert";
+import assert from "node:assert/strict";
 import test from "node:test";
+import express from "express";
 
-import { creatApp } from "../src/app";
-import { getAllowedOrigins } from "../src/utils/corsConfig";
+const { createCorsMiddleware, getAllowedOrigins } = await import("../src/utils/corsConfig.js");
 
-const startServer = () => 
-    new Promise ((resolve) =>{
-        const app = creatApp();
-        const server = app.listen(0, ()=>{
-            const { port } = server.address();
-            resolve({ server, baseUrl:`http://127.0.0.1:${port}`});
-        });
+/** Un servidor mínimo con el mismo CORS que usa index.js. */
+const startServer = () =>
+  new Promise((resolve) => {
+    const app = express();
+    app.use(createCorsMiddleware());
+    app.get("/_health", (_req, res) => res.json({ ok: true }));
+    const server = app.listen(0, () => {
+      const { port } = server.address();
+      resolve({ server, baseUrl: `http://127.0.0.1:${port}` });
     });
+  });
 
-const stopServer = (server) => new Promise((resolve)=> server.close(resolve));
+const stopServer = (server) => new Promise((resolve) => server.close(resolve));
 
-test("use allowed origins list and enebles credentials", async()=>{
-    const { server, baseUrl } = await startServer();
-
-    const response = await fetch(`${baseUrl}/_health`,{
-        headers: { Origin: "http//allowed.test"},
-    });
-
-    assert.equal(response.status, 200);
-    assert.equal(
-        response.headers.get("access-control-allow-origin"),
-        "http//allowed.test"
-    );
-    assert.equal(response.headers.get("access-control-allow-credentials", "true"),);
-    assert.ok(getAllowedOrigins().includes("http//allowed.test"));
-    
+/** Llama a /_health con el Origin que se le diga y devuelve la respuesta. */
+async function pedir(origin) {
+  const { server, baseUrl } = await startServer();
+  try {
+    return await fetch(`${baseUrl}/_health`, origin ? { headers: { Origin: origin } } : undefined);
+  } finally {
     await stopServer(server);
+  }
+}
+
+test("la lista sale de APP_BASE_URL mas CORS_ALLOWED_ORIGINS", () => {
+  const origins = getAllowedOrigins();
+  assert.ok(origins.includes("http://localhost:4000"), "falta el origen propio");
+  assert.ok(origins.includes("https://allowed.test"), "falta el origen configurado");
 });
 
-test("rejects non-whitelisted origins whit 403", async () =>{
-    const { server, baseUrl } = await startServer();
+test("un origen de la lista pasa y puede mandar la cookie", async () => {
+  const res = await pedir("https://allowed.test");
 
-    const response = await fetch(`${baseUrl}/_health`,{
-        headers:{ Origin: "http//blocked.test"},
-    });
-
-    assert.equal(response.status, 403);
-    const body = await response.json();
-    assert.deepEqual(body, { error: "Not allowed by CORS"});
-
-    await stopServer(server);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("access-control-allow-origin"), "https://allowed.test");
+  // Sin credentials el navegador no manda la cookie de sesión y nadie entra.
+  assert.equal(res.headers.get("access-control-allow-credentials"), "true");
 });
 
-test("disables credentials when no Origin header is sent", async()=>{
-    const { server, baseUrl } = await startServer();
+test("un origen que no esta en la lista se corta con 403", async () => {
+  const res = await pedir("https://blocked.test");
 
-    const response = await fetch(`${baseUrl}/_health`);
+  assert.equal(res.status, 403);
+  assert.deepEqual(await res.json(), { error: "Not allowed by CORS" });
+});
 
-    assert.equal(response.status, 200);
-    assert.equal(response.headers.get("access-contol-allow-credentials"),null);
+test("sin Origin pasa pero sin credentials", async () => {
+  // Son llamadas que no vienen de un navegador (curl, server a server).
+  const res = await pedir(null);
 
-    await stopServer(server);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("access-control-allow-credentials"), null);
+});
+
+test("el nombre del archivo descargado queda visible para el front", async () => {
+  // Sin exponer Content-Disposition, el front tiene que inventar el nombre
+  // de cada Excel que se baja.
+  const res = await pedir("https://allowed.test");
+
+  assert.match(res.headers.get("access-control-expose-headers") || "", /Content-Disposition/i);
 });
