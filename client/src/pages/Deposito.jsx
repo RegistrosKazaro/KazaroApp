@@ -14,6 +14,7 @@ import Trazabilidad from "../components/Trazabilidad";
 import PreparacionDeposito from "../components/PreparacionDeposito";
 import RemanentesDeposito from "../components/RemanentesDeposito";
 import MovimientosDeposito from "../components/MovimientosDeposito";
+import IngresosDeposito from "../components/IngresosDeposito";
 
 function isoToday() { return new Date().toISOString().slice(0, 10); }
 function isoFirstOfMonth() {
@@ -1546,6 +1547,7 @@ export default function Deposito() {
             ["pedidos", "Pedidos"],
             ["preparacion", "Preparación"],
             ["devoluciones", "Devoluciones"],
+            ["ingresos", "Ingresos"],
             ["remanentes", "Remanentes"],
             ["movimientos", "Movimientos"],
             ["despachos", "Control de despachos"],
@@ -1873,6 +1875,12 @@ export default function Deposito() {
       {activeView === "devoluciones" && (
         <div style={{ marginTop: 16 }}>
           <DevolucionesDeposito />
+        </div>
+      )}
+      {/* ===== INGRESO DE MERCADERIA (remito del proveedor + factura) ===== */}
+      {activeView === "ingresos" && (
+        <div style={{ marginTop: 16 }}>
+          <IngresosDeposito />
         </div>
       )}
 
