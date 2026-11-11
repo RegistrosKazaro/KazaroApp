@@ -3,7 +3,10 @@
 // mayúsculas ni acentos. SQLite no trae una función para sacar acentos, así que
 // se arma con REPLACE anidados y se normaliza el término del mismo modo.
 
-// Pares acento -> letra simple. Se aplican sobre el texto ya en minúsculas.
+// Pares acento -> letra simple, en minúscula y en mayúscula. Hacen falta las
+// dos: el LOWER() de SQLite sólo baja las letras ASCII, así que "PAÑO" queda
+// "paÑo" y, sin el par de la Ñ mayúscula, buscar "paño" no lo encontraba.
+// Los nombres de los insumos están cargados en mayúscula.
 const ACENTOS = [
   ["á", "a"], ["à", "a"], ["ä", "a"], ["â", "a"],
   ["é", "e"], ["è", "e"], ["ë", "e"], ["ê", "e"],
@@ -11,6 +14,12 @@ const ACENTOS = [
   ["ó", "o"], ["ò", "o"], ["ö", "o"], ["ô", "o"],
   ["ú", "u"], ["ù", "u"], ["ü", "u"], ["û", "u"],
   ["ñ", "n"],
+  ["Á", "a"], ["À", "a"], ["Ä", "a"], ["Â", "a"],
+  ["É", "e"], ["È", "e"], ["Ë", "e"], ["Ê", "e"],
+  ["Í", "i"], ["Ì", "i"], ["Ï", "i"], ["Î", "i"],
+  ["Ó", "o"], ["Ò", "o"], ["Ö", "o"], ["Ô", "o"],
+  ["Ú", "u"], ["Ù", "u"], ["Ü", "u"], ["Û", "u"],
+  ["Ñ", "n"],
 ];
 
 /**
