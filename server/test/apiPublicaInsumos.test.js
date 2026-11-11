@@ -124,10 +124,12 @@ test("la ficha trae todos los bloques", async () => {
 
   assert.equal(f.id, p.id);
   assert.equal(f.nombre, p.nombre);
-  for (const bloque of ["categoria", "rubros", "stock", "consumo", "devolucion", "flexxus",
+  for (const bloque of ["categoria", "rubros", "stock", "consumo", "devolucion",
                         "serviciosAsignados", "visiblePara", "ultimoPrecioCompra"]) {
     assert.ok(bloque in f, `falta ${bloque}`);
   }
+  // Es la información de la aplicación: Flexxus no va acá.
+  assert.ok(!("flexxus" in f), "no tiene que traer datos de Flexxus");
   assert.equal(f.stock.disponible, 42);
   assert.equal(f.stock.dudoso, false);
   assert.equal(f.devolucion.preguntaAlVolver, "ninguna");

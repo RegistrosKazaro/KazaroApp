@@ -334,13 +334,6 @@ function fichas(empresaId, productos) {
      GROUP BY CAST(product_id AS INTEGER)
   `).all({ ids }).map((r) => [Number(r.pid), Number(r.q || 0)]));
 
-  const flexxus = new Map(db.prepare(`
-    SELECT CAST(product_id AS INTEGER) AS pid, estado, flexxus_sku, flexxus_name,
-           flexxus_stock, ultima_sync
-      FROM FlexxusProductMatch
-     WHERE empresa_id = @empresaId AND ${enIds("product_id")}
-  `).all({ empresaId, ids }).map((r) => [Number(r.pid), r]));
-
   // Sin CAST a propósito: son 159.000 filas y el CAST no deja usar los índices
   // (6 segundos contra 60 ms). El "=" numérico ya iguala 904 con 904.0, que es
   // lo que el CAST cuidaba; el bug viejo era comparar como texto.
@@ -374,7 +367,6 @@ function fichas(empresaId, productos) {
     const c = consumo.get(id);
     const c90 = Number(c?.c90 || 0);
     const porMes = c90 / 3;
-    const fx = flexxus.get(id);
     const ultimaCompra = compra.get(id);
     return {
       id,
@@ -405,13 +397,6 @@ function fichas(empresaId, productos) {
         retornable: Number(p.retornable || 0) === 1,
         preguntaAlVolver: PREGUNTA_AL_VOLVER[Number(p.preguntaEstado || 0)] || "ninguna",
       },
-      flexxus: fx ? {
-        estado: fx.estado || null,
-        sku: fx.flexxus_sku || null,
-        nombre: fx.flexxus_name || null,
-        stock: fx.flexxus_stock == null ? null : Number(fx.flexxus_stock),
-        ultimaSincronizacion: fx.ultima_sync ? toISO(fx.ultima_sync) : null,
-      } : null,
       serviciosAsignados: servicios.get(id) || 0,
       visiblePara: [...new Set((roles.get(id) || []).map((r) => r.role))].sort(),
     };

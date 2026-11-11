@@ -1,8 +1,8 @@
 # API de insumos — documentación para integración
 
-API de **sólo lectura** para consultar la ficha completa de cada insumo: datos
-básicos, categoría y rubro, precio, stock, consumo, compras, devoluciones, en
-qué servicios está asignado, su estado en Flexxus y el historial de cambios.
+API de **sólo lectura** para consultar toda la información que el sistema tiene
+de cada insumo: datos básicos, categoría y rubro, precio, stock, consumo,
+compras, devoluciones, en qué servicios está asignado y el historial de cambios.
 
 - **Base:** `https://insumos.kazaro.com.ar/api/v1`
 - **Formato:** JSON, codificado en UTF-8
@@ -13,27 +13,12 @@ límite de consultas.
 
 ---
 
-## Antes de usar los números: qué es confiable hoy
+## Sobre el stock
 
-Esto importa más que cualquier otra cosa de este documento.
-
-| Dato | ¿Confiable? |
-|---|---|
-| Código, nombre, categoría, rubro, precio | Sí |
-| Consumo (`consumo.*`) | Sí. Sale de los pedidos reales, neto de devoluciones |
-| Servicios asignados, visibilidad | Sí |
-| **Stock** (`stock.disponible`) | **Todavía no.** Ver abajo |
-| Flexxus (`flexxus.*`) | Todavía vacío: la conexión no está activa |
-| Compras (`compras`, `ultimoPrecioCompra`) | Sí, pero recién se empezaron a cargar |
-
-**El stock no es real todavía.** Al arrancar el sistema se cargó un stock alto
-para que ningún pedido se frenara, y ese número sigue en la base para buena
-parte de los insumos. Se está reemplazando por el stock real de Flexxus.
-
-- Si `stock.dudoso` es `true` (10.000 unidades o más), el número es casi seguro
-  el cargado al arrancar. **No lo uses como stock real.**
-- Si `stock.dudoso` es `false`, el número **puede** ser real o no. Hasta que se
-  termine la carga desde Flexxus no hay forma de distinguirlo desde la API.
+La API devuelve el stock tal como está hoy en el sistema. Al arrancar se cargó
+un stock alto para que ningún pedido se frenara, y en algunos insumos ese
+número sigue ahí. Esos vienen con `stock.dudoso: true` (10.000 unidades o más):
+el número existe en el sistema pero no es mercadería contada.
 
 ---
 
@@ -136,10 +121,6 @@ curl -H "Authorization: Bearer <token>" \
         "ultimoPedido": "2026-11-03T19:31:07.000Z"
       },
       "devolucion": { "retornable": false, "preguntaAlVolver": "cuanto_queda" },
-      "flexxus": {
-        "estado": "pendiente_flexxus",
-        "sku": null, "nombre": null, "stock": null, "ultimaSincronizacion": null
-      },
       "serviciosAsignados": 352,
       "visiblePara": [ "administrativo", "supervisor" ]
     }
@@ -161,7 +142,7 @@ curl -H "Authorization: Bearer <token>" \
 | `rubros` | Lista de `{ id, nombre }`. Normalmente uno solo; vacía si no está clasificado. |
 | `precio` | Precio de referencia en el sistema: lo que se le imputa al presupuesto del servicio. **No** es el precio de compra. |
 | `ultimoPrecioCompra` | Precio unitario de la última factura de proveedor conciliada. `null` si todavía no hubo ninguna. |
-| `stock.disponible` | Stock general. **Ver la advertencia del principio.** |
+| `stock.disponible` | Stock general, tal como está hoy en el sistema. Ver [Sobre el stock](#sobre-el-stock). |
 | `stock.remanente` | Lo que volvió de un servicio abierto, usado o roto. Está aparte: no suma al disponible. |
 | `stock.enCamino` | Unidades con llegada prevista de hoy en adelante. |
 | `stock.dudoso` | `true` si el stock es de 10.000 o más: el número cargado al arrancar, no mercadería real. |
@@ -171,7 +152,6 @@ curl -H "Authorization: Bearer <token>" \
 | `consumo.ultimoPedido` | Fecha y hora del último pedido que lo incluyó, ISO-8601 en UTC. |
 | `devolucion.retornable` | `true` si va y vuelve entero (tachos, contenedores). |
 | `devolucion.preguntaAlVolver` | Qué le pregunta el depósito cuando vuelve: `ninguna`, `cuanto_queda` (líquidos, textiles) o `estado` (herramientas). |
-| `flexxus` | Cómo está vinculado con Flexxus. `null` si no hay registro. Hoy casi todos dicen `pendiente_flexxus` con el resto en `null`: la conexión no está activa. |
 | `serviciosAsignados` | En cuántos servicios activos está habilitado para pedir. |
 | `visiblePara` | Qué roles lo ven en el catálogo (`supervisor`, `administrativo`, …). |
 
