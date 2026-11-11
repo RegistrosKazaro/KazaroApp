@@ -514,7 +514,8 @@ router.get("/insumos/:id", (req, res) => {
     `).all({ empresaId, id }).map((r) => ({
       mes: r.mes,
       cantidad: Number(r.cantidad || 0),
-      monto: Number(r.monto || 0),
+      // Sumar decimales en SQLite deja restos como 7486.200000000001.
+      monto: Math.round(Number(r.monto || 0) * 100) / 100,
       pedidos: Number(r.pedidos || 0),
     }));
 
