@@ -5,6 +5,7 @@ import { useCart } from "../hooks/useCart";
 import { api } from "../api/client";
 import { formatMoney } from "../utils/format";
 import { normalizeText } from "../utils/text";
+import AgregarInsumos from "../components/AgregarInsumos";
 import "../styles/catalog.css";
 
 function useServiceBudget(servicioId) {
@@ -398,6 +399,15 @@ export default function Cart() {
               </tr>
             </tfoot>
           </table>
+
+          {/* Sumar insumos sin volver al catálogo: sobre todo al repetir un
+              pedido, que llega acá ya cargado. */}
+          <AgregarInsumos
+            serviceId={isSupervisorRoute ? service?.id ?? null : null}
+            cartItems={items}
+            onAdd={add}
+            disabled={isSupervisorRoute && !service?.id}
+          />
 
           {/* Nota del pedido */}
           <div className="state" style={{ marginTop: 12 }}>

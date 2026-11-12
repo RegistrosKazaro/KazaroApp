@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { env } from "./utils/env.js";
+import { sinAcentosSql, normalizarBusqueda } from "./utils/busqueda.js";
 // Crea las tablas del mapeo servicio->depósito y de la cola de movimientos a
 // Flexxus. Nada se envía todavía: por ahora sólo existen, vacías.
 import { ensureTablas as ensureFlexxusOutbox } from "./integrations/flexxusOutbox.js";
@@ -912,9 +913,11 @@ export function listProductsByCategory(categoryId, { q = "", serviceId = null, r
   else if (!prodCat && prodCatName && categoryId !== "__all__") { where.push(`p.${prodCatName} = ?`); params.push(categoryId); }
 
   if (q && q.trim()) {
-    const like = `%${q.trim()}%`;
-    if (hasCode) { where.push(`(p.${prodName} LIKE ? OR p.${prodCode} LIKE ?)`); params.push(like, like); }
-    else { where.push(`p.${prodName} LIKE ?`); params.push(like); }
+    // Sin acentos: el LIKE de SQLite no iguala "paño" con "PAÑO" (sólo baja
+    // letras ASCII) y los insumos están cargados en mayúscula.
+    const like = `%${normalizarBusqueda(q)}%`;
+    if (hasCode) { where.push(`(${sinAcentosSql(`p.${prodName}`)} LIKE ? OR ${sinAcentosSql(`p.${prodCode}`)} LIKE ?)`); params.push(like, like); }
+    else { where.push(`${sinAcentosSql(`p.${prodName}`)} LIKE ?`); params.push(like); }
   }
 
   if (serviceId && pivot) {

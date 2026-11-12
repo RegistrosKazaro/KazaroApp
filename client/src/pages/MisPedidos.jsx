@@ -380,7 +380,7 @@ export default function MisPedidos() {
                         🔁 Repetir este pedido
                       </button>
                       <span style={{ marginLeft: 8, fontSize: "0.78rem", color: "#6b7280" }}>
-                        Se carga en el carrito para que lo edites y lo envíes como un pedido nuevo.
+                        Se carga en el carrito: ahí podés cambiar cantidades, sacar o agregar insumos, y enviarlo como un pedido nuevo.
                       </span>
                     </div>
                   )}
