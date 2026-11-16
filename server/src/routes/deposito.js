@@ -23,6 +23,7 @@ import {
   registrarCambioProducto,
   INICIO_FLUJO_REVISION,
   recomputeFlexxusMatch,
+  idsServiciosRioCuarto,
 } from "../db.js";
 import { sendMail } from "../utils/mailer.js";
 import { fmtAr, ahoraUtcSql } from "../utils/fechas.js";
@@ -471,6 +472,10 @@ router.get("/orders", mustWarehouse, (req, res) => {
         pedidas: a.unidadesPedidas,
       };
     };
+
+    // Río Cuarto no sale del depósito central: sus pedidos no se mezclan acá.
+    const rioCuarto = idsServiciosRioCuarto(getEmpresaId(req));
+    rawOrders = rawOrders.filter((r) => !rioCuarto.has(Number(r.ServicioID)));
 
     const cleanRows = rawOrders.map(row => {
       const id =

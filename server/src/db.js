@@ -1911,6 +1911,10 @@ export function createOrder({ empleadoId, servicioId, nota, items, asRole = null
     if (!deferStock) {
       try { db.prepare(`UPDATE Pedidos SET contabilizado_at = datetime('now') WHERE PedidoID = ?`).run(pedidoId); }
       catch { /* la columna se asegura al arrancar; si no está, no rompe la creación */ }
+    } else if (servicioIdForInsert && idsServiciosRioCuarto(1).has(Number(servicioIdForInsert))) {
+      // Río Cuarto no pasa por el depósito central: cuenta ya, sin tocar stock.
+      const { f } = db.prepare(`SELECT Fecha AS f FROM Pedidos WHERE PedidoID = ?`).get(pedidoId);
+      db.prepare(CONTAR_RIO_CUARTO).run({ id: pedidoId, cuando: f || new Date().toISOString().slice(0, 19).replace("T", " ") });
     }
 
     const insItem = db.prepare(`
@@ -2989,6 +2993,69 @@ export function ensureMailPorServicioTable() {
   `);
 }
 ensureMailPorServicioTable();
+
+/* ============ Río Cuarto: no pasa por el depósito central ============
+   Decidido con el usuario el 16/11/2026: los pedidos de Río Cuarto no salen
+   del depósito central, así que no aparecen en su panel y cuentan apenas se
+   crean (Informes, API), sin descontar su stock. Antes quedaban "Por
+   confirmar" para siempre: 53 de 56 nunca se confirmaron.
+
+   Es Río Cuarto si el nombre dice R4 / RÍO IV / RIO CUARTO / IV, o la zona
+   es RIO IV (así entra "GOMERIA ... RIO V", que es zona RIO IV). Es la misma
+   regla con la que se cargaron los mails desviados.                        */
+
+const NOMBRE_RIO_CUARTO = /\bR\s*[-.]?\s*4\b|\bR[IÍ]?O\s*[-.]?\s*(CUARTO|IV|4)\b|\bIV\b|R[IÍ]O\s*CUARTO/i;
+
+export const esRioCuarto = (nombre, zona) =>
+  NOMBRE_RIO_CUARTO.test(String(nombre ?? "")) || /R[IÍ]O\s*IV/i.test(String(zona ?? ""));
+
+/** Los ids de los servicios de Río Cuarto de una empresa (sólo Kazaro tiene). */
+export function idsServiciosRioCuarto(empresaId = 1) {
+  try {
+    return new Set(
+      db.prepare(`SELECT ServiciosID AS id, ServicioNombre AS n, zona AS z FROM Servicios WHERE empresa_id = ?`)
+        .all(Number(empresaId))
+        .filter((s) => esRioCuarto(s.n, s.z))
+        .map((s) => Number(s.id))
+    );
+  } catch { return new Set(); }
+}
+
+/**
+ * Deja un pedido de Río Cuarto contado y cerrado, como si ya se hubiera
+ * retirado. `cuando` es su fecha: así cae en el mes en que se pidió.
+ * No toca stock: no sale del depósito central.
+ */
+const CONTAR_RIO_CUARTO = `
+  UPDATE Pedidos
+     SET Status = 'closed', cerrado = 1,
+         closedat = COALESCE(closedat, @cuando), retiro_at = COALESCE(retiro_at, @cuando),
+         contabilizado_at = @cuando
+   WHERE PedidoID = @id AND contabilizado_at IS NULL`;
+
+/** Los que ya estaban esperando al depósito: pasan a contados con su fecha. */
+export function contarPedidosRioCuartoPendientes() {
+  try {
+    const ids = idsServiciosRioCuarto(1);
+    if (!ids.size) return 0;
+    const pendientes = db.prepare(
+      `SELECT PedidoID AS id, ServicioID AS s, Fecha AS f FROM Pedidos
+        WHERE deleted_at IS NULL AND contabilizado_at IS NULL
+          AND LOWER(COALESCE(Status,'')) IN ('revision_deposito','open','preparing')`
+    ).all().filter((p) => ids.has(Number(p.s)));
+    const contar = db.prepare(CONTAR_RIO_CUARTO);
+    db.transaction(() => { for (const p of pendientes) contar.run({ id: p.id, cuando: p.f }); })();
+    return pendientes.length;
+  } catch (e) {
+    console.warn("[rio cuarto] no se pudieron contar los pendientes:", e?.message || e);
+    return 0;
+  }
+}
+// Al arrancar: pone al día los que hayan quedado esperando. Si no hay, no hace nada.
+{
+  const n = contarPedidosRioCuartoPendientes();
+  if (n) console.log(`[rio cuarto] ${n} pedidos que esperaban al depósito quedaron contados`);
+}
 
 /** A quién hay que avisarle de los pedidos de ese servicio, si hay regla. */
 export function destinoMailDeServicio(servicioId) {
