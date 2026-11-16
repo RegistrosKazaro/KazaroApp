@@ -51,7 +51,9 @@ const montar = (alVer = () => {}) => {
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
-  api.get.mockResolvedValue({ data: [PEDIDO] });
+  // 131 es de Río Cuarto: está entre los servicios que pueden repetir.
+  api.get.mockImplementation(async (url) =>
+    ({ data: url === "/orders/repetir-servicios" ? [131] : [PEDIDO] }));
 });
 
 /** Las tarjetas vienen plegadas: hay que abrir la del pedido. */
@@ -66,6 +68,16 @@ describe("Repetir un pedido anterior", () => {
     montar();
     await abrir(user);
     expect(await screen.findByRole("button", { name: /Repetir este pedido/ })).toBeInTheDocument();
+  });
+
+  it("a los servicios que no están habilitados no se les ofrece repetir", async () => {
+    api.get.mockImplementation(async (url) =>
+      ({ data: url === "/orders/repetir-servicios" ? [999] : [PEDIDO] }));
+    const user = userEvent.setup();
+    montar();
+    await abrir(user);
+    expect(await screen.findByText(/BOLSA NEGRA/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Repetir este pedido/ })).toBeNull();
   });
 
   it("deja el carrito igual al pedido viejo, con su servicio", async () => {

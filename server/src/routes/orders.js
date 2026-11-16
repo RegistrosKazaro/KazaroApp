@@ -6,7 +6,7 @@ import {
   getServiceById, getServiceEmails, getServiceNameById,
   getBudgetSettingsByServiceId, DEFAULT_SERVICE_PCT,
   grupoDeServicio, gastoDelMesDelGrupo, destinoMailDeServicio,
-  getUserRoles, listServicesByUser, getUserById, db,
+  getUserRoles, listServicesByUser, getUserById, db, idsServiciosConRepetir,
 } from "../db.js";
 import { getWarehouseForChildService } from "../warehouses.js";
 import { generateRemitoPDFBuffer } from "../utils/remitoPdf.js";
@@ -341,6 +341,11 @@ router.get("/pdf/:id", requireAuth, async (req, res) => {
 });
 
 // ─── Mis pedidos (supervisor) ────────────────────────────────────────────────
+// Qué servicios pueden repetir pedidos y agregar insumos desde el carrito.
+router.get("/repetir-servicios", requireAuth, (req, res) => {
+  res.json([...idsServiciosConRepetir(req.user?.empresaId ?? 1)]);
+});
+
 router.get("/mis-pedidos", requireAuth, async (req, res) => {
   try {
     const empleadoId = req.user.id;

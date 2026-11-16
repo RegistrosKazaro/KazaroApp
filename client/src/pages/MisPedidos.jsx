@@ -7,6 +7,7 @@ import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
 import { formatMoney } from "../utils/format";
 import { msDeFechaDb, formatoFechaHoraAr, diasDesdeFechaDb } from "../utils/fechas";
+import { useServiciosConRepetir } from "../hooks/useServiciosConRepetir";
 
 const API_BASE_URL = (import.meta?.env && import.meta.env.VITE_API_URL) || "http://localhost:4000";
 
@@ -67,6 +68,8 @@ export default function MisPedidos() {
   useAuth();
   const { reemplazar } = useCart();
   const nav = useNavigate();
+  // Repetir está permitido sólo para algunos servicios (Río Cuarto, 16/11/2026).
+  const conRepetir = useServiciosConRepetir();
 
   /**
    * Repetir un pedido: deja el carrito igual a ese pedido y lleva al carrito.
@@ -365,7 +368,7 @@ export default function MisPedidos() {
 
                   {/* Repetir: deja el carrito igual a este pedido para
                       editarlo y mandarlo de nuevo. Sale con numero nuevo. */}
-                  {o.items?.length > 0 && (
+                  {o.items?.length > 0 && conRepetir.has(Number(o.ServicioID)) && (
                     <div style={{ marginBottom: 10 }}>
                       {/* Estilo propio: la clase `pill` en esta pantalla es
                           blanca sobre blanco y el botón no se veía. */}

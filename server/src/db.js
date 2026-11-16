@@ -3021,6 +3021,16 @@ export function idsServiciosRioCuarto(empresaId = 1) {
   } catch { return new Set(); }
 }
 
+// Servicios que pueden "Repetir este pedido" y agregar insumos desde el carrito
+// (decidido el 16/11/2026): los de Río Cuarto y, a mano, los de Ariel Gonzalez
+// que el usuario indique. Para todos los demás está prohibido.
+const REPETIR_ADEMAS = new Set([]);
+export function idsServiciosConRepetir(empresaId = 1) {
+  const ids = idsServiciosRioCuarto(empresaId);
+  for (const id of REPETIR_ADEMAS) ids.add(id);
+  return ids;
+}
+
 /**
  * Deja un pedido de Río Cuarto contado y cerrado, como si ya se hubiera
  * retirado. `cuando` es su fecha: así cae en el mes en que se pidió.

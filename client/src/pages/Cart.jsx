@@ -6,6 +6,7 @@ import { api } from "../api/client";
 import { formatMoney } from "../utils/format";
 import { normalizeText } from "../utils/text";
 import AgregarInsumos from "../components/AgregarInsumos";
+import { useServiciosConRepetir } from "../hooks/useServiciosConRepetir";
 import "../styles/catalog.css";
 
 function useServiceBudget(servicioId) {
@@ -136,6 +137,8 @@ export default function Cart() {
     () => String(role || "").toLowerCase().includes("super"),
     [role]
   );
+  // Agregar insumos desde el carrito: sólo servicios habilitados (Río Cuarto, 16/11/2026).
+  const conRepetir = useServiciosConRepetir();
 
   const userLabel = useMemo(() => {
     if (!user) return "";
@@ -402,12 +405,14 @@ export default function Cart() {
 
           {/* Sumar insumos sin volver al catálogo: sobre todo al repetir un
               pedido, que llega acá ya cargado. */}
-          <AgregarInsumos
-            serviceId={isSupervisorRoute ? service?.id ?? null : null}
-            cartItems={items}
-            onAdd={add}
-            disabled={isSupervisorRoute && !service?.id}
-          />
+          {(!isSupervisorRoute || conRepetir.has(Number(service?.id))) && (
+            <AgregarInsumos
+              serviceId={isSupervisorRoute ? service?.id ?? null : null}
+              cartItems={items}
+              onAdd={add}
+              disabled={isSupervisorRoute && !service?.id}
+            />
+          )}
 
           {/* Nota del pedido */}
           <div className="state" style={{ marginTop: 12 }}>
