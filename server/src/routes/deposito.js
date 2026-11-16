@@ -454,6 +454,24 @@ router.get("/orders", mustWarehouse, (req, res) => {
     // Para separar en pantalla los pedidos de uniformes de los de insumos.
     const idsUniformes = getProductIdsCategoriasSeparadas();
 
+    // Quién está preparando cada pedido y si ya terminó. Sin esto el jefe no
+    // veía, desde Pedidos, que un pedido estaba a medio preparar, y podía
+    // cerrarlo: se cobraba lo pedido, no lo que de verdad se juntó.
+    const nombrePreparador = new Map(
+      picking.listarPreparadores(db, getEmpresaId(req)).map((p) => [p.id, p.nombre])
+    );
+    const preparacionDe = (row) => {
+      const prepId = Number(row.preparador_id);
+      if (!prepId) return null;
+      const a = picking.avance(db, row.PedidoID);
+      return {
+        preparador: nombrePreparador.get(prepId) || "otra persona",
+        terminada: !!row.preparacion_terminada_at,
+        preparadas: a.unidadesPreparadas,
+        pedidas: a.unidadesPedidas,
+      };
+    };
+
     const cleanRows = rawOrders.map(row => {
       const id =
         getVal(row, ["pedidoid", "id", "idpedido", "pedido_id"]) ??
@@ -536,6 +554,7 @@ router.get("/orders", mustWarehouse, (req, res) => {
         // El editor necesita el pedido completo, aunque en pantalla se muestre
         // sólo la parte que se entrega.
         itemsTodos: todosLosItems,
+        preparacion: preparacionDe(row),
       };
     });
 
@@ -1121,6 +1140,8 @@ router.put("/orders/:id/pendiente/:action", mustWarehouse, (req, res) => {
       const r = registrarEntregaPendientes(id, entregados, { bajarPendiente: false, fecha: ahora });
       if (!r.ok) return res.status(400).json({ error: r.error || "No se pudo registrar la entrega" });
       db.prepare(`UPDATE Pedidos SET pendiente_status='closed', pendiente_closedat=? WHERE PedidoID=?`).run(ahora, id);
+      try { anotarYLiberarPicking(req, id); }
+      catch (e) { console.warn("[deposito] liberar picking (pendiente):", e?.message || e); }
       return res.json({ ok: true, estado: "closed", entrega: r.entrega });
     }
 
@@ -2134,6 +2155,23 @@ router.put("/orders/:id/desasignar", mustWarehouse, (req, res) => {
  * El operario sólo puede meter mano en los pedidos que le asignaron. Si no,
  * con cambiar el número en la URL prepararía el de cualquiera.
  */
+/** Al despachar: libera el picking y deja anotado quién lo preparó. */
+function anotarYLiberarPicking(req, pedidoId) {
+  const preparadorId = picking.liberarAlDespachar(db, pedidoId);
+  if (!preparadorId) return;
+  audit({
+    empresaId: getEmpresaId(req),
+    usuario: req.user?.username || req.user?.email || null,
+    accion: "picking_despachado",
+    entidad: "pedido",
+    entidadId: pedidoId,
+    detalle: JSON.stringify({ preparadorId }),
+  });
+}
+
+// Pasa cuando el jefe le saca el pedido mientras lo tenía abierto.
+const NO_ES_TUYO = "Este pedido ya no está asignado a vos. Volvé a la lista.";
+
 function noEsSuyo(req, pedidoId) {
   if (!req.esOperario) return false;
   const dueno = db.prepare(`SELECT preparador_id FROM Pedidos WHERE PedidoID = ?`).get(Number(pedidoId));
@@ -2144,7 +2182,7 @@ function noEsSuyo(req, pedidoId) {
 router.get("/orders/:id/picking", mustPicking, (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (noEsSuyo(req, id)) return res.status(404).json({ error: "Pedido no encontrado" });
+    if (noEsSuyo(req, id)) return res.status(404).json({ error: NO_ES_TUYO });
 
     const pedido = db.prepare(
       `SELECT p.PedidoID AS id, p.Status AS status, p.ServicioID AS servicioId,
@@ -2170,9 +2208,9 @@ router.get("/orders/:id/picking", mustPicking, (req, res) => {
 router.post("/orders/:id/picking/escanear", mustPicking, (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (noEsSuyo(req, id)) return res.status(404).json({ error: "Pedido no encontrado" });
+    if (noEsSuyo(req, id)) return res.status(404).json({ error: NO_ES_TUYO });
     const r = picking.escanear(db, {
-      pedidoId: id, codigoBarra: req.body?.codigoBarra, empresaId: laEmpresa(req),
+      pedidoId: id, codigoBarra: req.body?.codigoBarra, empresaId: laEmpresa(req), ahora: ahoraUtcSql(),
     });
     // Un escaneo fallido no es un error del sistema: es parte del trabajo.
     // Va con 200 y el motivo, para que la pantalla muestre el cartel y siga.
@@ -2183,12 +2221,16 @@ router.post("/orders/:id/picking/escanear", mustPicking, (req, res) => {
   }
 });
 
-/** Carga a mano: bultos y lo que no tiene código de barras. */
+/** Carga a mano: "Completar", bultos y correcciones a la baja. */
 router.put("/orders/:id/picking", mustPicking, (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (noEsSuyo(req, id)) return res.status(404).json({ error: "Pedido no encontrado" });
-    const r = picking.cargarManual(db, { pedidoId: id, items: req.body?.items ?? [] });
+    if (noEsSuyo(req, id)) return res.status(404).json({ error: NO_ES_TUYO });
+    const r = picking.cargarManual(db, {
+      pedidoId: id, empresaId: laEmpresa(req), items: req.body?.items ?? [],
+      // El operario sube cantidades sólo de lo que escaneó; el jefe, libre.
+      exigirEscaneo: !!req.esOperario,
+    });
     res.json({ ...r, lineas: picking.lineasDePicking(db, id), avance: picking.avance(db, id) });
   } catch (e) {
     console.error("[picking] carga manual:", e);
@@ -2199,7 +2241,7 @@ router.put("/orders/:id/picking", mustPicking, (req, res) => {
 /** "Terminé". No cierra el pedido: eso lo sigue haciendo el jefe. */
 router.put("/orders/:id/picking/terminar", mustPicking, (req, res) => {
   try {
-    if (noEsSuyo(req, req.params.id)) return res.status(404).json({ error: "Pedido no encontrado" });
+    if (noEsSuyo(req, req.params.id)) return res.status(404).json({ error: NO_ES_TUYO });
     const r = picking.terminar(db, {
       pedidoId: req.params.id, empresaId: laEmpresa(req), ahora: ahoraUtcSql(),
     });
@@ -2300,6 +2342,11 @@ router.put("/orders/:id/:action", mustWarehouse, async (req, res) => {
       // quedó como movimiento en Flexxus. La conciliación lee de acá.
       try { snapshotDespacho(id); }
       catch (e) { console.warn("[deposito] snapshotDespacho:", e?.message || e); }
+
+      // El picking de este despacho terminó: se libera, y si quedó pendiente
+      // vuelve a la lista para asignar. Quién lo preparó queda en auditoría.
+      try { anotarYLiberarPicking(req, id); }
+      catch (e) { console.warn("[deposito] liberar picking:", e?.message || e); }
 
       // Si el pedido se despachó incompleto, lo que quedó arranca su propio
       // recorrido en la solapa Pendientes, con el mismo remito.

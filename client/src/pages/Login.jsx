@@ -57,14 +57,12 @@ export default function Login() {
     setErr("");
     setLoading(true);
     try {
-      const { roles = [] } = await login(u, p, empresa?.slug ?? "kazaro", totp.trim());
-      const rolesLower = roles.map((r) => String(r).toLowerCase());
-      if (rolesLower.length > 1) { nav("/roles", { replace: true }); return; }
-      if (rolesLower.some((r) => r.includes("super"))) {
-        nav("/app/supervisor/services", { replace: true });
-      } else {
-        nav("/app/administrativo/products", { replace: true });
-      }
+      await login(u, p, empresa?.slug ?? "kazaro", totp.trim());
+      // A dónde va cada uno lo decide RoleSelect: con un rol solo redirige sin
+      // mostrarse. Acá había una copia que sólo conocía al supervisor y mandaba
+      // a todos los demás al catálogo: el operario de Picking y el jefe de
+      // Depósito caían en "No hay productos" y no llegaban a su pantalla.
+      nav("/roles", { replace: true });
     } catch (error) {
       if (error?.response?.data?.twofaRequired) {
         setNeed2fa(true);

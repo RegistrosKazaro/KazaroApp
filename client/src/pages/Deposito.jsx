@@ -853,6 +853,14 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
   // En todas las transiciones se saca el pedido de la lista actual pero NO se
   // cambia de pestaña: el encargado sigue trabajando en la etapa donde está.
   const closeOrder = async (o) => {
+    // A medio preparar, cerrar cobra lo PEDIDO: lo que el preparador todavía
+    // no juntó no pasa a pendiente hasta que él aprieta "Terminé".
+    const prep = o.preparacion;
+    if (prep && !prep.terminada && !window.confirm(
+      `${prep.preparador} todavía lo está preparando (${prep.preparadas} de ${prep.pedidas} unidades).\n\n`
+      + `Si lo cerrás ahora se le cobra al servicio todo lo pedido, no lo preparado. `
+      + `Lo mejor es esperar a que termine.\n\n¿Cerrar igual?`
+    )) return;
     try { await api.put(rutaAccion(o, "close"), {}, { withCredentials: true }); }
     catch (e) { setErr(e?.response?.data?.error || e.message || "Error"); return; }
     quitarDeLista(o);
@@ -1101,6 +1109,16 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
                             ? <span className="deposito-role-badge">{o.rol}</span>
                             : null
                         }
+                        {/* Quién lo está preparando con la pistola. Sin esto, desde acá
+                            no se veía que estaba a medio preparar y se podía cerrar. */}
+                        {o.preparacion && (
+                          <span className="deposito-subtext"
+                                style={{ color: o.preparacion.terminada ? "#166534" : "#1d4ed8", fontWeight: 600 }}>
+                            {o.preparacion.terminada
+                              ? `✔ Preparado por ${o.preparacion.preparador}: listo para cerrar`
+                              : `🧺 Preparando ${o.preparacion.preparador} (${o.preparacion.preparadas}/${o.preparacion.pedidas})`}
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>{formatFechaAr(o.fecha)}</td>

@@ -117,11 +117,25 @@ describe("Preparación del depósito", () => {
     expect(screen.getByText("de 20 unidades")).toBeTruthy();
   });
 
-  it("marca el insumo que no tiene código de barras", async () => {
+  it("sólo marca 'a mano' lo que no tiene ningún código para leer", async () => {
+    // Las etiquetas de acá llevan el código del artículo: la lavandina no
+    // tiene código de barras del envase, pero tiene el suyo y se escanea.
+    // Antes decía 'cargar a mano' en TODAS las líneas.
+    const conUnoSinCodigo = structuredClone(DETALLE);
+    conUnoSinCodigo.lineas.push({ productoId: 40, nombre: "TRAPO SUELTO", codigo: null,
+      codigoBarra: null, pedida: 2, preparada: 0 });
+    api.get.mockImplementation((url) => {
+      if (url === "/deposito/preparacion") return Promise.resolve({ data: { pedidos: COLA } });
+      if (url.includes("/picking")) return Promise.resolve({ data: conUnoSinCodigo });
+      return Promise.resolve({ data: { pedidos: [], preparadores: PREPARADORES } });
+    });
     const user = userEvent.setup();
     await abrirPedido(user);
-    // La lavandina a granel no tiene etiqueta: va a mano.
-    expect(screen.getByText(/a mano/)).toBeTruthy();
+
+    const lavandina = screen.getByText("LAVANDINA A GRANEL").closest("tr");
+    expect(within(lavandina).queryByText(/a mano/)).toBeNull();
+    const trapo = screen.getByText("TRAPO SUELTO").closest("tr");
+    expect(within(trapo).getByText(/a mano/)).toBeTruthy();
   });
 
   it("un disparo de la pistola suma uno y deja el campo listo para el siguiente", async () => {
@@ -172,7 +186,7 @@ describe("Preparación del depósito", () => {
     expect(api.post).not.toHaveBeenCalled();
   });
 
-  it("las cantidades se pueden escribir a mano y guardar", async () => {
+  it("lo que se escribe a mano se guarda solo al salir del campo, sin botón", async () => {
     const user = userEvent.setup();
     await abrirPedido(user);
 
@@ -185,12 +199,14 @@ describe("Preparación del depósito", () => {
     const campo = screen.getByLabelText("Preparado de LAVANDINA A GRANEL");
     await user.clear(campo);
     await user.type(campo, "5");
-    await user.click(screen.getByRole("button", { name: "Guardar cantidades" }));
+    expect(screen.queryByRole("button", { name: "Guardar cantidades" })).toBeNull();
+    await user.tab();   // sale del campo
 
     await waitFor(() => {
       const [url, body] = api.put.mock.calls.at(-1);
       expect(url).toBe("/deposito/orders/1351/picking");
-      expect(body.items).toContainEqual({ productoId: 30, cantidadPreparada: 5 });
+      // Sólo la línea que cambió: no se reenvían las demás.
+      expect(body.items).toEqual([{ productoId: 30, cantidadPreparada: 5 }]);
     });
   });
 
@@ -309,6 +325,192 @@ describe("Preparación del depósito", () => {
       return Promise.resolve({ data: { pedidos: [] } });
     });
     render(<PreparacionDeposito modo="operario" />);
-    expect(await screen.findByText(/Pedile al jefe que te asigne/)).toBeTruthy();
+    expect(await screen.findByText(/Cuando el jefe te asigne uno, aparece acá solo/)).toBeTruthy();
+  });
+});
+
+/* ===== Revisión del 16/11/2026 ===== */
+
+/** El detalle que devuelve el servidor, con lo que se le cambie encima. */
+const detalleCon = (cambios = {}) => {
+  const d = structuredClone(DETALLE);
+  Object.assign(d.pedido, cambios.pedido || {});
+  if (cambios.lineas) d.lineas = cambios.lineas(d.lineas);
+  return d;
+};
+
+/** Monta la pantalla devolviendo ese detalle al abrir el pedido. */
+const conDetalle = (detalle, extra = () => undefined) => {
+  api.get.mockImplementation((url) => {
+    const otro = extra(url);
+    if (otro) return otro;
+    if (url === "/deposito/preparadores") return Promise.resolve({ data: { preparadores: PREPARADORES } });
+    if (url === "/deposito/preparacion/asignables") return Promise.resolve({ data: { pedidos: ASIGNABLES } });
+    if (url === "/deposito/preparacion") return Promise.resolve({ data: { pedidos: COLA } });
+    if (url.includes("/picking")) return Promise.resolve({ data: structuredClone(detalle) });
+    return Promise.resolve({ data: {} });
+  });
+};
+
+describe("Preparación — Completar después de escanear", () => {
+  it("el jefe tiene 'Completar' en lo que falta, y manda la cantidad pedida", async () => {
+    const user = userEvent.setup();
+    await abrirPedido(user);
+    api.put.mockResolvedValueOnce({ data: { ok: true, lineas: DETALLE.lineas, avance: DETALLE.avance } });
+
+    // El guante ya está completo: no lleva botón.
+    const guante = screen.getByText("GUANTE ALGODON MOTEADO").closest("tr");
+    expect(within(guante).queryByRole("button", { name: /Completar/ })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Completar DETERGENTE KAZARO X 10 LTS" }));
+
+    await waitFor(() => {
+      const [url, body] = api.put.mock.calls.at(-1);
+      expect(url).toBe("/deposito/orders/1351/picking");
+      expect(body.items).toEqual([{ productoId: 10, cantidadPreparada: 5 }]);
+    });
+  });
+
+  it("el operario no puede cargar ni completar lo que todavía no escaneó", async () => {
+    conDetalle(detalleCon({ lineas: (ls) => ls.map((l) => ({ ...l, preparada: 0, escaneadoAt: null })) }));
+    const user = userEvent.setup();
+    render(<PreparacionDeposito modo="operario" />);
+    await user.click((await screen.findAllByRole("button", { name: "Preparar" }))[0]);
+    await screen.findByLabelText(/Escaneá el insumo/);
+
+    expect(screen.getByLabelText("Preparado de LAVANDINA A GRANEL")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /Completar/ })).toBeNull();
+    expect(screen.getAllByText(/escaneá para cargar/).length).toBeGreaterThan(0);
+  });
+
+  it("al escanearlo, al operario le aparece 'Completar' en esa línea", async () => {
+    conDetalle(detalleCon({ lineas: (ls) => ls.map((l) => ({ ...l, preparada: 0, escaneadoAt: null })) }));
+    api.post.mockResolvedValueOnce({ data: {
+      ok: true, insumo: { id: 30, nombre: "LAVANDINA A GRANEL" },
+      linea: { productoId: 30, pedida: 5, preparada: 1, escaneadoAt: "2026-11-16 10:00:00" },
+      avance: { ...DETALLE.avance, unidadesPreparadas: 1 },
+    }});
+    const user = userEvent.setup();
+    render(<PreparacionDeposito modo="operario" />);
+    await user.click((await screen.findAllByRole("button", { name: "Preparar" }))[0]);
+    const campo = await screen.findByLabelText(/Escaneá el insumo/);
+
+    await user.type(campo, "077{Enter}");
+
+    expect(await screen.findByRole("button", { name: "Completar LAVANDINA A GRANEL" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Completar LAVANDINA A GRANEL" })).toHaveTextContent("faltan 4");
+    expect(screen.getByLabelText("Preparado de LAVANDINA A GRANEL")).not.toBeDisabled();
+    // Y los que no escaneó siguen trabados.
+    expect(screen.queryByRole("button", { name: "Completar DETERGENTE KAZARO X 10 LTS" })).toBeNull();
+  });
+
+  it("si el servidor no acepta el Completar, queda su error y no se celebra", async () => {
+    const user = userEvent.setup();
+    await abrirPedido(user);
+    api.put.mockResolvedValueOnce({ data: { ok: false, errores: ['Escaneá "DETERGENTE" antes de cargar la cantidad.'],
+      lineas: DETALLE.lineas, avance: DETALLE.avance } });
+
+    await user.click(screen.getByRole("button", { name: "Completar DETERGENTE KAZARO X 10 LTS" }));
+
+    expect(await screen.findByText(/antes de cargar la cantidad/)).toBeTruthy();
+    expect(screen.queryByText(/completo \(5\)/)).toBeNull();
+  });
+});
+
+describe("Preparación — pedido terminado", () => {
+  it("se abre para mirar: sin campo de escaneo, sin Completar, sin Terminé", async () => {
+    conDetalle(detalleCon({ pedido: { terminadaAt: "2026-11-16 10:00:00" } }));
+    const user = userEvent.setup();
+    render(<PreparacionDeposito modo="operario" />);
+    await user.click((await screen.findAllByRole("button", { name: "Preparar" }))[0]);
+
+    expect(await screen.findByText(/Ya está terminado/)).toBeTruthy();
+    expect(screen.queryByLabelText(/Escaneá el insumo/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Completar/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Terminé/ })).toBeNull();
+    expect(screen.getByLabelText("Preparado de LAVANDINA A GRANEL")).toBeDisabled();
+    expect(screen.getByText(/pedile al jefe que te lo devuelva/)).toBeTruthy();
+  });
+
+  it("si se terminó o se cerró mientras lo tenía abierto, el escaneo lo dice y lo recarga", async () => {
+    const user = userEvent.setup();
+    const campo = await abrirPedido(user);
+    api.post.mockResolvedValueOnce({ data: { ok: false, motivo: "cerrado",
+      error: "Este pedido ya se cerró: no se puede seguir preparando.", avance: DETALLE.avance } });
+    const abiertas = api.get.mock.calls.filter(([u]) => u.includes("/picking")).length;
+
+    await user.type(campo, "077{Enter}");
+
+    expect(await screen.findByText(/ya se cerró/)).toBeTruthy();
+    await waitFor(() =>
+      expect(api.get.mock.calls.filter(([u]) => u.includes("/picking")).length).toBe(abiertas + 1));
+  });
+});
+
+describe("Preparación — que no se pierda nada", () => {
+  it("Terminé espera a que llegue lo último que se tipeó", async () => {
+    // Antes, lo tipeado sin apretar "Guardar" se perdía al terminar.
+    const user = userEvent.setup();
+    await abrirPedido(user);
+    let soltar;
+    api.put.mockImplementationOnce(() => new Promise((r) => { soltar = () => r({ data: {
+      ok: true, lineas: DETALLE.lineas, avance: { ...DETALLE.avance, completo: true } } }); }));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const campo = screen.getByLabelText("Preparado de LAVANDINA A GRANEL");
+    await user.clear(campo);
+    await user.type(campo, "5");
+    await user.click(screen.getByRole("button", { name: /Terminé/ }));   // el blur dispara el guardado
+
+    // Mientras el guardado no vuelve, no se mandó el Terminé.
+    expect(api.put.mock.calls.some(([u]) => u.endsWith("/terminar"))).toBe(false);
+    soltar();
+    await waitFor(() => expect(api.put.mock.calls.at(-1)[0]).toBe("/deposito/orders/1351/picking/terminar"));
+    const orden = api.put.mock.calls.map(([u]) => u);
+    expect(orden.indexOf("/deposito/orders/1351/picking")).toBeLessThan(orden.indexOf("/deposito/orders/1351/picking/terminar"));
+  });
+
+  it("vaciar el campo y salir no guarda un cero: vuelve a lo que había", async () => {
+    const user = userEvent.setup();
+    await abrirPedido(user);
+    const llamadas = api.put.mock.calls.length;
+    const campo = screen.getByLabelText("Preparado de DETERGENTE KAZARO X 10 LTS");
+    await user.clear(campo);
+    await user.tab();
+    expect(api.put.mock.calls.length).toBe(llamadas);
+    expect(campo).toHaveValue("3");
+  });
+});
+
+describe("Preparación — la lista", () => {
+  it("se actualiza sola cada 30 segundos", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<PreparacionDeposito modo="operario" />);
+      await screen.findByText("#0001351");
+      const antes = api.get.mock.calls.filter(([u]) => u === "/deposito/preparacion").length;
+      await vi.advanceTimersByTimeAsync(30000);
+      await waitFor(() =>
+        expect(api.get.mock.calls.filter(([u]) => u === "/deposito/preparacion").length).toBe(antes + 1));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("el jefe ve los pedidos En preparación sin dueño para asignar", async () => {
+    conDetalle(DETALLE, (url) => url === "/deposito/preparacion/asignables"
+      ? Promise.resolve({ data: { pedidos: [{ id: 1500, servicio: "UNC", lineas: 3, unidades: 9, enPreparacion: 1 }] } })
+      : undefined);
+    render(<PreparacionDeposito />);
+    expect(await screen.findByRole("option", { name: /#0001500 \(en preparación\) · UNC/ })).toBeTruthy();
+  });
+
+  it("marca los pendientes en la lista", async () => {
+    conDetalle(DETALLE, (url) => url === "/deposito/preparacion"
+      ? Promise.resolve({ data: { pedidos: [{ ...COLA[0], esPendiente: true }] } })
+      : undefined);
+    render(<PreparacionDeposito />);
+    const fila = (await screen.findByText("#0001351")).closest("tr");
+    expect(within(fila).getByText("pendiente")).toBeTruthy();
   });
 });
