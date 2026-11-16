@@ -2155,6 +2155,11 @@ router.put("/orders/:id/desasignar", mustWarehouse, (req, res) => {
  * El operario sólo puede meter mano en los pedidos que le asignaron. Si no,
  * con cambiar el número en la URL prepararía el de cualquiera.
  */
+// shortcut: apagado a pedido del usuario (16/11/2026) mientras arrancan sin
+// pistola: el operario carga cualquier insumo sin escanearlo antes. Para
+// volver a exigirlo, true acá Y en PreparacionDeposito.jsx.
+const EXIGIR_ESCANEO = false;
+
 /** Al despachar: libera el picking y deja anotado quién lo preparó. */
 function anotarYLiberarPicking(req, pedidoId) {
   const preparadorId = picking.liberarAlDespachar(db, pedidoId);
@@ -2229,7 +2234,7 @@ router.put("/orders/:id/picking", mustPicking, (req, res) => {
     const r = picking.cargarManual(db, {
       pedidoId: id, empresaId: laEmpresa(req), items: req.body?.items ?? [],
       // El operario sube cantidades sólo de lo que escaneó; el jefe, libre.
-      exigirEscaneo: !!req.esOperario,
+      exigirEscaneo: EXIGIR_ESCANEO && !!req.esOperario,
     });
     res.json({ ...r, lineas: picking.lineasDePicking(db, id), avance: picking.avance(db, id) });
   } catch (e) {

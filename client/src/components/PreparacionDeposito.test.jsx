@@ -371,37 +371,21 @@ describe("Preparación — Completar después de escanear", () => {
     });
   });
 
-  it("el operario no puede cargar ni completar lo que todavía no escaneó", async () => {
+  it("por ahora el operario prepara cualquier insumo, en cualquier orden, sin escanear antes", async () => {
+    // Pedido del usuario el 16/11/2026, mientras arrancan sin pistola (EXIGIR_ESCANEO = false).
     conDetalle(detalleCon({ lineas: (ls) => ls.map((l) => ({ ...l, preparada: 0, escaneadoAt: null })) }));
+    api.put.mockResolvedValue({ data: { ok: true, lineas: DETALLE.lineas, avance: DETALLE.avance } });
     const user = userEvent.setup();
     render(<PreparacionDeposito modo="operario" />);
     await user.click((await screen.findAllByRole("button", { name: "Preparar" }))[0]);
     await screen.findByLabelText(/Escaneá el insumo/);
 
-    expect(screen.getByLabelText("Preparado de LAVANDINA A GRANEL")).toBeDisabled();
-    expect(screen.queryByRole("button", { name: /Completar/ })).toBeNull();
-    expect(screen.getAllByText(/escaneá para cargar/).length).toBeGreaterThan(0);
-  });
-
-  it("al escanearlo, al operario le aparece 'Completar' en esa línea", async () => {
-    conDetalle(detalleCon({ lineas: (ls) => ls.map((l) => ({ ...l, preparada: 0, escaneadoAt: null })) }));
-    api.post.mockResolvedValueOnce({ data: {
-      ok: true, insumo: { id: 30, nombre: "LAVANDINA A GRANEL" },
-      linea: { productoId: 30, pedida: 5, preparada: 1, escaneadoAt: "2026-11-16 10:00:00" },
-      avance: { ...DETALLE.avance, unidadesPreparadas: 1 },
-    }});
-    const user = userEvent.setup();
-    render(<PreparacionDeposito modo="operario" />);
-    await user.click((await screen.findAllByRole("button", { name: "Preparar" }))[0]);
-    const campo = await screen.findByLabelText(/Escaneá el insumo/);
-
-    await user.type(campo, "077{Enter}");
-
-    expect(await screen.findByRole("button", { name: "Completar LAVANDINA A GRANEL" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Completar LAVANDINA A GRANEL" })).toHaveTextContent("faltan 4");
+    expect(screen.queryByText(/escaneá para cargar/)).toBeNull();
     expect(screen.getByLabelText("Preparado de LAVANDINA A GRANEL")).not.toBeDisabled();
-    // Y los que no escaneó siguen trabados.
-    expect(screen.queryByRole("button", { name: "Completar DETERGENTE KAZARO X 10 LTS" })).toBeNull();
+
+    // Empieza por el ÚLTIMO insumo de la lista, sin escanear nada.
+    await user.click(screen.getByRole("button", { name: "Completar LAVANDINA A GRANEL" }));
+    await waitFor(() => expect(api.put.mock.calls.at(-1)[1].items).toEqual([{ productoId: 30, cantidadPreparada: 5 }]));
   });
 
   it("si el servidor no acepta el Completar, queda su error y no se celebra", async () => {

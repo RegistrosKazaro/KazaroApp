@@ -30,6 +30,11 @@ import "../styles/deposito.css";
 
 const nro = (id) => `#${String(id).padStart(7, "0")}`;
 
+// shortcut: apagado a pedido del usuario (16/11/2026) mientras arrancan sin
+// pistola: el operario carga o completa cualquier insumo sin escanearlo antes.
+// Para volver a exigir el escaneo, poner true acá Y en routes/deposito.js.
+export const EXIGIR_ESCANEO = false;
+
 /** Cada cuánto se refresca la lista sola: lo recién asignado aparece sin tocar nada. */
 const REFRESCO_MS = 30000;
 
@@ -381,8 +386,9 @@ export default function PreparacionDeposito({ modo = "jefe" }) {
                 const completa = preparada >= Number(l.pedida);
                 // El operario sube cantidades sólo de lo que ya escaneó. Bajar
                 // siempre puede (si hay algo cargado). El jefe, libre.
-                const habilitada = !terminado && (soyJefe || !!l.escaneadoAt || preparada > 0);
-                const puedeCompletar = !terminado && !completa && (soyJefe || !!l.escaneadoAt);
+                const libre = soyJefe || !EXIGIR_ESCANEO || !!l.escaneadoAt;
+                const habilitada = !terminado && (libre || preparada > 0);
+                const puedeCompletar = !terminado && !completa && libre;
                 // Se escanea por el código del artículo o por el de barras del
                 // envase: sin ninguno de los dos no hay nada que leer.
                 const sinCodigo = !l.codigo && !l.codigoBarra;
@@ -401,7 +407,7 @@ export default function PreparacionDeposito({ modo = "jefe" }) {
                         <span className="deposito-product-code">
                           {l.codigo ? `Cód. ${l.codigo}` : "Sin código"}
                           {sinCodigo && " · ✋ cargar a mano"}
-                          {!soyJefe && !terminado && !completa && !l.escaneadoAt && " · escaneá para cargar"}
+                          {!libre && !terminado && !completa && " · escaneá para cargar"}
                         </span>
                       </div>
                     </td>
