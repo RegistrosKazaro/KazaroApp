@@ -60,7 +60,7 @@ import { crearClienteFlexxus, configDesdeEnv } from "../integrations/flexxusClie
 import { probarConexion } from "../integrations/flexxusDespachador.js";
 import * as codigosBarra from "../integrations/flexxusCodigosBarra.js";
 import { leerExcelFlexxus } from "../integrations/flexxusExcel.js";
-import { readAppProducts, applyStockSync, buildSyncReport, traerStockDeFlexxus } from "../integrations/flexxus.js";
+import { readAppProducts, applyStockSync, buildSyncReport, traerStockDeFlexxus, stockEntero } from "../integrations/flexxus.js";
 
 
 const router = Router();
@@ -3038,7 +3038,9 @@ export function cruceDeStock(req, filas) {
     // (categoría Uniformes) ni los del subdepósito UNIFORMES de Flexxus.
     const idsUniformes = getProductIdsCategoriasSeparadas();
     const appRows = readAppProducts().filter((p) => !idsUniformes.has(Number(p.productId)));
-    const flexRows = filas.filter((f) => String(f.subdeposito).toUpperCase() !== "UNIFORMES");
+    const flexRows = filas
+      .filter((f) => String(f.subdeposito).toUpperCase() !== "UNIFORMES")
+      .map((f) => ({ ...f, stock: stockEntero(f.stock) }));
 
     const report = buildSyncReport(appRows, flexRows);
 

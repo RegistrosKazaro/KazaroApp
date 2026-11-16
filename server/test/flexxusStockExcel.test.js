@@ -240,3 +240,14 @@ test("la ruta está montada y pasa por el guardia de admin", async () => {
   // guardia + multer + handler: si quedara sólo el handler, estaría sin proteger.
   assert.ok(capa.route.stack.length >= 3, "le falta el guardia o multer");
 });
+
+test("los decimales del Excel se redondean hacia abajo y los negativos quedan en 0", async () => {
+  if (sinBase()) return;
+  const [a, b] = [codigoNuevo(), codigoNuevo()];
+  const idA = insumo(a, 5), idB = insumo(b, 5);
+  const r = await llamar(excel([[a, "KILOS", 77.21, "LABORATORIO"], [b, "NEGATIVO", -2, "VARIOS"]]),
+                         { aplicar: "1", ceros: "1" });
+  assert.equal(r.statusCode, 200);
+  assert.equal(stockDe(idA), 77);
+  assert.equal(stockDe(idB), 0);
+});
