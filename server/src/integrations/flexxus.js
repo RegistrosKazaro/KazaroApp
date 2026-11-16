@@ -1,9 +1,7 @@
 // flexxus.js — Integración con Flexxus (API de consulta) para sincronizar stock.
 //
-// ESTADO: ANDAMIAJE. No está conectado a ninguna ruta ni cron todavía. Nada se
-// ejecuta ni escribe automáticamente. Cuando Flexxus entregue el endpoint y las
-// credenciales, se completa fetchProductsFromFlexxus() y se decide la política
-// de escritura (ver DECISIONES abajo).
+// ESTADO: lee la API real (traerStockDeFlexxus). Sin cron: el stock se pisa sólo
+// cuando un admin aprieta Aplicar en la pantalla de stock (POST /admin/flexxus/stock/api).
 //
 // DECISIONES pendientes con el usuario:
 //   1) ¿Quién manda el stock? Este esqueleto asume "Flexxus manda": en un sync
@@ -19,32 +17,31 @@
 
 import { db } from "../db.js";
 import { normalizeCode, buildSyncReport } from "./flexxusCore.js";
+import { crearClienteFlexxus, configDesdeEnv } from "./flexxusClient.js";
+import { DEPOSITO_CENTRAL } from "./flexxusDepositos.js";
 
 const KAZARO_EMPRESA_ID = 1;
 
 export function isFlexxusConfigured() {
-  return Boolean(process.env.FLEXXUS_API_URL && process.env.FLEXXUS_TOKEN);
+  return Boolean(configDesdeEnv());
 }
 
 /**
- * Trae los productos desde Flexxus, normalizados a { code, name, stock, subdeposito }.
- *
- * STUB: todavía no hay endpoint. Cuando esté, implementar acá la llamada real
- * (por ejemplo con axios) y mapear la respuesta de Flexxus a ese formato:
- *
- *   const { data } = await axios.get(process.env.FLEXXUS_API_URL, {
- *     headers: { Authorization: `Bearer ${process.env.FLEXXUS_TOKEN}` },
- *   });
- *   return data.items.map((it) => ({
- *     code: it.codigo, name: it.descripcion, stock: it.stock, subdeposito: it.subdeposito,
- *   }));
+ * Stock real del depósito central, como filas { code, stock } para buildSyncReport.
+ * El código de la app es el CODIGOPARTICULAR de Flexxus (408 de 409 coinciden,
+ * 16/11/2026); el CODIGOARTICULO es interno. `offset` es el número de página.
  */
-export async function fetchProductsFromFlexxus() {
-  if (!isFlexxusConfigured()) {
-    throw new Error("FLEXXUS_NO_CONFIGURADO: faltan FLEXXUS_API_URL y/o FLEXXUS_TOKEN en el .env");
+export async function traerStockDeFlexxus(cliente = crearClienteFlexxus(configDesdeEnv() ?? {})) {
+  const filas = [];
+  for (let pagina = 0; pagina < 100; pagina += 1) {
+    const r = await cliente.llamar(`/stock?codigosdepositos=${DEPOSITO_CENTRAL}&limit=1000&offset=${pagina}`);
+    const data = Array.isArray(r?.data) ? r.data : [];
+    filas.push(...data);
+    if (data.length < 1000 || filas.length >= Number(r?.count ?? 0)) break;
   }
-  // TODO: implementar la llamada real cuando Flexxus entregue el endpoint.
-  throw new Error("FLEXXUS_FETCH_NO_IMPLEMENTADO: completar fetchProductsFromFlexxus() con la API real");
+  return filas
+    .map((x) => ({ code: String(x.CODIGOPARTICULAR ?? "").trim(), stock: Number(x.STOCKREAL ?? 0) }))
+    .filter((f) => f.code);
 }
 
 /** Lee los productos activos de Kazaro para comparar. */
@@ -59,7 +56,7 @@ export function readAppProducts() {
 
 /** Reporte de diferencias sin tocar nada (dry-run puro). */
 export async function previewStockSync() {
-  const flexxusRows = await fetchProductsFromFlexxus();
+  const flexxusRows = await traerStockDeFlexxus();
   const appRows = readAppProducts();
   return buildSyncReport(appRows, flexxusRows);
 }
@@ -123,7 +120,7 @@ export function applyStockSync(report, { dryRun = true } = {}) {
 
 /** Orquestador: trae de Flexxus, compara y (si dryRun=false) aplica. */
 export async function runFlexxusSync({ dryRun = true } = {}) {
-  const flexxusRows = await fetchProductsFromFlexxus();
+  const flexxusRows = await traerStockDeFlexxus();
   const appRows = readAppProducts();
   const report = buildSyncReport(appRows, flexxusRows);
   return applyStockSync(report, { dryRun });

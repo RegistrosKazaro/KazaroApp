@@ -57,7 +57,7 @@ test("se loguea antes de la primera llamada y manda el deviceinfo", async () => 
   await c.depositos();
   assert.deepEqual(pedidos.map((p) => p.ruta), ["/v5/auth/login", "/v5/depositos"]);
   assert.equal(pedidos[0].cuerpo.username, "api.kazaro");
-  assert.ok(pedidos[0].cuerpo.deviceinfo.model, "el login exige deviceinfo");
+  assert.ok(JSON.parse(pedidos[0].cuerpo.deviceinfo).model, "el login exige deviceinfo, como texto JSON");
   assert.equal(pedidos[1].autorizacion, "Bearer T1");
 });
 

@@ -24,20 +24,27 @@ export default function StockDesdeExcel() {
   // Dejar un insumo en cero impide pedirlo. Por defecto no se bajan.
   const [incluirCeros, setIncluirCeros] = useState(false);
 
-  async function enviar(aplicar) {
-    if (!archivo) return;
+  // De dónde salió la última comparación: Aplicar tiene que usar la misma fuente.
+  const [origen, setOrigen] = useState("excel");
+
+  async function enviar(aplicar, desde = origen) {
+    if (desde === "excel" && !archivo) return;
+    setOrigen(desde);
     setCargando(true);
     setError("");
     setAviso("");
     try {
-      const fd = new FormData();
-      fd.append("file", archivo);
       const params = [aplicar ? "aplicar=1" : "", incluirCeros ? "ceros=1" : ""].filter(Boolean);
-      const { data } = await api.post(
-        `/admin/flexxus/stock/excel${params.length ? "?" + params.join("&") : ""}`,
-        fd,
-        { headers: { "Content-Type": "multipart/form-data" } }
-      );
+      const qs = params.length ? "?" + params.join("&") : "";
+      let data;
+      if (desde === "api") {
+        ({ data } = await api.post(`/admin/flexxus/stock/api${qs}`));
+      } else {
+        const fd = new FormData();
+        fd.append("file", archivo);
+        ({ data } = await api.post(`/admin/flexxus/stock/excel${qs}`, fd,
+          { headers: { "Content-Type": "multipart/form-data" } }));
+      }
       setPrevio(data);
       if (data.aplicado) setAviso(`Listo: se actualizaron ${formatNumber(data.aplicados)} insumos.`);
     } catch (e) {
@@ -51,7 +58,8 @@ export default function StockDesdeExcel() {
 
   function aplicar() {
     const n = previo?.cambios?.length ?? 0;
-    if (!window.confirm(`Se va a pisar el stock de ${n} insumos con el del Excel. ¿Seguir?`)) return;
+    const fuente = origen === "api" ? "el de Flexxus (depósito central)" : "el del Excel";
+    if (!window.confirm(`Se va a pisar el stock de ${n} insumos con ${fuente}. ¿Seguir?`)) return;
     enviar(true);
   }
 
@@ -79,6 +87,9 @@ export default function StockDesdeExcel() {
         />
         <button type="button" className="pill" disabled={!archivo || cargando} onClick={() => enviar(false)}>
           {cargando ? "Leyendo…" : "Comparar"}
+        </button>
+        <button type="button" className="pill" disabled={cargando} onClick={() => enviar(false, "api")}>
+          Traer de Flexxus
         </button>
         {previo && !previo.aplicado && (previo.cambios?.length ?? 0) > 0 && (
           <button

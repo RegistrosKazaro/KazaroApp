@@ -101,7 +101,9 @@ export function crearClienteFlexxus({
     const datos = await pedir("/auth/login", {
       metodo: "POST",
       conToken: false,
-      cuerpo: { username: usuario, password, deviceinfo },
+      // Flexxus hace JSON.parse del deviceinfo: si llega como objeto responde 500.
+      cuerpo: { username: usuario, password,
+                deviceinfo: typeof deviceinfo === "string" ? deviceinfo : JSON.stringify(deviceinfo) },
     });
     if (!datos?.token) throw new FlexxusError("El login no devolvió token.", { cuerpo: datos });
     token = datos.token;

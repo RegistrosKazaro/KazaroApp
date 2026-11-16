@@ -60,7 +60,7 @@ import { crearClienteFlexxus, configDesdeEnv } from "../integrations/flexxusClie
 import { probarConexion } from "../integrations/flexxusDespachador.js";
 import * as codigosBarra from "../integrations/flexxusCodigosBarra.js";
 import { leerExcelFlexxus } from "../integrations/flexxusExcel.js";
-import { readAppProducts, applyStockSync, buildSyncReport } from "../integrations/flexxus.js";
+import { readAppProducts, applyStockSync, buildSyncReport, traerStockDeFlexxus } from "../integrations/flexxus.js";
 
 
 const router = Router();
@@ -3011,6 +3011,28 @@ router.post("/flexxus/stock/excel", mustBeAdmin, upload.single("file"), (req, re
     if (!filas.length) {
       return res.status(400).json({ error: "No se pudo leer el Excel", hoja, columnas, avisos});
     }
+    res.json({ hoja, columnas, avisos, ...cruceDeStock(req, filas) });
+  } catch (e){
+    console.error("POST /admin/flexxus/stock/excel error:", e?.message || e);
+    res.status(500).json({ error: e?.message || "No se pudo procesar el Excel"});
+  }
+});
+
+// Lo mismo, pero leyendo el stock del depósito 001 directo de la API de Flexxus.
+router.post("/flexxus/stock/api", mustBeAdmin, async (req, res) => {
+  try {
+    if (!configDesdeEnv()) return res.status(400).json({ error: "Faltan FLEXXUS_API_URL, FLEXXUS_USER o FLEXXUS_PASS en el .env" });
+    const filas = await traerStockDeFlexxus();
+    if (!filas.length) return res.status(502).json({ error: "Flexxus no devolvió stock del depósito central" });
+    res.json(cruceDeStock(req, filas));
+  } catch (e) {
+    console.error("POST /admin/flexxus/stock/api error:", e?.message || e);
+    res.status(502).json({ error: e?.message || "No se pudo leer el stock de Flexxus" });
+  }
+});
+
+/** Compara (y con ?aplicar=1 pisa) el stock de la app con filas { code, stock, subdeposito? }. */
+function cruceDeStock(req, filas) {
     const aplicar = String(req.query.aplicar || "") === "1";
     // Los uniformes se manejan aparte y no se tocan con esto: ni los de la app
     // (categoría Uniformes) ni los del subdepósito UNIFORMES de Flexxus.
@@ -3034,8 +3056,7 @@ router.post("/flexxus/stock/excel", mustBeAdmin, upload.single("file"), (req, re
 
     const r = applyStockSync(report, { dryRun: !aplicar });
 
-    res.json({
-      hoja, columnas, avisos,
+    return {
       aplicado: !r.dryRun,
       aplicados: r.aplicados,
       incluirCeros,
@@ -3052,12 +3073,8 @@ router.post("/flexxus/stock/excel", mustBeAdmin, upload.single("file"), (req, re
           code: m.code, nombre: m.nombreApp || m.nombreFlexxus,
           app: m.stockApp, flexxus: m.stockFlexxus, diff: m.diff,
         })),
-    });
-  } catch (e){
-    console.error("POST /admin/flexxus/stock/excel error:", e?.message || e);
-    res.status(500).json({ error: e?.message || "No se pudo procesar el Excel"});
-  }
-});
+    };
+}
 
 router.use("/empresa", empresaRouter);
 export default router;
