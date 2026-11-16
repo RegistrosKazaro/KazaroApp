@@ -3032,7 +3032,7 @@ router.post("/flexxus/stock/api", mustBeAdmin, async (req, res) => {
 });
 
 /** Compara (y con ?aplicar=1 pisa) el stock de la app con filas { code, stock, subdeposito? }. */
-function cruceDeStock(req, filas) {
+export function cruceDeStock(req, filas) {
     const aplicar = String(req.query.aplicar || "") === "1";
     // Los uniformes se manejan aparte y no se tocan con esto: ni los de la app
     // (categoría Uniformes) ni los del subdepósito UNIFORMES de Flexxus.

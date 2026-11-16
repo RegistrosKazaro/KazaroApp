@@ -40,7 +40,12 @@ export async function traerStockDeFlexxus(cliente = crearClienteFlexxus(configDe
     if (data.length < 1000 || filas.length >= Number(r?.count ?? 0)) break;
   }
   return filas
-    .map((x) => ({ code: String(x.CODIGOPARTICULAR ?? "").trim(), stock: Number(x.STOCKREAL ?? 0) }))
+    // Enteros hacia abajo (los kilos de laboratorio vienen con decimales) y nunca
+    // negativo: decidido por el usuario el 16/11/2026. El 1e-6 absorbe 2.9999999.
+    .map((x) => ({
+      code: String(x.CODIGOPARTICULAR ?? "").trim(),
+      stock: Math.max(0, Math.floor(Number(x.STOCKREAL ?? 0) + 1e-6) || 0),
+    }))
     .filter((f) => f.code);
 }
 

@@ -27,6 +27,7 @@ import { createCorsMiddleware } from "./utils/corsConfig.js";
 import { requireCsrf } from "./utils/simpleCsrf.js";
 import { startReminderJob } from "./utils/reminderJob.js";
 import { startFlexxusMatchJob } from "./utils/flexxusMatchJob.js";
+import { startFlexxusStockJob } from "./utils/flexxusStockJob.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
@@ -136,4 +137,5 @@ app.listen(PORT, "0.0.0.0", async () => {
   }
    startReminderJob();
    startFlexxusMatchJob();
+   try { startFlexxusStockJob(); } catch (e) { console.error("[flexxus stock] no arrancó:", e?.message || e); }
 });
