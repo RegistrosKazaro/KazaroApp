@@ -10,6 +10,7 @@ import {
 } from "../db.js";
 import { getWarehouseForChildService } from "../warehouses.js";
 import { generateRemitoPDFBuffer } from "../utils/remitoPdf.js";
+import { generateRemitoXlsxBuffer } from "../utils/remitoXlsx.js";
 import { sendMail } from "../utils/mailer.js";
 import { listEmpresas, getMailConfigValue } from "../utils/empresa.js";
 import { toISO } from "../utils/fechas.js";
@@ -277,7 +278,11 @@ router.post("/", requireAuth, async (req, res) => {
   }
 });
 
-router.get("/pdf/:id", requireAuth, async (req, res) => {
+// El remito de un pedido, en PDF o en Excel: mismos permisos y mismos datos.
+router.get("/pdf/:id", requireAuth, (req, res) => remitoDelPedido(req, res, "pdf"));
+router.get("/xlsx/:id", requireAuth, (req, res) => remitoDelPedido(req, res, "xlsx"));
+
+async function remitoDelPedido(req, res, formato) {
   const id     = Number(req.params.id);
   const pedido = getFullOrder(id);
   if (!pedido) return res.status(404).end();
@@ -330,15 +335,21 @@ router.get("/pdf/:id", requireAuth, async (req, res) => {
       };
     }
 
+    if (formato === "xlsx") {
+      const { filename, buffer } = generateRemitoXlsxBuffer({ pedido: pedidoParaPdf });
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      return res.send(buffer);
+    }
     const { filename, buffer } = await generateRemitoPDFBuffer({ pedido: pedidoParaPdf });
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
     return res.send(buffer);
   } catch (e) {
-    console.error("[orders] GET /pdf/:id error:", e);
-    return res.status(500).json({ error: "No se pudo generar el PDF" });
+    console.error(`[orders] GET /${formato}/:id error:`, e);
+    return res.status(500).json({ error: formato === "xlsx" ? "No se pudo generar el Excel" : "No se pudo generar el PDF" });
   }
-});
+}
 
 // ─── Mis pedidos (supervisor) ────────────────────────────────────────────────
 // Qué servicios pueden repetir pedidos y agregar insumos desde el carrito.

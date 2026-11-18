@@ -311,7 +311,7 @@ function drawFooter(doc, marca = MARCAS[1]) {
 }
 
 /* ─── Helper interno para armar el objeto pedido normalizado ─── */
-function normalizePedido(pedido) {
+export function normalizePedido(pedido) {
   const cab = pedido?.cab ? pedido.cab : pedido;
   const itemsRaw = pedido?.items || [];
   const pedidoId = cab?.PedidoID ?? cab?.id ?? 0;

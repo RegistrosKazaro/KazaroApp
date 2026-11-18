@@ -15,6 +15,7 @@ import PreparacionDeposito from "../components/PreparacionDeposito";
 import RemanentesDeposito from "../components/RemanentesDeposito";
 import MovimientosDeposito from "../components/MovimientosDeposito";
 import IngresosDeposito from "../components/IngresosDeposito";
+import { descargarRemitoExcel } from "../utils/descargarRemitoExcel";
 
 function isoToday() { return new Date().toISOString().slice(0, 10); }
 function isoFirstOfMonth() {
@@ -1340,6 +1341,7 @@ function DepositoOrdersPanel({ pedidosPorDia }) {
             )}
             <div className="actions-row">
               {pdfUrl && <a href={pdfUrl} target="_blank" rel="noreferrer" className="pill pill--ghost">Abrir en nueva pestaña</a>}
+              {selected?.id && <button className="pill pill--ghost" onClick={() => descargarRemitoExcel(selected.id)}>Descargar Excel</button>}
               <button className="pill pill--ghost" onClick={closePreview}>Cerrar</button>
             </div>
           </div>

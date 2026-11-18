@@ -8,6 +8,7 @@ import { useAuth } from "../hooks/useAuth";
 import { formatMoney } from "../utils/format";
 import { msDeFechaDb, formatoFechaHoraAr, diasDesdeFechaDb } from "../utils/fechas";
 import { useServiciosConRepetir } from "../hooks/useServiciosConRepetir";
+import { descargarRemitoExcel } from "../utils/descargarRemitoExcel";
 
 const API_BASE_URL = (import.meta?.env && import.meta.env.VITE_API_URL) || "http://localhost:4000";
 
@@ -450,6 +451,7 @@ export default function MisPedidos() {
               <span style={{ fontWeight: 700 }}>Remito #{pad7(pdfOrder.id)}</span>
               <div style={{ display: "flex", gap: 8 }}>
                 {pdfUrl && <a href={pdfUrl} target="_blank" rel="noreferrer" style={{ padding: "4px 12px", borderRadius: 999, background: "#e0edff", color: "#1e3a8a", fontWeight: 600, fontSize: "0.82rem", textDecoration: "none" }}>Abrir</a>}
+                <button type="button" onClick={() => descargarRemitoExcel(pdfOrder.id)} style={{ padding: "4px 12px", borderRadius: 999, border: 0, cursor: "pointer", background: "#dcfce7", color: "#166534", fontWeight: 600, fontSize: "0.82rem" }}>Descargar Excel</button>
                 <button type="button" onClick={closePdf} style={{ padding: "4px 12px", borderRadius: 999, border: 0, cursor: "pointer", background: "#fee2e2", color: "#dc2626", fontWeight: 600, fontSize: "0.82rem" }}>Cerrar</button>
               </div>
             </div>

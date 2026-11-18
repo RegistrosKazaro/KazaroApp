@@ -14,6 +14,7 @@ import TwoFactorSection from "./TwoFactorSection";
 import StockCriticoSection from "./StockCriticoSection";
 import ControlPedidosSection from "./ControlPedidosSection";
 import FlexxusDepositos from "../components/FlexxusDepositos";
+import { descargarRemitoExcel } from "../utils/descargarRemitoExcel";
 const API_BASE_URL =
   (import.meta?.env && import.meta.env.VITE_API_URL) || "http://localhost:4000";
 
@@ -3671,6 +3672,11 @@ const onDeleteOrder = useCallback(async (o) => {
                 <a href={pdfUrl} target="_blank" rel="noreferrer" className="btn ghost">
                   Abrir en otra pestaña
                 </a>
+              )}
+              {selectedOrder?.id && (
+                <button className="btn ghost" onClick={() => descargarRemitoExcel(selectedOrder.id)}>
+                  Descargar Excel
+                </button>
               )}
               <button className="btn ghost" onClick={closePreview}>
                 Cerrar detalle
