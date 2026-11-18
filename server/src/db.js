@@ -1411,7 +1411,7 @@ export function listDeletedOrders(empresaId, limite = 200) {
 export function restoreOrder(pedidoId, empresaId) {
   const id = Number(pedidoId);
   const ped = db.prepare(
-    `SELECT PedidoID, empresa_id, contabilizado_at, deleted_at FROM Pedidos WHERE PedidoID = ?`
+    `SELECT PedidoID, empresa_id, contabilizado_at, deleted_at, Fecha, ServicioID FROM Pedidos WHERE PedidoID = ?`
   ).get(id);
   if (!ped) return { ok: false, error: "Pedido no encontrado" };
   if (!ped.deleted_at) return { ok: false, error: "Ese pedido no está borrado" };
@@ -1420,7 +1420,7 @@ export function restoreOrder(pedidoId, empresaId) {
   }
 
   let descontado = 0, descubierto = null;
-  const yaDescontado = !!(ped.contabilizado_at && String(ped.contabilizado_at).trim());
+  const yaDescontado = descontoStock(ped);
 
   db.prepare(`UPDATE Pedidos SET deleted_at = NULL, deleted_por = NULL WHERE PedidoID = ?`).run(id);
 
@@ -1477,10 +1477,22 @@ export function hardDeleteOrder(pedidoId, empresaId) {
   return { ok: true, borradas };
 }
 
+/**
+ * ¿Este pedido descontó stock al contarse? Los de Río Cuarto cuentan al crearse
+ * sin tocar stock y quedan con contabilizado_at = Fecha (CONTAR_RIO_CUARTO); los
+ * que confirmó el depósito antes del 16/11/2026 sí descontaron y tienen otra fecha.
+ */
+function descontoStock(ped) {
+  if (!String(ped?.contabilizado_at ?? "").trim()) return false;
+  const contadoAlCrearse = ped.contabilizado_at === ped.Fecha
+    && idsServiciosRioCuarto(ped.empresa_id ?? 1).has(Number(ped.ServicioID));
+  return !contadoAlCrearse;
+}
+
 export function softDeleteOrder(pedidoId, empresaId, usuario = null) {
   const id = Number(pedidoId);
   const ped = db.prepare(
-    `SELECT PedidoID, empresa_id, contabilizado_at, retiro_at, deleted_at, Total
+    `SELECT PedidoID, empresa_id, contabilizado_at, retiro_at, deleted_at, Total, Fecha, ServicioID
      FROM Pedidos WHERE PedidoID = ?`
   ).get(id);
   if (!ped) return { ok: false, error: "Pedido no encontrado" };
@@ -1489,7 +1501,7 @@ export function softDeleteOrder(pedidoId, empresaId, usuario = null) {
     return { ok: false, error: "Pedido no encontrado" };
   }
 
-  const yaDescontado = !!(ped.contabilizado_at && String(ped.contabilizado_at).trim());
+  const yaDescontado = descontoStock(ped);
   let stockDevuelto = 0;
 
   const tx = db.transaction(() => {

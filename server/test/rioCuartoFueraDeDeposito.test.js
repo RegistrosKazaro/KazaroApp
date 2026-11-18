@@ -130,3 +130,28 @@ test("el panel del depósito no muestra los pedidos de Río Cuarto", async () =>
     assert.ok(!(await solapa(s)).includes(r4), `el de Río Cuarto no aparece en "${s}"`);
   }
 });
+
+test("borrar o restaurar un pedido de Río Cuarto contado al crearse no mueve stock", () => {
+  if (sinBase()) return;
+  const art = insumo(100);
+  const id = M.createOrder({ empleadoId: supervisor(), servicioId: servicio("ESC PAPELERA R4"), asRole: "supervisor",
+                             items: [{ productId: art, qty: 7 }] });
+  const r = M.softDeleteOrder(id, 1, "test");
+  assert.equal(r.ok, true);
+  assert.equal(r.stockDevuelto, 0);
+  assert.equal(stockDe(art), 100, "nunca salió del depósito: no se devuelve nada");
+  assert.equal(M.restoreOrder(id, 1).ok, true);
+  assert.equal(stockDe(art), 100, "y al restaurarlo tampoco se descuenta");
+});
+
+test("un pedido de Río Cuarto que confirmó el depósito sí devuelve su stock al borrarse", () => {
+  if (sinBase()) return;
+  const art = insumo(100);
+  const id = M.createOrder({ empleadoId: supervisor(), servicioId: servicio("ESC CONFIRMADA R4"), asRole: "supervisor",
+                             items: [{ productId: art, qty: 7 }] });
+  // Como los 3 que el depósito confirmó antes del 16/11: contados después, con stock descontado.
+  db.prepare(`UPDATE Pedidos SET contabilizado_at = datetime(Fecha, '+1 day') WHERE PedidoID = ?`).run(id);
+  db.prepare(`UPDATE Productos SET Stock = 93 WHERE ProductID = ?`).run(art);
+  assert.equal(M.softDeleteOrder(id, 1, "test").stockDevuelto, 7);
+  assert.equal(stockDe(art), 100);
+});
