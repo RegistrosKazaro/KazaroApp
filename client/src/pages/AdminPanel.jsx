@@ -111,7 +111,7 @@ function ProductsSection() {
     setErr("");
     try {
       const { data } = await api.get("/admin/products", {
-        params: { q: String(qDeb || "").trim(), limit: 200 },
+        params: { q: String(qDeb || "").trim(), catId: catFilter || undefined },
       });
 
       const list = Array.isArray(data) ? data : [];

@@ -162,15 +162,18 @@ router.get("/products", mustBeAdmin, (req, res) => {
     const hasEmpresa = prodCols.includes("empresa_id");
     const hasIsActive= prodCols.includes("is_active");
     const hasCodBarra = prodCols.includes("codigo_barra");
-    const eFilter    = hasEmpresa ? `AND empresa_id = ${Number(empresaId)}` : "";
+    // La categoría se filtra acá y no en el navegador: con más de 1.000 insumos,
+    // filtrar sobre los primeros N dejaba categorías enteras afuera (Papel, 18/11/2026).
+    const catId = C_CAT && String(req.query.catId ?? "").trim() !== "" ? Number(req.query.catId) : null;
 
-    const where = q
-      ? `WHERE (${sinAcentosSql(C_NAME)} LIKE @like
+    const conds = [];
+    if (q) conds.push(`(${sinAcentosSql(C_NAME)} LIKE @like
                ${C_CODE ? `OR ${sinAcentosSql(C_CODE)} LIKE @like` : ""}
                 OR CAST(${C_ID} AS TEXT) LIKE @like
-               ${hasCodBarra ? "OR codigo_barra LIKE @like" : ""})
-               ${eFilter}`
-      : hasEmpresa ? `WHERE empresa_id = ${Number(empresaId)}` : "";
+               ${hasCodBarra ? "OR codigo_barra LIKE @like" : ""})`);
+    if (hasEmpresa) conds.push(`empresa_id = ${Number(empresaId)}`);
+    if (Number.isInteger(catId)) conds.push(`${C_CAT} = ${catId}`);
+    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
     const sql = `
       SELECT ${C_ID} AS id,
@@ -186,7 +189,7 @@ router.get("/products", mustBeAdmin, (req, res) => {
       FROM ${T}
       ${where}
       ORDER BY ${C_NAME} COLLATE NOCASE
-      LIMIT 500
+      LIMIT 3000
     `;
 
     res.json(db.prepare(sql).all({ like }));
