@@ -115,6 +115,9 @@ router.use((req, res, next) => {
 });
 router.use(limitador);
 router.use(requiereToken);
+// Que nadie en el medio (Excel/Power BI "desde la web", proxies) guarde una copia:
+// un precio o un nombre cambiado tiene que verse en la próxima consulta.
+router.use((req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
 
 /* ─────────────── Helpers ─────────────── */
 

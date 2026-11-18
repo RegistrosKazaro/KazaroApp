@@ -85,6 +85,7 @@ test("los endpoints de insumos quedan detras del token", async () => {
     }
     const ok = await fetch(base + "/insumos?limit=1", { headers: { Authorization: `Bearer ${TOKEN_KAZARO}` } });
     assert.equal(ok.status, 200);
+    assert.equal(ok.headers.get("cache-control"), "no-store", "nadie debe guardar una copia vieja");
     assert.equal((await ok.json()).empresaId, 1);
 
     const post = await fetch(base + "/insumos", { method: "POST", headers: { "X-API-Key": TOKEN_KAZARO } });
