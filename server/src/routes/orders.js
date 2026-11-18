@@ -180,6 +180,14 @@ router.post("/", requireAuth, async (req, res) => {
       buffer = out.buffer; filename = out.filename || filename;
     } catch (e) { console.warn("[orders] No se pudo generar PDF:", e?.message); }
 
+    // El mismo remito en Excel, también adjunto al mail. Si falla, el mail sale igual con el PDF.
+    const adjuntos = buffer ? [{ filename, content: buffer, contentType: "application/pdf" }] : [];
+    try {
+      const xls = generateRemitoXlsxBuffer({ pedido: pedidoParaPdf });
+      adjuntos.push({ filename: xls.filename, content: xls.buffer,
+        contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    } catch (e) { console.warn("[orders] No se pudo generar el Excel:", e?.message); }
+
 /* MAIL */
     let mailStatus = { sent: false, skipped: true };
     try {
@@ -227,7 +235,7 @@ router.post("/", requireAuth, async (req, res) => {
           ? `NUEVO PEDIDO DE UNIFORMES #${nro}${serviceName ? ` — ${serviceName}` : ""}`
           : `NUEVO PEDIDO DE INSUMOS #${nro}${serviceName ? ` — ${serviceName}` : ""}`,
         text: `Pedido #${nro} generado.`,
-        attachments: buffer ? [{ filename, content: buffer, contentType: "application/pdf" }] : undefined,
+        attachments: adjuntos.length ? adjuntos : undefined,
         displayAsUser: true,
         userName: empleadoNombre,
         userEmail: usuario?.email || null,
