@@ -99,9 +99,32 @@ test("un insumo de la otra empresa no aparece en la lista", async () => {
   if (sinBase()) return;
   const dePazar = insumo({ empresaId: 2 });
 
-  const { body } = await llamar("/insumos", { query: { codigo: dePazar.code, incluirInactivos: "1" } });
+  const { body } = await llamar("/insumos", { query: { codigo: dePazar.code } });
 
   assert.equal(body.paginado.total, 0);
+});
+
+test("un insumo dado de baja no sale nunca, ni pidiéndolo con incluirInactivos", async () => {
+  if (sinBase()) return;
+  const baja = insumo();
+  db.prepare(`UPDATE Productos SET is_active = 0 WHERE ProductID = ?`).run(baja.id);
+
+  for (const query of [{ codigo: baja.code }, { codigo: baja.code, incluirInactivos: "1" }, { q: baja.nombre }]) {
+    const { body } = await llamar("/insumos", { query });
+    assert.equal(body.paginado.total, 0, JSON.stringify(query));
+  }
+  const res = await llamar("/insumos/:id", { params: { id: String(baja.id) } });
+  assert.equal(res.statusCode, 404, "la ficha contesta como si no existiera");
+});
+
+test("al reactivarlo vuelve a salir", async () => {
+  if (sinBase()) return;
+  const ins = insumo();
+  db.prepare(`UPDATE Productos SET is_active = 0 WHERE ProductID = ?`).run(ins.id);
+  db.prepare(`UPDATE Productos SET is_active = 1 WHERE ProductID = ?`).run(ins.id);
+  const { body } = await llamar("/insumos", { query: { codigo: ins.code } });
+  assert.equal(body.paginado.total, 1);
+  assert.equal((await llamar("/insumos/:id", { params: { id: String(ins.id) } })).statusCode, 200);
 });
 
 test("el detalle de un insumo de la otra empresa contesta 404, como si no existiera", async () => {

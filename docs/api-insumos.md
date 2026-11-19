@@ -65,7 +65,7 @@ Para traer todo el catálogo conviene pedir de a 500 (ver
 
 ## `GET /insumos`
 
-La lista de insumos, con su ficha resumida.
+La lista de insumos **activos**, con su ficha resumida. Los insumos dados de baja no salen nunca: si uno se desactiva en la aplicación, deja de venir en la próxima consulta. Su sistema tiene que dar de baja lo que ya no aparece; la API no avisa que se fue.
 
 ### Parámetros
 
@@ -75,7 +75,6 @@ La lista de insumos, con su ficha resumida.
 | `codigo` | texto | Código exacto. Los ceros adelante no importan: `4` y `004` son el mismo. |
 | `categoriaId` | entero | Filtra por categoría. Los ids están en [`/categorias`](#get-categorias). |
 | `rubroId` | entero | Filtra por rubro. Los ids están en [`/categorias`](#get-categorias). |
-| `incluirInactivos` | `1` | Trae también los insumos dados de baja. Sin esto, sólo los activos. |
 | `page` | entero | Página, desde 1. Por defecto `1`. |
 | `limit` | entero | Insumos por página. Máximo `500`, por defecto `100`. |
 
@@ -93,8 +92,7 @@ curl -H "Authorization: Bearer <token>" \
 ```json
 {
   "empresaId": 1,
-  "filtros": { "q": "desengrasante", "codigo": null, "categoriaId": null,
-               "rubroId": null, "incluirInactivos": false },
+  "filtros": { "q": "desengrasante", "codigo": null, "categoriaId": null, "rubroId": null },
   "paginado": { "page": 1, "limit": 50, "total": 6, "paginas": 1 },
   "insumos": [
     {
@@ -136,7 +134,7 @@ curl -H "Authorization: Bearer <token>" \
 | `codigo` | Código del insumo, tal como está cargado (puede tener ceros adelante). `null` si no tiene. |
 | `nombre` | Nombre del insumo. |
 | `codigoBarra` | Código de barras. Hoy está vacío para todos: se empieza a cargar con la pistola lectora. |
-| `activo` | `false` si fue dado de baja. Sólo aparecen con `incluirInactivos=1`. |
+| `activo` | Siempre `true`: la API sólo devuelve insumos activos. |
 | `imagen` | URL de la foto, si tiene. |
 | `categoria` | `{ id, nombre }`. |
 | `rubros` | Lista de `{ id, nombre }`. Normalmente uno solo; vacía si no está clasificado. |
@@ -174,7 +172,7 @@ curl -H "Authorization: Bearer <token>" \
   https://insumos.kazaro.com.ar/api/v1/insumos/100000025
 ```
 
-Si el insumo no existe —o es de otra empresa— devuelve `404`.
+Si el insumo no existe —o es de otra empresa, o está dado de baja— devuelve `404`.
 
 ### Respuesta
 
@@ -275,7 +273,7 @@ Todos los errores tienen la misma forma:
 | `400` | `parametro_invalido` | Un parámetro tiene mal formato. Trae además `campo` con cuál. |
 | `401` | `falta_token` | No se mandó el token. |
 | `403` | `token_invalido` | El token no es válido. |
-| `404` | `no_encontrado` | El insumo no existe, o es de otra empresa. |
+| `404` | `no_encontrado` | El insumo no existe, es de otra empresa o está dado de baja. |
 | `405` | `metodo_no_permitido` | Se usó un método que no es `GET`. |
 | `429` | `demasiadas_consultas` | Se pasaron las 60 consultas por minuto. |
 | `500` | `error_interno` | Falla del servidor. Reintentar más tarde. |

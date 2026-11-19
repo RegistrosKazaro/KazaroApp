@@ -422,8 +422,8 @@ const FROM_PRODUCTO = `FROM Productos p LEFT JOIN Categorias c ON c.CategoriaID 
  *   codigo             código exacto (004 y 4 son el mismo)
  *   categoriaId        filtra por categoría (ver /v1/categorias)
  *   rubroId            filtra por rubro (ver /v1/categorias)
- *   incluirInactivos   1 para traer también los dados de baja
  *   page, limit        limit máximo 500 (por defecto 100)
+ * Sólo insumos activos: los dados de baja no salen nunca (decidido el 19/11/2026).
  */
 router.get("/insumos", (req, res) => {
   try {
@@ -431,10 +431,8 @@ router.get("/insumos", (req, res) => {
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
 
-    const where = ["p.empresa_id = @empresaId"];
+    const where = ["p.empresa_id = @empresaId", "COALESCE(p.is_active, 1) = 1"];
     const params = { empresaId, limit, offset: (page - 1) * limit };
-
-    if (String(req.query.incluirInactivos || "") !== "1") where.push("COALESCE(p.is_active, 1) = 1");
 
     const q = String(req.query.q || "").trim();
     if (q) {
@@ -475,7 +473,6 @@ router.get("/insumos", (req, res) => {
       filtros: {
         q: q || null, codigo: codigo || null,
         categoriaId: params.categoriaId ?? null, rubroId: params.rubroId ?? null,
-        incluirInactivos: String(req.query.incluirInactivos || "") === "1",
       },
       paginado: { page, limit, total, paginas: Math.max(1, Math.ceil(total / limit)) },
       insumos: fichas(empresaId, productos),
@@ -498,10 +495,11 @@ router.get("/insumos/:id", (req, res) => {
     if (!Number.isInteger(id) || id <= 0) return errorParametro(res, "id", "Debe ser un número entero positivo.");
 
     const producto = db.prepare(
-      `SELECT ${COLUMNAS_PRODUCTO} ${FROM_PRODUCTO} WHERE p.ProductID = @id AND p.empresa_id = @empresaId`
+      `SELECT ${COLUMNAS_PRODUCTO} ${FROM_PRODUCTO}
+        WHERE p.ProductID = @id AND p.empresa_id = @empresaId AND COALESCE(p.is_active, 1) = 1`
     ).get({ id, empresaId });
-    // Un insumo de la otra empresa contesta igual que uno que no existe: no se
-    // confirma ni se niega que el id exista del otro lado.
+    // Un insumo de la otra empresa, o dado de baja, contesta igual que uno que
+    // no existe: no se confirma ni se niega que el id exista.
     if (!producto) return res.status(404).json({ error: "no_encontrado", mensaje: "No existe ese insumo." });
 
     const [ficha] = fichas(empresaId, [producto]);
