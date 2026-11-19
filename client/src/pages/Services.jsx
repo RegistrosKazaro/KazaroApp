@@ -6,16 +6,9 @@ import { useAuth } from "../hooks/useAuth";
 import { useCart } from "../hooks/useCart";
 import useDebounced from "../hooks/useDebounced";
 import "../styles/services.css";
+import { leerSeccion } from "../utils/seccion";
 
 const PER_PAGE = 15;
-
-/** La sección elegida al entrar ("maralim" o nada). Puede fallar en modo privado. */
-export function leerSeccion() {
-  try { return sessionStorage.getItem("seccion"); } catch { return null; }
-}
-export function guardarSeccion(seccion) {
-  try { seccion ? sessionStorage.setItem("seccion", seccion) : sessionStorage.removeItem("seccion"); } catch { /* sin storage */ }
-}
 
 export default function ServicesPage() {
   const nav = useNavigate();

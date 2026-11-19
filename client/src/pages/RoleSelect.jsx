@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { api } from "../api/client";
-import { guardarSeccion } from "./Services";
+import { guardarSeccion } from "../utils/seccion";
 import "../styles/role-select.css";
 
 export default function RoleSelect() {
