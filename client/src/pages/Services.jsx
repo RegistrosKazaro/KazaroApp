@@ -1,6 +1,6 @@
 // client/src/pages/Services.jsx
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, Navigate } from "react-router-dom";
+import { useNavigate, Navigate, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
 import { useCart } from "../hooks/useCart";
@@ -8,6 +8,14 @@ import useDebounced from "../hooks/useDebounced";
 import "../styles/services.css";
 
 const PER_PAGE = 15;
+
+/** La sección elegida al entrar ("maralim" o nada). Puede fallar en modo privado. */
+export function leerSeccion() {
+  try { return sessionStorage.getItem("seccion"); } catch { return null; }
+}
+export function guardarSeccion(seccion) {
+  try { seccion ? sessionStorage.setItem("seccion", seccion) : sessionStorage.removeItem("seccion"); } catch { /* sin storage */ }
+}
 
 export default function ServicesPage() {
   const nav = useNavigate();
@@ -27,6 +35,12 @@ export default function ServicesPage() {
   );
   const isAdmin = roles.includes("admin");
   const isSupervisor = roles.includes("supervisor");
+
+  // Sección "Pedidos Maralim": viene en la URL al entrar desde la elección de
+  // rol y queda recordada para cuando se vuelve a esta pantalla desde el menú.
+  const [params] = useSearchParams();
+  const seccion = params.get("seccion") ?? leerSeccion();
+  const esMaralim = seccion === "maralim";
 
   const debouncedQ = useDebounced(q, 350);
 
@@ -68,6 +82,7 @@ export default function ServicesPage() {
           rows = Array.isArray(r.data) ? r.data : [];
         } else {
           const r = await api.get("/supervisor/services", {
+            params: esMaralim ? { seccion: "maralim" } : undefined,
             withCredentials: true,
             signal: controller.signal,
           });
@@ -141,7 +156,7 @@ export default function ServicesPage() {
     return () => {
       controller.abort();
     };
-  }, [user, loadingUser, isAdmin, debouncedQ, setService, service?.id, services.length]);
+  }, [user, loadingUser, isAdmin, debouncedQ, setService, service?.id, services.length, esMaralim]);
 
 
   // Filtrado por nombre o ID (sobre lo que ya trajo el endpoint)
@@ -197,7 +212,7 @@ export default function ServicesPage() {
 
   return (
     <div className="catalog" style={{ maxWidth: 920, marginInline: "auto" }}>
-      <h2>{isAdmin ? "Servicios (Administrador)" : "Seleccioná tu servicio"}</h2>
+      <h2>{isAdmin ? "Servicios (Administrador)" : esMaralim ? "Pedidos Maralim — seleccioná el servicio" : "Seleccioná tu servicio"}</h2>
 
       {/* Supervisor: resumen del servicio elegido */}
       {!isAdmin && service?.id && (

@@ -3040,7 +3040,16 @@ const REPETIR_ADEMAS = new Set([]);
 export function idsServiciosConRepetir(empresaId = 1) {
   const ids = idsServiciosRioCuarto(empresaId);
   for (const id of REPETIR_ADEMAS) ids.add(id);
+  if (Number(empresaId) === 1) for (const id of idsServiciosMaralim()) ids.add(id);
   return ids;
+}
+
+// "Pedidos Maralim" (19/11/2026): servicios de Ariel Gonzalez que se piden desde
+// una sección propia. Son pedidos de supervisor comunes; sólo cambia en qué
+// sección aparecen el servicio y a quién va el mail (servicio_mail_destino).
+db.exec(`CREATE TABLE IF NOT EXISTS servicios_maralim (service_id INTEGER PRIMARY KEY)`);
+export function idsServiciosMaralim() {
+  return new Set(db.prepare(`SELECT service_id FROM servicios_maralim`).pluck().all().map(Number));
 }
 
 /**

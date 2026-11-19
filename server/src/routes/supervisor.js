@@ -1,7 +1,7 @@
 // server/src/routes/supervisor.js  ← REEMPLAZA el archivo actual
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.js";
-import { db, tinfo, empresaVeTodosLosServicios } from "../db.js";
+import { db, tinfo, empresaVeTodosLosServicios, idsServiciosMaralim } from "../db.js";
 
 const router = Router();
 
@@ -75,7 +75,12 @@ router.get("/services", requireAuth, (req, res) => {
     const empleadoId = getLoggedEmployeeId(req);
     const empresaId  = getEmpresaId(req);
     if (!empleadoId) return res.status(401).json({ error: "No autenticado" });
-    return res.json(listAssignedServicesFor(empleadoId, empresaId));
+    // Los servicios Maralim se piden sólo desde su sección: ?seccion=maralim
+    // trae únicamente esos, y la sección Supervisor común no los muestra.
+    const maralim = idsServiciosMaralim();
+    const esMaralim = String(req.query.seccion || "") === "maralim";
+    return res.json(listAssignedServicesFor(empleadoId, empresaId)
+      .filter((s) => maralim.has(Number(s.id)) === esMaralim));
   } catch (e) {
     console.error("[/supervisor/services] error:", e);
     return res.status(500).json({ error: "Error interno" });

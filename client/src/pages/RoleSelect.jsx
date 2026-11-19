@@ -1,12 +1,27 @@
 // client/src/pages/RoleSelect.jsx
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
+import { api } from "../api/client";
+import { guardarSeccion } from "./Services";
 import "../styles/role-select.css";
 
 export default function RoleSelect() {
   const { user, loading } = useAuth();
   const nav = useNavigate();
+  // ¿Tiene servicios de "Pedidos Maralim"? null = todavía no se sabe.
+  const [tieneMaralim, setTieneMaralim] = useState(null);
+
+  useEffect(() => {
+    if (loading || !user) return;
+    const esSup = (user.roles || []).some((r) => String(r).toLowerCase().includes("super"));
+    if (!esSup) { setTieneMaralim(false); return; }
+    let vivo = true;
+    api.get("/supervisor/services", { params: { seccion: "maralim" } })
+      .then(({ data }) => { if (vivo) setTieneMaralim(Array.isArray(data) && data.length > 0); })
+      .catch(() => { if (vivo) setTieneMaralim(false); });
+    return () => { vivo = false; };
+  }, [user, loading]);
 
   useEffect(() => {
     if (loading) return;
@@ -24,7 +39,9 @@ export default function RoleSelect() {
       const r = roles[0];
 
       if (r.includes("super")) {
-        // Supervisor
+        // Supervisor: si además tiene la sección Maralim, elige; si no, entra directo.
+        if (tieneMaralim === null || tieneMaralim) return;
+        guardarSeccion(null);
         nav("/app/supervisor/services", { replace: true });
       } else if (r.includes("deposito")) {
         // Depósito
@@ -37,9 +54,9 @@ export default function RoleSelect() {
         nav("/app/administrativo/products", { replace: true });
       }
     }
-  }, [user, loading, nav]);
+  }, [user, loading, nav, tieneMaralim]);
 
-  if (loading) return <div className="state">Cargando…</div>;
+  if (loading || tieneMaralim === null) return <div className="state">Cargando…</div>;
   if (!user) return null;
 
   const rolesLower = (user.roles || []).map((r) => String(r).toLowerCase());
@@ -71,9 +88,20 @@ export default function RoleSelect() {
           <button
             type="button"
             className="service-card"
-            onClick={() => nav("/app/supervisor/services")}
+            onClick={() => { guardarSeccion(null); nav("/app/supervisor/services"); }}
           >
             <div>Supervisor</div>
+            <small>Seleccionar servicio</small>
+          </button>
+        )}
+
+        {tieneMaralim && (
+          <button
+            type="button"
+            className="service-card"
+            onClick={() => { guardarSeccion("maralim"); nav("/app/supervisor/services?seccion=maralim"); }}
+          >
+            <div>Pedidos Maralim</div>
             <small>Seleccionar servicio</small>
           </button>
         )}
