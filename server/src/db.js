@@ -3048,6 +3048,24 @@ export function idsServiciosConRepetir(empresaId = 1) {
 // una sección propia. Son pedidos de supervisor comunes; sólo cambia en qué
 // sección aparecen el servicio y a quién va el mail (servicio_mail_destino).
 db.exec(`CREATE TABLE IF NOT EXISTS servicios_maralim (service_id INTEGER PRIMARY KEY)`);
+
+// Pazar (empresa 2): todo servicio nuevo nace con todos los insumos activos,
+// igual que el botón "todos los insumos a todos los servicios" (19/11/2026).
+// Es un trigger y no código en la ruta porque los servicios se crean por tres
+// lados (alta del panel, importación del Excel, integración 360).
+try {
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_pazar_servicio_nuevo_insumos
+    AFTER INSERT ON Servicios
+    WHEN NEW.empresa_id = 2
+    BEGIN
+      INSERT OR IGNORE INTO service_products (service_id, product_id)
+      SELECT NEW.ServiciosID, ProductID FROM Productos
+       WHERE empresa_id = 2 AND COALESCE(is_active, 1) = 1;
+    END`);
+} catch (e) {
+  console.warn("[db] trigger de servicios nuevos de Pazar:", e?.message || e); // base sin Servicios todavía
+}
 export function idsServiciosMaralim() {
   return new Set(db.prepare(`SELECT service_id FROM servicios_maralim`).pluck().all().map(Number));
 }
